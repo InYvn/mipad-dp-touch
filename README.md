@@ -28,7 +28,7 @@
 <p align="center">
   <img src="docs/window.png" width="620" alt="Mipad DP Touch 设置窗口"/>
   <br/>
-  <sub>设置窗口 · 首次运行的分步授权：第 1 步没做完，第 2 步就是灰的</sub>
+  <sub>设置窗口</sub>
 </p>
 
 ---
