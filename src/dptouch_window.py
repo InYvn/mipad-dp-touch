@@ -37,6 +37,20 @@ try:                                        # 新 SDK 里叫 NSButtonTypeSwitch
 except Exception:                           # pragma: no cover
     _BTN_SWITCH = 3
 
+
+# 菜单栏 App 弹出窗口时, App 并没有被激活 —— 窗口是"未激活"的样子: 系统会把
+# 下拉框文字画成灰的, 而且第一次点击只用来激活 App、不落到控件上(用户看到的就是
+# "选项是灰的、点了没反应、勾选又弹回去")。这两个子类让控件直接吃下第一击;
+# 抢焦点另见 SettingsWindow._activate()。
+class _FirstMousePopup(NSPopUpButton):
+    def acceptsFirstMouse_(self, event):
+        return True
+
+
+class _FirstMouseButton(NSButton):
+    def acceptsFirstMouse_(self, event):
+        return True
+
 from hid_bridge import HOLD_MS_OPTS as _HOLD_MS   # 长按判定档位(ms), 与 CLI 同源
 
 W, H = 620.0, 726.0                         # 窗口内容尺寸(固定; 不设 Resizable)
@@ -123,7 +137,7 @@ def _label(text, rect, size=13.0, bold=False, dim=False, right=False, color=None
 
 
 def _button(text, rect, target, action, switch=False, state=0, small=False):
-    b = NSButton.alloc().initWithFrame_(rect)
+    b = _FirstMouseButton.alloc().initWithFrame_(rect)
     b.setTitle_(text)
     if switch:
         b.setButtonType_(_BTN_SWITCH)
@@ -137,7 +151,7 @@ def _button(text, rect, target, action, switch=False, state=0, small=False):
 
 
 def _popup(rect, items):
-    p = NSPopUpButton.alloc().initWithFrame_pullsDown_(rect, False)
+    p = _FirstMousePopup.alloc().initWithFrame_pullsDown_(rect, False)
     p.addItemsWithTitles_(list(items))
     p.setFont_(NSFont.systemFontOfSize_(13.0))
     return p
@@ -199,6 +213,22 @@ def check_layout(view, w=W, h=H):
         if need > r[2] + 1.0:
             bad.append("文字放不下: %r 需要 %.0fpt, frame 只有 %.0fpt"
                        % (txt[:24], need, r[2]))
+    # 控件的 action 名字写错(例如 setAction_("onMode_") —— 少了冒号)会静默失效:
+    # 界面看着完全正常, 点了就是没反应。只能靠这条查出来。
+    for v, r, txt in items:
+        try:
+            act = v.action()
+            tgt = v.target()
+        except Exception:
+            continue
+        if not act or tgt is None:
+            continue
+        try:
+            ok = bool(tgt.respondsToSelector_(act))
+        except Exception:
+            continue
+        if not ok:
+            bad.append("action 无人响应: %r -> %r" % (txt[:18], act))
     return bad
 
 
@@ -288,6 +318,7 @@ class SettingsWindow(NSObject):
         self.c = {}                          # 控件登记表
         self._syncing = False
         self._n = 0
+        self._focus_left = 0            # 窗口刚起来时还欠几次"抢焦点"
         self._disp_sig = None
         self._build()
         return self
@@ -351,17 +382,17 @@ class SettingsWindow(NSObject):
                                               size=11, dim=True)
             v.addSubview_(self.c["p_%s_why" % key])
             self.c["p_%s_btn" % key] = _button("打开设置", self._r(W - M - 104, y + 4, 104, 26),
-                                               self, "onPerm_")
+                                               self, "onPerm:")
             self.c["p_%s_btn" % key].setTag_(i)
             v.addSubview_(self.c["p_%s_btn" % key])
 
         self.c["hint"] = _label("", self._r(M, 254, 340, 16), size=11, dim=True)
         v.addSubview_(self.c["hint"])
         self.c["recheck"] = _button("重新检测", self._r(W - M - 218, 250, 104, 26),
-                                    self, "onRecheck_")
+                                    self, "onRecheck:")
         v.addSubview_(self.c["recheck"])
         self.c["relaunch"] = _button("立即重启", self._r(W - M - 104, 250, 104, 26),
-                                     self, "onRelaunch_")
+                                     self, "onRelaunch:")
         v.addSubview_(self.c["relaunch"])
 
         # ---- 笔输入 ----
@@ -369,16 +400,16 @@ class SettingsWindow(NSObject):
         v.addSubview_(_label("滑动方式", self._r(M, 310, 76, 18)))
         self.c["mode"] = _popup(self._r(M + 82, 306, 250, 25), [t for _, t in MODE_LABELS])
         self.c["mode"].setTarget_(self)
-        self.c["mode"].setAction_("onMode_")
+        self.c["mode"].setAction_("onMode:")
         v.addSubview_(self.c["mode"])
 
         # 触屏模式下的第二个手势: 快速划=滚动, 停住再划=拖拽
         self.c["hold"] = _button("停住再划 = 拖拽", self._r(M, 338, 170, 20),
-                                 self, "onHold_", switch=True)
+                                 self, "onHold:", switch=True)
         v.addSubview_(self.c["hold"])
         self.c["hold_ms"] = _popup(self._r(M + 182, 336, 150, 25), list(HOLD_TITLES))
         self.c["hold_ms"].setTarget_(self)
-        self.c["hold_ms"].setAction_("onHoldMs_")
+        self.c["hold_ms"].setAction_("onHoldMs:")
         v.addSubview_(self.c["hold_ms"])
         self.c["hold_hint"] = _label("", self._r(M + 344, 342, 254, 16), size=11, dim=True)
         v.addSubview_(self.c["hold_hint"])
@@ -386,7 +417,7 @@ class SettingsWindow(NSObject):
         v.addSubview_(_label("滚动方向", self._r(M, 374, 76, 18)))
         self.c["nat"] = _popup(self._r(M + 82, 370, 250, 25), [t for _, t in NAT_LABELS])
         self.c["nat"].setTarget_(self)
-        self.c["nat"].setAction_("onNat_")
+        self.c["nat"].setAction_("onNat:")
         v.addSubview_(self.c["nat"])
         self.c["nat_hint"] = _label("", self._r(M + 344, 374, 254, 16), size=11, dim=True)
         v.addSubview_(self.c["nat_hint"])
@@ -394,19 +425,19 @@ class SettingsWindow(NSObject):
         v.addSubview_(_label("滚动速度", self._r(M, 406, 76, 18)))
         self.c["gain"] = _popup(self._r(M + 82, 402, 250, 25), self._gain_titles())
         self.c["gain"].setTarget_(self)
-        self.c["gain"].setAction_("onGain_")
+        self.c["gain"].setAction_("onGain:")
         v.addSubview_(self.c["gain"])
         self.c["gain_hint"] = _label("", self._r(M + 344, 406, 254, 16), size=11, dim=True)
         v.addSubview_(self.c["gain_hint"])
 
         self.c["enable"] = _button("启用笔桥接", self._r(M, 434, 160, 20),
-                                   self, "onEnable_", switch=True)
+                                   self, "onEnable:", switch=True)
         v.addSubview_(self.c["enable"])
         self.c["takeover"] = _button("用笔的绝对坐标驱动光标（试验）",
-                                     self._r(M, 458, 340, 20), self, "onTakeover_", switch=True)
+                                     self._r(M, 458, 340, 20), self, "onTakeover:", switch=True)
         v.addSubview_(self.c["takeover"])
         self.c["unknown"] = _button("允许未验证的小米设备", self._r(M, 482, 260, 20),
-                                    self, "onUnknown_", switch=True)
+                                    self, "onUnknown:", switch=True)
         v.addSubview_(self.c["unknown"])
 
         # ---- 显示缩放 ----
@@ -414,34 +445,34 @@ class SettingsWindow(NSObject):
         v.addSubview_(_label("缩放档位", self._r(M, 534, 76, 18)))
         self.c["disp"] = _popup(self._r(M + 82, 530, 300, 25), ["正在扫描…"])
         self.c["disp"].setTarget_(self)
-        self.c["disp"].setAction_("onDisp_")
+        self.c["disp"].setAction_("onDisp:")
         v.addSubview_(self.c["disp"])
         self.c["disp_btn"] = _button("重新扫描", self._r(M + 386, 530, 90, 25),
-                                     self, "onDispRescan_")
+                                     self, "onDispRescan:")
         v.addSubview_(self.c["disp_btn"])
         self.c["disp_hint"] = _label("", self._r(M, 560, W - 2 * M, 16), size=11, dim=True)
         v.addSubview_(self.c["disp_hint"])
 
         self.c["disp_allow"] = _button("允许管理未实测的显示器", self._r(M, 582, 300, 20),
-                                       self, "onDispAllow_", switch=True)
+                                       self, "onDispAllow:", switch=True)
         v.addSubview_(self.c["disp_allow"])
 
         # ---- 启动与日志 ----
         self._sec(v, "启动与日志", 610)
         self.c["autostart"] = _button("登录时自动启动", self._r(M, 630, 150, 20),
-                                      self, "onAutostart_", switch=True)
+                                      self, "onAutostart:", switch=True)
         v.addSubview_(self.c["autostart"])
         self.c["autostart_hint"] = _label("", self._r(M + 158, 632, 300, 18), size=11, dim=True)
         v.addSubview_(self.c["autostart_hint"])
 
         self.c["debug"] = _button("详细日志", self._r(M, 654, 120, 20),
-                                  self, "onDebug_", switch=True)
+                                  self, "onDebug:", switch=True)
         v.addSubview_(self.c["debug"])
         self.c["log_btn"] = _button("打开日志", self._r(M + 128, 650, 90, 26),
-                                    self, "onLog_", small=True)
+                                    self, "onLog:", small=True)
         v.addSubview_(self.c["log_btn"])
         self.c["diag_btn"] = _button("诊断…", self._r(M + 224, 650, 90, 26),
-                                     self, "onDiag_", small=True)
+                                     self, "onDiag:", small=True)
         v.addSubview_(self.c["diag_btn"])
 
         # ---- 页脚: 只有版本行 (用户要求删掉「关于」「退出」; 退出本来就在菜单栏里) ----
@@ -460,15 +491,11 @@ class SettingsWindow(NSObject):
         if self.win is None:
             return False
         try:
-            from AppKit import NSApp
-            self.win.makeKeyAndOrderFront_(None)
-            try:
-                NSApp.activateIgnoringOtherApps_(True)
-            except Exception:               # 新系统改叫 activate()
-                try:
-                    NSApp.activate()
-                except Exception:
-                    pass
+            self._focus_left = 6            # 头几拍接着抢(菜单刚收起时激活会被忽略)
+            self._activate()
+            from AppKit import NSApp as _A
+            self.app.log("设置窗口: 已请求激活 (App 激活=%s 窗口 key=%s)"
+                         % (bool(_A.isActive()), bool(self.win.isKeyWindow())))
         except Exception as e:
             self.app.log("打开设置窗口失败: %r" % (e,))
             return False
@@ -476,8 +503,29 @@ class SettingsWindow(NSObject):
         return True
 
     @objc.python_method
+    def _activate(self):
+        """把窗口抬到最前并让它成为 key。
+
+        窗口不是 key 的时候, 系统会把里面的下拉框画成灰的 —— 这正是"笔输入的选项
+        都是灰色的"的由来; 顺带第一次点击也会被吃掉。三种 API 都试, 老系统没有
+        activate() 就退回 activateIgnoringOtherApps_()。
+        """
+        from AppKit import NSApp, NSRunningApplication
+        self.win.makeKeyAndOrderFront_(None)
+        self.win.orderFrontRegardless()
+        for fn in (lambda: NSApp.activate(),                    # macOS 14+ 的正路
+                   lambda: NSApp.activateIgnoringOtherApps_(True),
+                   lambda: NSRunningApplication.currentApplication()
+                   .activateWithOptions_(2)):                   # 2 = IgnoringOtherApps
+            try:
+                fn()
+            except Exception:
+                pass
+
+    @objc.python_method
     def toggle(self):
         if self.win is not None and self.win.isVisible():
+            self._focus_left = 0
             self.win.orderOut_(None)
             return False
         return self.show()
@@ -588,6 +636,18 @@ class SettingsWindow(NSObject):
             "系统当前：%s" % ("自然" if self._sys_natural() else "传统")
             if a.cfg["natural"] == "system" else "")
         self.c["gain_hint"].setStringValue_("" if usable else "仅滑动翻页模式生效")
+
+        # 窗口起来了却还没成为 key: 再抢几次(菜单收起那一刻的激活请求系统会忽略)。
+        # 抢到就停, 免得一直跟用户抢焦点。
+        if self._focus_left > 0:
+            if self.win.isKeyWindow():
+                self._focus_left = 0
+            else:
+                self._focus_left -= 1
+                try:
+                    self._activate()
+                except Exception:
+                    self._focus_left = 0
 
         # --- 自启 / 显示器: 都是系统查询, 别每拍都问 (每 10 拍或 force 一次) ---
         if force or self._n % 10 == 1:
