@@ -379,6 +379,7 @@ ax = ctypes.CDLL(ctypes.util.find_library("ApplicationServices"))
 ax.AXIsProcessTrusted.restype = ctypes.c_bool
 
 MOVED, LDOWN, LUP, LDRAGGED = 5, 1, 2, 6
+RDOWN, RUP = 3, 4        # kCGEventRightMouseDown / Up
 SCROLL_UNIT_PIXEL = 0   # kCGScrollEventUnitPixel
 
 
@@ -388,11 +389,13 @@ HOLD_DRAG_DT = 0.25     # ★长按拖拽: 笔尖先停住这么久再划 -> 当
 HOLD_RADIUS_PX = 6      # 「停住」的半径: 期间笔尖飘出这个圈就不算长按, 免得误判成拖拽
 HOLD_ARM_PX = 2         # 长按成立后笔尖动这么多就升级成拖拽 (零死区: 手感"跟手", 而不是先空滑十几像素)
 HOLD_MS_OPTS = (200, 250, 350, 500)   # 长按判定档位 (ms): 窗口下拉与 CLI 共用同一份
+RC_HOLD_MS_OPTS = (0, 600, 800, 1000)  # ★长按不动 = 右键菜单 的档位 (ms); 0 = 关。窗口下拉与 CLI 共用同一份
+RC_HOLD_DT = 0.8       # 默认: 笔尖停住不动 0.8s -> 抬手时弹右键菜单 (长按之后又划走 => 仍是拖拽)
 
 
 class Bridge(object):
     def __init__(self, takeover=False, drag_pen=False, scroll=False, scroll_flip=False,
-                 hold_drag=True, hold_ms=None):
+                 hold_drag=True, hold_ms=None, rc_hold_ms=0, rc_barrel=False):
         b = cg.CGDisplayBounds(cg.CGMainDisplayID())
         self.ox, self.oy, self.w, self.h = b.origin.x, b.origin.y, b.size.width, b.size.height
         self.x = self.y = 0.0
@@ -409,6 +412,10 @@ class Bridge(object):
         self.scroll_flip = scroll_flip
         self.hold_drag = bool(hold_drag)   # 触屏模式下允许「先停住再划 = 拖拽」
         self.hold_dt = (float(hold_ms) / 1000.0) if hold_ms else HOLD_DRAG_DT
+        # ★长按不动 = 右键菜单: 只在触屏模式下用; 长按期间笔尖没飘 (hold_ok) 且没划动 (not scrolled)
+        self.rc_hold_dt = (float(rc_hold_ms) / 1000.0) if rc_hold_ms else 0.0
+        self.rc_barrel = bool(rc_barrel)   # 笔侧键 / 橡皮擦端 (硬件上报的话) -> 右键
+        self.nrc = 0                       # 右键次数
         self.gain = 1.0        # 滚动增益 (GUI 可运行时改; 1.0 = 笔走多少像素滚多少)
         # --scroll 触屏模式的状态
         self.scrolled = False            # 本次触摸是否已超过轻点阈值
@@ -469,6 +476,19 @@ class Bridge(object):
                   % (self.n, self.nd, kind, px, py, self.down))
             sys.stdout.flush()
 
+    def right_click(self, px=None, py=None):
+        """在 (px,py) 合成一次右键。坐标不传就用当前光标位置。
+
+        macOS 上「右键」= kCGEventRightMouseDown/Up; 菜单栏/桌面/Finder 都会因此弹右键菜单。
+        """
+        if px is None:
+            p = cg.CGEventGetLocation(cg.CGEventCreate(None))
+            px, py = p.x, p.y
+        for kind in (RDOWN, RUP):
+            cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, kind, CGPoint(px, py), 0))
+        self.n += 2
+        self.nrc += 1
+
     def drag(self):
         """按下状态下的移动 —— 必须发 LeftMouseDragged, 否则拖拽手势全部失效"""
         now = time.time()
@@ -523,6 +543,13 @@ class Bridge(object):
         self.flush_scroll()
         if not self.scrolled:
             px, py = self.tap_pos
+            # ★长按不动 -> 右键菜单。判据全在抬手这一刻: 按住了够久 (rc_hold_dt)、期间笔尖没飘
+            #   (hold_ok)、也没划动 (not scrolled)。所以「停住再划」依旧是拖拽, 两个手势不打架。
+            held = time.time() - self.hold_t0
+            if self.rc_hold_dt > 0 and self.hold_ok and held >= self.rc_hold_dt:
+                self.right_click(px, py)
+                self.say("长按不动 %.2fs -> 右键菜单 @%.0f,%.0f" % (held, px, py))
+                return
             if self.debug:
                 # 这条是排查「点击没反应」的关键: 落点(按下时光标) / 笔尖位置 / 抬手时光标
                 # 三者一对照就知道是「光标没跟着笔走」还是「点击发出去被系统吃了」。

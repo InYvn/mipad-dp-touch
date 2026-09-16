@@ -68,8 +68,9 @@ class _CardView(NSView):
 
 
 from hid_bridge import HOLD_MS_OPTS as _HOLD_MS   # 长按判定档位(ms), 与 CLI 同源
+from hid_bridge import RC_HOLD_MS_OPTS as _RC_HOLD   # 长按不动=右键 的档位(ms), 与 CLI 同源
 
-W, H = 620.0, 852.0                         # 窗口内容尺寸(固定; 不设 Resizable)
+W, H = 620.0, 906.0                         # 窗口内容尺寸(固定; 不设 Resizable)
 M = 22.0                                    # 页面左右留白
 PAD = 12.0                                  # 卡片内边距
 LBL_W = 94.0                                # 标签列宽
@@ -87,6 +88,7 @@ MODE_LABELS = [("scroll", "滑动翻页 · 不选中文字"),
 NAT_LABELS = [("system", "跟随系统"), ("on", "始终自然"), ("off", "始终传统")]
 HOLD_TITLES = ["%.2gs %s" % (ms / 1000.0, lab)
                for ms, lab in zip(_HOLD_MS, ("极快", "快", "标准", "慢"))]
+RC_TITLES = ["关" if not ms else "%.1f 秒" % (ms / 1000.0) for ms in _RC_HOLD]
 
 # 分步授权的两条 (顺序就是展示顺序)
 PERM_STEPS = (
@@ -442,7 +444,7 @@ class SettingsWindow(NSObject):
 
         # ---- 笔的输入 ----
         cy = self._sec(v, "笔的输入", cy + gap)
-        self._card(v, cy, 4 * ROW_H + 2 * PAD)
+        self._card(v, cy, 5 * ROW_H + 2 * PAD)
         ry = cy + PAD
         v.addSubview_(_label("滑动方式", self._r(cx, ry + 5, LBL_W, 18)))
         self.c["mode"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), [t for _, t in MODE_LABELS])
@@ -463,7 +465,19 @@ class SettingsWindow(NSObject):
                                      size=11, dim=True, right=True)
         v.addSubview_(self.c["hold_hint"])
 
+        # 触屏模式下的第三个手势: 停在原地不动 -> 抬手弹右键菜单。
+        # 与上面那条不冲突: 「停住再划」= 拖拽, 「停住不划」= 右键。
         ry = cy + PAD + 2 * ROW_H
+        v.addSubview_(_label("长按不动", self._r(cx, ry + 5, LBL_W, 18)))
+        self.c["rc_hold"] = _popup(self._r(CTRL_X, ry + 1, 130, 26), list(RC_TITLES))
+        self.c["rc_hold"].setTarget_(self)
+        self.c["rc_hold"].setAction_("onRcHold:")
+        v.addSubview_(self.c["rc_hold"])
+        self.c["rc_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
+                                   size=11, dim=True, right=True)
+        v.addSubview_(self.c["rc_hint"])
+
+        ry = cy + PAD + 3 * ROW_H
         v.addSubview_(_label("滚动方向", self._r(cx, ry + 5, LBL_W, 18)))
         self.c["nat"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), [t for _, t in NAT_LABELS])
         self.c["nat"].setTarget_(self)
@@ -473,7 +487,7 @@ class SettingsWindow(NSObject):
                                     size=11, dim=True, right=True)
         v.addSubview_(self.c["nat_hint"])
 
-        ry = cy + PAD + 3 * ROW_H
+        ry = cy + PAD + 4 * ROW_H
         v.addSubview_(_label("滚动速度", self._r(cx, ry + 5, LBL_W, 18)))
         self.c["gain"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), self._gain_titles())
         self.c["gain"].setTarget_(self)
@@ -482,19 +496,20 @@ class SettingsWindow(NSObject):
         self.c["gain_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
                                      size=11, dim=True, right=True)
         v.addSubview_(self.c["gain_hint"])
-        cy += 4 * ROW_H + 2 * PAD
+        cy += 5 * ROW_H + 2 * PAD
 
         # ---- 桥接 ----
         cy = self._sec(v, "桥接", cy + gap)
-        self._card(v, cy, 3 * cbh + 2 * PAD)
+        self._card(v, cy, 4 * cbh + 2 * PAD)
         for i, (key, title, act) in enumerate((("enable", "启用笔桥接", "onEnable:"),
                                                ("takeover", "用笔的绝对坐标驱动光标（试验）",
                                                 "onTakeover:"),
-                                               ("unknown", "允许未验证的小米设备", "onUnknown:"))):
+                                               ("unknown", "允许未验证的小米设备", "onUnknown:"),
+                                               ("barrel", "笔侧键 / 橡皮擦端 = 右键", "onBarrel:"))):
             self.c[key] = _button(title, self._r(cx, cy + PAD + i * cbh + 3, 360, 22),
                                   self, act, switch=True)
             v.addSubview_(self.c[key])
-        cy += 3 * cbh + 2 * PAD
+        cy += 4 * cbh + 2 * PAD
 
         # ---- 显示缩放 ----
         cy = self._sec(v, "显示缩放", cy + gap, note="只改平板那块屏，其他屏不动")
@@ -687,6 +702,8 @@ class SettingsWindow(NSObject):
             self.c["debug"].setState_(1 if a.cfg["debug_log"] else 0)
             self.c["hold"].setState_(1 if a.cfg.get("hold_drag") else 0)
             self._select(self.c["hold_ms"], list(_HOLD_MS), a.cfg.get("hold_ms", 250))
+            self._select(self.c["rc_hold"], list(_RC_HOLD), int(a.cfg.get("rc_hold_ms") or 0))
+            self.c["barrel"].setState_(1 if a.cfg.get("rc_barrel") else 0)
             self._select(self.c["mode"], [k for k, _ in MODE_LABELS], a.cfg["mode"])
             self._select(self.c["nat"], [k for k, _ in NAT_LABELS], a.cfg["natural"])
             from dptouch_engine import GAINS
@@ -699,6 +716,8 @@ class SettingsWindow(NSObject):
         self.c["gain"].setEnabled_(usable)
         self.c["hold"].setEnabled_(usable)
         self.c["hold_ms"].setEnabled_(usable and bool(a.cfg.get("hold_drag")))
+        self.c["rc_hold"].setEnabled_(usable and bool(a.cfg.get("hold_drag")))
+        self.c["rc_hint"].setStringValue_("弹出右键菜单" if usable else "仅滑动翻页模式生效")
         self.c["hold_hint"].setStringValue_(self._hold_hint(usable))
         self.c["nat_hint"].setStringValue_(
             "系统当前：%s" % ("自然" if self._sys_natural() else "传统")
@@ -820,6 +839,16 @@ class SettingsWindow(NSObject):
 
     def onHoldMs_(self, sender):
         self.app.set_hold_ms(_HOLD_MS[max(0, sender.indexOfSelectedItem())])
+        self.refresh(force=True)
+
+    def onRcHold_(self, sender):
+        if self._syncing:
+            return
+        self.app.set_rc_hold(_RC_HOLD[max(0, sender.indexOfSelectedItem())])
+        self.refresh(force=True)
+
+    def onBarrel_(self, sender):
+        self.app.set_rc_barrel(bool(sender.state()))
         self.refresh(force=True)
 
     def onDispAllow_(self, sender):

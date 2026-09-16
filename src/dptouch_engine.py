@@ -200,6 +200,8 @@ class Engine(object):
             "allow_unknown": False,   # 允许未验证设备
             "hold_drag": True,        # 触屏模式: 笔尖停住再划 = 拖拽 (否则拖不动窗口)
             "hold_ms": 250,           # 长按判定的时长
+            "rc_hold_ms": 800,        # ★长按不动这么久 -> 抬手弹右键菜单 (0 = 关)
+            "rc_barrel": False,       # 笔侧键 / 橡皮擦端 -> 右键 (要笔硬件真上报才有效)
         }
         # HID 回调跑在自己那条线程上, 和主线程 (菜单 / 定时刷新) 共享状态 -> 一把递归锁。
         # 必须在 _new_bridge 之前就位: _apply() 会读 self.debug。
@@ -213,6 +215,8 @@ class Engine(object):
         self._err_logged = set()      # 记过日志的异常, 免得每帧刷屏
         self.reset_counters()
         self._want_down = False
+        self._btn = {}                # BarrelSwitch / Eraser 的上一次状态 (只在按下沿动作)
+        self._btn_seen = set()        # 实测见到过的笔按键名 (日志/诊断用)
         self.b = None
         self._new_bridge()
         self.mgr = None
@@ -239,6 +243,9 @@ class Engine(object):
         # 长按拖拽只在触屏模式下有意义 (滑动选择模式下每一笔本来就是拖拽)
         self.b.hold_drag = bool(self.cfg.get("hold_drag", True)) and self.b.scroll
         self.b.hold_dt = float(self.cfg.get("hold_ms") or 250) / 1000.0
+        # 长按不动 = 右键: 只在触屏模式下有意义 (滑动选择模式每一笔本来就有按键语义)
+        self.b.rc_hold_dt = (float(self.cfg.get("rc_hold_ms") or 0) / 1000.0) if self.b.scroll else 0.0
+        self.b.rc_barrel = bool(self.cfg.get("rc_barrel", False))
         self.b.gain = float(self.cfg["gain"])
         self.b.scroll_flip = self._flip()
 
@@ -280,7 +287,7 @@ class Engine(object):
         with self._lk:
             self.reset_counters()
             b = self.b
-            b.n = b.ns = b.nd = b.nclk = 0
+            b.n = b.ns = b.nd = b.nclk = b.nrc = 0
 
     def reset_transient(self):
         """丢掉中间状态 (菜单关掉时调用): 半按 / 划动中的残留不能带到下一次。"""
@@ -505,6 +512,19 @@ class Engine(object):
                 self._want_down = False
                 self.pres_cur = 0
                 self._sync()
+        elif page == 0x0D and usage in (0x44, 0x45):       # BarrelSwitch / Eraser
+            # 笔侧键 / 橡皮擦端。macOS 不认这个小工具, 所以要靠我们自己翻成右键。
+            # 这条日志【恒定输出】(不走 debug): 用来确认这支笔到底报不报侧键。
+            self.seen["ev"] += 1
+            was = self._btn.get(usage, 0)
+            self._btn[usage] = 1 if v else 0
+            if v and not was:
+                nm = "笔侧键" if usage == 0x44 else "橡皮擦端"
+                self._btn_seen.add(nm)
+                on = bool(self.b.rc_barrel)
+                self.log("笔按键: %s 按下%s" % (nm, " -> 右键" if on else " (未映射)"))
+                if on:
+                    self.b.right_click()
         elif page == 0x01 and usage in (0x30, 0x31) and hi > lo and lo >= 0:
             # 绝对坐标 (笔接口); 相对坐标的鼠标接口 lo < 0, 会被排除
             self.seen["ev"] += 1
@@ -559,6 +579,7 @@ class Engine(object):
             "scroll": self.b.ns if self.b else 0,
             "click": self.b.nclk if self.b else 0,
             "drag": self.b.nd if self.b else 0,
+            "rclick": self.b.nrc if self.b else 0,
             "down": bool(self.b.down) if self.b else False,
             "mode": self.cfg["mode"],
             "flip": bool(self.b.scroll_flip) if self.b else False,
@@ -576,6 +597,8 @@ class Engine(object):
         names = "、".join(d[0] for d in st["devices"])
         tail = "%d 滚动 / %d 点击" % (st["scroll"], st["click"]) \
             if st["mode"] == "scroll" else "%d 拖拽 / %d 点击" % (st["drag"], st["click"])
+        if st.get("rclick"):
+            tail += " / %d 右键" % st["rclick"]
         return "已连接 · %s · %s" % (names, tail)
 
     def status_line_short(self):
@@ -588,4 +611,6 @@ class Engine(object):
         names = "、".join(d[0] for d in st["devices"])
         tail = "%d 滚动 / %d 点击" % (st["scroll"], st["click"]) \
             if st["mode"] == "scroll" else "%d 拖拽 / %d 点击" % (st["drag"], st["click"])
+        if st.get("rclick"):
+            tail += " / %d 右键" % st["rclick"]
         return "已连接 · %s · %s" % (names, tail)

@@ -63,6 +63,9 @@ DEFAULTS = {
     # 触屏模式下的长按拖拽: 笔尖先停住再划 = 拖拽 (否则快速划动一律被当成滚动)
     "hold_drag": True,
     "hold_ms": 250,
+    # 长按不动 = 右键菜单 (0 = 关); 笔侧键 / 橡皮擦端 = 右键
+    "rc_hold_ms": 800,
+    "rc_barrel": False,
     "enabled": True,
     # 开机自启 / 详细日志 (窗口里可切)
     "autostart": False,
@@ -970,6 +973,25 @@ class DPApp(NSObject):
             return
         self._apply(hold_ms=ms)
         log("长按判定 -> %d ms" % ms)
+
+    @objc.python_method
+    def set_rc_hold(self, ms):
+        """长按不动多久 = 右键菜单 (0 = 关)"""
+        import hid_bridge as HB
+        try:
+            ms = int(ms)
+        except Exception:
+            return
+        if ms not in HB.RC_HOLD_MS_OPTS:
+            return
+        self._apply(rc_hold_ms=ms)
+        log("长按不动 -> %s" % ("关" if not ms else "%.1f s = 右键菜单" % (ms / 1000.0)))
+
+    @objc.python_method
+    def set_rc_barrel(self, on):
+        """笔侧键 / 橡皮擦端 -> 右键"""
+        self._apply(rc_barrel=bool(on))
+        log("笔侧键 -> %s" % ("右键" if on else "不映射"))
 
     @objc.python_method
     def relaunch_cmd(self):
