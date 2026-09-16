@@ -232,6 +232,8 @@ class Engine(object):
         """(重)建 Bridge。只丢中间状态，累计计数由 Engine 自己保管。"""
         self.b = H.Bridge(takeover=False, drag_pen=False, scroll=True, hold_drag=True)
         self.b.say = self.log
+        # 构造期先同步一次基准值, 免得日志里先打一行引擎默认值、再打一行真实值 (看着像设置没生效)
+        self._rc_log = None        # None = 还没拿到真实配置, 所以构造期那一次不打日志
         self._apply()
 
     def _apply(self):
@@ -246,8 +248,14 @@ class Engine(object):
         # 长按不动 = 右键: 只在触屏模式下有意义 (滑动选择模式每一笔本来就有按键语义)
         self.b.rc_hold_dt = (float(self.cfg.get("rc_hold_ms") or 0) / 1000.0) if self.b.scroll else 0.0
         self.b.rc_barrel = bool(self.cfg.get("rc_barrel", False))
+        if self._rc_log is not None and self.b.rc_hold_dt != self._rc_log:
+            self._rc_log = self.b.rc_hold_dt
+            self.log("长按不动 -> %s" % ("%.1f s = 右键菜单 (容差 %d px)"
+                                        % (self.b.rc_hold_dt, H.RC_MAX_PX) if self.b.rc_hold_dt
+                                        else "关"))
         self.b.gain = float(self.cfg["gain"])
         self.b.scroll_flip = self._flip()
+        self._rc_log = self.b.rc_hold_dt
 
     def _flip(self):
         nat = self.cfg["natural"]

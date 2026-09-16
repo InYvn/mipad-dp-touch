@@ -386,7 +386,13 @@ SCROLL_UNIT_PIXEL = 0   # kCGScrollEventUnitPixel
 DRAG_MIN_DT = 0.008     # 拖拽/滚动事件最小间隔 (~125Hz), 防止 X/Y 双流把事件量翻倍
 SCROLL_TAP_PX = 12      # --scroll 触屏模式: 位移小于此像素数算『轻点』(点击), 超过则进入滚动
 HOLD_DRAG_DT = 0.25     # ★长按拖拽: 笔尖先停住这么久再划 -> 当作拖拽 (修「触屏模式拖不动窗口」)
-HOLD_RADIUS_PX = 6      # 「停住」的半径: 期间笔尖飘出这个圈就不算长按, 免得误判成拖拽
+HOLD_RADIUS_PX = 10     # 「停住」的半径: 期间笔尖飘出这个圈就不算长按, 免得误判成拖拽
+                        #   (原来 6px 太紧: 笔尖本身有 1~5px 抖动, 会把「停住再划」也判掉)
+# ★长按不动=右键 的容差(px): 抬手时拿【中位偏移】跟它比, 峰值抖动不算
+#   —— 真人握着笔「不动」时笔尖也有 1~5px 漂移, 拿峰值判就永远触发不了。
+RC_MAX_PX = 30
+# 这一手已经被那点抖动「误升成拖拽」时用更严的圈: 真拖拽会一直被拉远, 抖动只在原地晃。
+RC_PHANTOM_MAX_PX = 14
 HOLD_ARM_PX = 2         # 长按成立后笔尖动这么多就升级成拖拽 (零死区: 手感"跟手", 而不是先空滑十几像素)
 HOLD_MS_OPTS = (200, 250, 350, 500)   # 长按判定档位 (ms): 窗口下拉与 CLI 共用同一份
 RC_HOLD_MS_OPTS = (0, 600, 800, 1000)  # ★长按不动 = 右键菜单 的档位 (ms); 0 = 关。窗口下拉与 CLI 共用同一份
@@ -424,6 +430,8 @@ class Bridge(object):
         self.hold_t0 = 0.0               # 笔尖按下的时刻 (长按计时起点)
         self.nd0 = 0                     # 本手开始时的拖拽基数 (只为日志好看)
         self.anchor_x = self.anchor_y = 0.0
+        self.dev_hist = []               # [(时刻, 距锚点偏移px)]: 抬手时取中位数判「有没有在动」
+        self.dev_max = 0.0               # 整手期间的最大偏移 (日志用)
         self.last_pen_y = None
         self.pend = 0.0                  # 累积未发出的滚动位移 (px)
         self.last_scroll = 0.0
@@ -515,6 +523,8 @@ class Bridge(object):
         self.hold_ok = True
         self.hold_t0 = time.time()
         self.anchor_x, self.anchor_y = self.x, self.y
+        self.dev_hist = []
+        self.dev_max = 0.0
         self.last_pen_y = None
         self.pend = 0.0
         if not self.scroll:
@@ -536,20 +546,40 @@ class Bridge(object):
             self.drag()
             self.post(LUP, use_pen=self.drag_pen)
             self.say("拖拽结束 (本手共 %d 次拖拽)" % (self.nd - self.nd0))
+            # ★笔尖有 1~5px 抖动时, 长按期间那点抖动会让本手【提前升级成拖拽】(门槛才 2px),
+            #   于是「长按不动」在抬手前就被吃掉了。所以这里补一次判定: 这一手其实没动 ->
+            #   按长按不动处理, 弹右键菜单 (前面那次无位移的拖拽等同于一次点击, 无害)。
+            if self.rc_hold_dt > 0:
+                med, held = self.rc_stats()
+                if held >= self.rc_hold_dt and med <= RC_PHANTOM_MAX_PX:
+                    self.right_click(*self.tap_pos)
+                    self.say("长按不动 %.2fs (中位偏移 %.0fpx ≤ %dpx / 峰值 %.0fpx) -> 右键菜单 @%.0f,%.0f"
+                             " (笔尖抖动曾被当成拖拽)"
+                             % (held, med, RC_PHANTOM_MAX_PX, self.dev_max,
+                                self.tap_pos[0], self.tap_pos[1]))
             return
         if not self.scroll:
             self.post(LUP)
             return
+        # ★长按不动 -> 右键菜单。判据全在抬手这一刻: 按住了够久 (rc_hold_dt) + 整手笔尖基本没动。
+        #   「没动」= 中位偏移 <= RC_MAX_PX, 不是 6px 的瞬时圈 —— 真人握笔静止时笔尖有 1~5px 抖动,
+        #   偶尔还有一下尖峰, 所以只看中位数、不看峰值 (峰值只进日志), 否则这手势永远触发不了。
+        #   划走超过 RC_MAX_PX 就不是长按了: 「停住再划」依旧走拖拽, 两个手势不打架。
+        if self.rc_hold_dt > 0:
+            med, held = self.rc_stats()
+            px, py = self.tap_pos
+            if held >= self.rc_hold_dt and med <= RC_MAX_PX:
+                self.pend = 0.0              # 抖动累积的那点滚动量丢掉, 只弹菜单
+                self.right_click(px, py)
+                self.say("长按不动 %.2fs (中位偏移 %.0fpx / 峰值 %.0fpx) -> 右键菜单 @%.0f,%.0f"
+                         % (held, med, self.dev_max, px, py))
+                return
+            if held >= self.rc_hold_dt:
+                self.say("长按判定: 按住 %.2fs 但笔尖在动 (中位偏移 %.0fpx > 容差 %dpx) -> 当点击处理"
+                         % (held, med, RC_MAX_PX))
         self.flush_scroll()
         if not self.scrolled:
             px, py = self.tap_pos
-            # ★长按不动 -> 右键菜单。判据全在抬手这一刻: 按住了够久 (rc_hold_dt)、期间笔尖没飘
-            #   (hold_ok)、也没划动 (not scrolled)。所以「停住再划」依旧是拖拽, 两个手势不打架。
-            held = time.time() - self.hold_t0
-            if self.rc_hold_dt > 0 and self.hold_ok and held >= self.rc_hold_dt:
-                self.right_click(px, py)
-                self.say("长按不动 %.2fs -> 右键菜单 @%.0f,%.0f" % (held, px, py))
-                return
             if self.debug:
                 # 这条是排查「点击没反应」的关键: 落点(按下时光标) / 笔尖位置 / 抬手时光标
                 # 三者一对照就知道是「光标没跟着笔走」还是「点击发出去被系统吃了」。
@@ -562,9 +592,23 @@ class Bridge(object):
             cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, LUP, CGPoint(px, py), 0))
             self.n += 2
             self.nclk += 1
-            self.say("轻点 -> 点击 @%.0f,%.0f" % (px, py))
+            _m, _h = self.rc_stats()
+            self.say("轻点 -> 点击 @%.0f,%.0f (按住 %.2fs / 中位偏移 %.0fpx 峰值 %.0fpx)"
+                     % (px, py, _h, _m, self.dev_max))
             return
         self.say("滚动结束 (本手共 %d 次滚轮事件, 累计 %d)" % (self.ns - self.ns0, self.ns))
+
+    def rc_stats(self):
+        """抬手时的长按判据 -> (中位偏移px, 按住秒数)。
+
+        用中位数而不是峰值: 真人握笔「不动」时笔尖仍有 1~5px 抖动, 偶尔还有一下尖峰;
+        峰值判据会让这手势永远触发不了。0.15s 之后才开始采样, 免得按下瞬间那点位移算进去。
+        """
+        held = time.time() - self.hold_t0
+        tail = [d for t, d in self.dev_hist if (t - self.hold_t0) >= 0.15] or \
+            [d for _, d in self.dev_hist]
+        tail.sort()
+        return (tail[len(tail) // 2] if tail else 0.0), held
 
     def pen_screen_anchor(self):
         """按下那一刻的笔尖坐标 -> 屏幕像素"""
@@ -589,10 +633,16 @@ class Bridge(object):
 
     def on_move(self):
         """按下状态下的移动 (X / Y 任一事件都会进来)"""
+        dx = abs(self.x - self.anchor_x) * self.w
+        dy = abs(self.y - self.anchor_y) * self.h
+        moved = dx if dx > dy else dy
+        # 整手的偏移曲线: 抬手时用中位数判「停住不动」(抗笔尖抖动), 峰值只进日志
+        if moved > self.dev_max:
+            self.dev_max = moved
+        self.dev_hist.append((time.time(), moved))
+        if len(self.dev_hist) > 60:
+            del self.dev_hist[:-60]
         if not self.scrolled and not self.dragging:
-            dx = abs(self.x - self.anchor_x) * self.w
-            dy = abs(self.y - self.anchor_y) * self.h
-            moved = dx if dx > dy else dy
             # ★零死区: 长按一旦成立, 笔尖再动一点点就【立刻】升级成拖拽 —— 不再等 12px
             # 轻点阈值。否则"停住之后再划"的前十几像素没有任何反应, 手感就是"拖不动"。
             if (self.hold_drag and self.hold_ok and moved >= HOLD_ARM_PX
@@ -660,6 +710,13 @@ def cmd_bridge(seconds):
     for a in sys.argv:
         if a.startswith("--hold-drag-ms="):
             hold_ms = int(a.split("=", 1)[1])
+    rc_hold_ms = RC_HOLD_DT * 1000        # 长按不动=右键: 默认开
+    for a in sys.argv:
+        if a.startswith("--rc-hold-ms="):
+            rc_hold_ms = int(a.split("=", 1)[1])
+    if "--no-rc" in sys.argv:
+        rc_hold_ms = 0
+    rc_barrel = "--barrel-rc" in sys.argv
     pres_thr = None
     for a in sys.argv:
         if a == "--pressure":
@@ -670,7 +727,8 @@ def cmd_bridge(seconds):
         print("!! 缺『辅助功能』权限 —— 合成出来的鼠标事件会被系统丢掉。")
         print("   系统设置 > 隐私与安全性 > 辅助功能 -> 打开 Terminal, 完全退出后重开再跑")
     b = Bridge(takeover=takeover, drag_pen=drag_pen, scroll=scroll, scroll_flip=scroll_flip,
-               hold_drag=hold_drag, hold_ms=hold_ms)
+               hold_drag=hold_drag, hold_ms=hold_ms,
+               rc_hold_ms=rc_hold_ms, rc_barrel=rc_barrel)
     print("按下判据: TipSwitch%s" % (" 或 压力>%d" % pres_thr if pres_thr is not None else ""))
 
     st = {"tip": 0, "pres": 0}

@@ -216,9 +216,9 @@ class DPApp(NSObject):
             return None
         self.cfg = load_cfg()
         self.engine = E.Engine(log=log)
-        self.engine.update(**{k: v for k, v in self.cfg.items()
-                              if k in ("mode", "natural", "gain", "takeover",
-                                       "allow_unknown")})
+        # ★整份配置都要推过去。老写法只推 5 个键, 于是「长按时间 / 长按不动 / 笔侧键 = 右键」
+        #   这些每次启动都被引擎自己的默认值悄悄盖掉: 设置窗口里显示 0.6 秒, 背后实际跑 0.8 秒。
+        self.engine.update(**dict(self.cfg))
         self.enabled = bool(self.cfg.get("enabled", True))
         self._build_status_item()
         self._build_menu()
