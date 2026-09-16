@@ -1,0 +1,24 @@
+# 构建产物
+build/
+build-pyi/
+dist/
+dist-pyi/
+*.spec
+*.egg-info/
+.build-venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# 运行期状态文件
+.hidpi_prev_mode.json
+
+# macOS
+.DS_Store
+._*
+
+# 打包时自动生成
+AppIcon.icns
