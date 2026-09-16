@@ -65,7 +65,10 @@ DEFAULTS = {
     "hold_ms": 250,
     # 长按不动 = 右键菜单 (0 = 关); 笔侧键 / 橡皮擦端 = 右键
     "rc_hold_ms": 800,
-    "rc_barrel": False,
+    "rc_barrel": False,          # (旧) 布尔开关; 已迁到下面两条绑定
+    # ★按键绑定栏: 笔侧键 / 橡皮擦端 -> 一个动作 (none/right/middle/left/double/space/back)
+    "bind_barrel": "right",
+    "bind_eraser": "none",
     "enabled": True,
     # 开机自启 / 详细日志 (窗口里可切)
     "autostart": False,
@@ -121,6 +124,10 @@ def load_cfg():
             cfg.update(json.load(f))
     except Exception:
         pass
+    # 旧配置只有「笔侧键 = 右键」这一个开关; 老用户升级后让它等价落到绑定上
+    if cfg.pop("rc_barrel", False):
+        cfg["bind_barrel"] = "right"
+        cfg["bind_eraser"] = "right"
     return cfg
 
 
@@ -988,10 +995,16 @@ class DPApp(NSObject):
         log("长按不动 -> %s" % ("关" if not ms else "%.1f s = 右键菜单" % (ms / 1000.0)))
 
     @objc.python_method
-    def set_rc_barrel(self, on):
-        """笔侧键 / 橡皮擦端 -> 右键"""
-        self._apply(rc_barrel=bool(on))
-        log("笔侧键 -> %s" % ("右键" if on else "不映射"))
+    def set_bind(self, which, key):
+        """★按键绑定栏: which = 'barrel'(笔侧键) / 'eraser'(橡皮擦端), key = 动作代号"""
+        import hid_bridge as HB
+        key = str(key or "none")
+        if key not in HB.BIND_TITLES:
+            return
+        field = "bind_barrel" if which == "barrel" else "bind_eraser"
+        self._apply(**{field: key})
+        log("%s -> %s" % ("笔侧键" if which == "barrel" else "橡皮擦端",
+                          HB.BIND_TITLES[key]))
 
     @objc.python_method
     def relaunch_cmd(self):

@@ -69,8 +69,9 @@ class _CardView(NSView):
 
 from hid_bridge import HOLD_MS_OPTS as _HOLD_MS   # 长按判定档位(ms), 与 CLI 同源
 from hid_bridge import RC_HOLD_MS_OPTS as _RC_HOLD   # 长按不动=右键 的档位(ms), 与 CLI 同源
+from hid_bridge import BIND_ACTIONS as _BINDS        # ★按键绑定栏 的动作表, 与 CLI 同源
 
-W, H = 620.0, 906.0                         # 窗口内容尺寸(固定; 不设 Resizable)
+W, H = 620.0, 1026.0                         # 窗口内容尺寸(固定; 不设 Resizable)
 M = 22.0                                    # 页面左右留白
 PAD = 12.0                                  # 卡片内边距
 LBL_W = 94.0                                # 标签列宽
@@ -498,18 +499,42 @@ class SettingsWindow(NSObject):
         v.addSubview_(self.c["gain_hint"])
         cy += 5 * ROW_H + 2 * PAD
 
+        # ---- ★按键绑定 ----
+        # 笔上那两个物理按键各绑一个动作。默认「笔侧键 = 右键菜单」, 橡皮擦端关着
+        # (橡皮擦端很多笔会连笔尖一起报, 默认开着容易多出一次点击)。
+        cy = self._sec(v, "按键绑定", cy + gap, note="按住侧键再动笔就是拖拽")
+        _bh = 3 * ROW_H + 2 * PAD
+        self._card(v, cy, _bh)
+        for i, (key, title, act) in enumerate((("barrel", "笔侧键", "onBindBarrel:"),
+                                              ("eraser", "橡皮擦端", "onBindEraser:"))):
+            ry = cy + PAD + i * ROW_H
+            v.addSubview_(_label(title, self._r(cx, ry + 5, LBL_W, 18)))
+            self.c["bind_" + key] = _popup(self._r(CTRL_X, ry + 1, 130, 26),
+                                           [t for _, t in _BINDS])
+            self.c["bind_" + key].setTarget_(self)
+            self.c["bind_" + key].setAction_(act)
+            v.addSubview_(self.c["bind_" + key])
+        self.c["bind_hint"] = _label("", self._r(HINT_X, cy + PAD + 5, CR - HINT_X, 18),
+                                     size=11, dim=True, right=True)
+        v.addSubview_(self.c["bind_hint"])
+        v.addSubview_(_label("最近按下", self._r(cx, cy + PAD + 2 * ROW_H + 5, LBL_W, 18),
+                             size=13, dim=True))
+        self.c["bind_seen"] = _label("", self._r(CTRL_X, cy + PAD + 2 * ROW_H + 5, 200, 18),
+                                     size=13, dim=True)
+        v.addSubview_(self.c["bind_seen"])
+        cy += _bh
+
         # ---- 桥接 ----
         cy = self._sec(v, "桥接", cy + gap)
-        self._card(v, cy, 4 * cbh + 2 * PAD)
+        self._card(v, cy, 3 * cbh + 2 * PAD)
         for i, (key, title, act) in enumerate((("enable", "启用笔桥接", "onEnable:"),
                                                ("takeover", "用笔的绝对坐标驱动光标（试验）",
                                                 "onTakeover:"),
-                                               ("unknown", "允许未验证的小米设备", "onUnknown:"),
-                                               ("barrel", "笔侧键 / 橡皮擦端 = 右键", "onBarrel:"))):
+                                               ("unknown", "允许未验证的小米设备", "onUnknown:"))):
             self.c[key] = _button(title, self._r(cx, cy + PAD + i * cbh + 3, 360, 22),
                                   self, act, switch=True)
             v.addSubview_(self.c[key])
-        cy += 4 * cbh + 2 * PAD
+        cy += 3 * cbh + 2 * PAD
 
         # ---- 显示缩放 ----
         cy = self._sec(v, "显示缩放", cy + gap, note="只改平板那块屏，其他屏不动")
@@ -703,7 +728,10 @@ class SettingsWindow(NSObject):
             self.c["hold"].setState_(1 if a.cfg.get("hold_drag") else 0)
             self._select(self.c["hold_ms"], list(_HOLD_MS), a.cfg.get("hold_ms", 250))
             self._select(self.c["rc_hold"], list(_RC_HOLD), int(a.cfg.get("rc_hold_ms") or 0))
-            self.c["barrel"].setState_(1 if a.cfg.get("rc_barrel") else 0)
+            self._select(self.c["bind_barrel"], [k for k, _ in _BINDS],
+                         a.cfg.get("bind_barrel") or "none")
+            self._select(self.c["bind_eraser"], [k for k, _ in _BINDS],
+                         a.cfg.get("bind_eraser") or "none")
             self._select(self.c["mode"], [k for k, _ in MODE_LABELS], a.cfg["mode"])
             self._select(self.c["nat"], [k for k, _ in NAT_LABELS], a.cfg["natural"])
             from dptouch_engine import GAINS
@@ -718,6 +746,13 @@ class SettingsWindow(NSObject):
         self.c["hold_ms"].setEnabled_(usable and bool(a.cfg.get("hold_drag")))
         self.c["rc_hold"].setEnabled_(usable and bool(a.cfg.get("hold_drag")))
         self.c["rc_hint"].setStringValue_("弹出右键菜单" if usable else "仅滑动翻页模式生效")
+        # ★按键绑定: 绑的是笔上的物理按键, 只要桥接开着就有效
+        _on = bool(a.cfg["enabled"])
+        self.c["bind_barrel"].setEnabled_(_on)
+        self.c["bind_eraser"].setEnabled_(_on)
+        self.c["bind_hint"].setStringValue_("" if _on else "需要先启用笔桥接")
+        _seen = getattr(getattr(a, "engine", None), "last_btn", None) or "—"
+        self.c["bind_seen"].setStringValue_("最近按下：%s" % _seen)
         self.c["hold_hint"].setStringValue_(self._hold_hint(usable))
         self.c["nat_hint"].setStringValue_(
             "系统当前：%s" % ("自然" if self._sys_natural() else "传统")
@@ -847,8 +882,16 @@ class SettingsWindow(NSObject):
         self.app.set_rc_hold(_RC_HOLD[max(0, sender.indexOfSelectedItem())])
         self.refresh(force=True)
 
-    def onBarrel_(self, sender):
-        self.app.set_rc_barrel(bool(sender.state()))
+    def onBindBarrel_(self, sender):
+        if self._syncing:
+            return
+        self.app.set_bind("barrel", _BINDS[max(0, sender.indexOfSelectedItem())][0])
+        self.refresh(force=True)
+
+    def onBindEraser_(self, sender):
+        if self._syncing:
+            return
+        self.app.set_bind("eraser", _BINDS[max(0, sender.indexOfSelectedItem())][0])
         self.refresh(force=True)
 
     def onDispAllow_(self, sender):
