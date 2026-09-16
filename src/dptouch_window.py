@@ -51,10 +51,35 @@ class _FirstMouseButton(NSButton):
     def acceptsFirstMouse_(self, event):
         return True
 
+from AppKit import NSBezierPath, NSView
+
+# 分组底: 深色模式下比窗口底稍亮的一层圆角块, 用来替"一堆粗体小标题"做分组。
+CARD_R = 10.0
+
+
+class _CardView(NSView):
+    """一块圆角分组底(纯装饰, 不接收点击)。"""
+
+    def drawRect_(self, rect):
+        b = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            self.bounds(), CARD_R, CARD_R)
+        _color("controlBackgroundColor").set()
+        b.fill()
+
+
 from hid_bridge import HOLD_MS_OPTS as _HOLD_MS   # 长按判定档位(ms), 与 CLI 同源
 
-W, H = 620.0, 726.0                         # 窗口内容尺寸(固定; 不设 Resizable)
-M = 22.0                                    # 左右留白
+W, H = 620.0, 852.0                         # 窗口内容尺寸(固定; 不设 Resizable)
+M = 22.0                                    # 页面左右留白
+PAD = 12.0                                  # 卡片内边距
+LBL_W = 94.0                                # 标签列宽
+CTRL_X = M + PAD + LBL_W                    # 下拉框那一列的左边缘 (128)
+CTRL_W = 250.0                              # 下拉框标准宽
+HINT_X = CTRL_X + CTRL_W + 8                # 行尾说明那列 (386)
+CR = W - M - PAD                            # 卡片内容右边线 (586)
+ROW_H = 28.0                                # 「标签 + 控件」一行的高度
+CB_H = 26.0                                 # 复选框一行的高度
+SEC_GAP = 16.0                              # 卡片之间的间距
 
 # UI 文案 —— 短句, 不用括号。菜单里不再出现这些选项, 这里是唯一出处。
 MODE_LABELS = [("scroll", "滑动翻页 · 不选中文字"),
@@ -184,6 +209,11 @@ def check_layout(view, w=W, h=H):
     """
     items = []
     for v in view.subviews():
+        try:
+            if v.identifier() in ("bg", "line"):
+                continue        # 分组底本来就垫在控件底下, 不算"重叠"
+        except Exception:
+            pass
         txt = ""
         try:
             txt = v.stringValue() or ""
@@ -330,10 +360,21 @@ class SettingsWindow(NSObject):
 
     @objc.python_method
     def _sec(self, v, text, y_top, note=None):
-        v.addSubview_(_label(text, self._r(M, y_top, 220, 16), size=12, bold=True))
+        """一行分组标题, 返回它下面那块卡片的起始 y。"""
+        v.addSubview_(_label(text, self._r(M, y_top, 240, 17), size=12, bold=True,
+                             color=_color("secondaryLabelColor")))
         if note:
-            v.addSubview_(_label(note, self._r(W - M - 320, y_top, 320, 16),
+            v.addSubview_(_label(note, self._r(CR - 300, y_top, 300, 16),
                                  size=11, dim=True, right=True))
+        return y_top + 22
+
+    @objc.python_method
+    def _card(self, v, y_top, h):
+        """垫在控件底下的一块圆角分组底。要先加, 才在控件下面。"""
+        b = _CardView.alloc().initWithFrame_(self._r(M, y_top, W - 2 * M, h))
+        b.setIdentifier_("bg")
+        v.addSubview_(b)
+        return b
 
     # ---------------- 构建 ----------------
     @objc.python_method
@@ -346,138 +387,165 @@ class SettingsWindow(NSObject):
         self.win.setReleasedWhenClosed_(False)   # 关掉不销毁: 下次还能开
         self.win.center()
         v = self.win.contentView()
+        cx = M + PAD                             # 卡片内容的左边线
+        cbh = 26.0                               # 复选框一行的高度
+        gap = 16.0                               # 两个分组之间
 
-        # ---- 标题 ----
-        v.addSubview_(_label(self.name, self._r(M, 20, 420, 24), size=17, bold=True))
-        v.addSubview_(_label("小米焦点触控笔 Pro · 当 Mac 外接屏时的输入桥接",
-                             self._r(M, 44, 480, 16), size=11, dim=True))
-        # ---- logo (右上角, 与标题同高; 位置已避开标题/副标题的 frame) ----
+        # ---- 头部: 左边 logo 和名字, 右边一眼看得到的状态 ----
+        y = 12.0
         self.c["logo"] = logo_view(logo_path())
-        self.c["logo"].setFrame_(self._r(W - M - LOGO_PX, 12, LOGO_PX, LOGO_PX))
+        self.c["logo"].setFrame_(self._r(M, y, LOGO_PX, LOGO_PX))
         v.addSubview_(self.c["logo"])
-
-        # ---- 状态 ----
-        self._sec(v, "状态", 76)
-        self.c["conn_dot"] = _label("●", self._r(M, 96, 14, 18), size=13,
+        v.addSubview_(_label(self.name, self._r(M + 68, y + 6, 240, 20), size=15, bold=True))
+        v.addSubview_(_label("小米焦点触控笔 Pro · 当 Mac 外接屏时的输入桥接",
+                             self._r(M + 68, y + 28, 250, 15), size=11, dim=True))
+        self.c["conn_dot"] = _label("●", self._r(CR - 244, y + 7, 14, 17), size=13,
                                     color=_color("tertiaryLabelColor"))
         v.addSubview_(self.c["conn_dot"])
-        self.c["conn"] = _label("正在检测…", self._r(M + 18, 96, W - 2 * M - 18, 18))
+        self.c["conn"] = _label("正在检测…", self._r(CR - 226, y + 7, 226, 17))
         v.addSubview_(self.c["conn"])
-        self.c["counters"] = _label("", self._r(M, 114, W - 2 * M, 16), size=11, dim=True)
+        self.c["counters"] = _label("", self._r(CR - 230, y + 27, 230, 15), size=11, dim=True)
         v.addSubview_(self.c["counters"])
+        y += LOGO_PX + 8
 
-        # ---- 权限(分步) ----
-        self._sec(v, "权限", 140)
-        self.c["perm_sum"] = _label("", self._r(W - M - 220, 140, 220, 16),
-                                    size=11, dim=True, right=True)
+        # ---- 权限: 分步引导 (按钮搬到标题行右侧, 卡片里只留两步) ----
+        v.addSubview_(_label("权限", self._r(M, y + 4, 50, 18), size=12, bold=True,
+                             color=_color("secondaryLabelColor")))
+        self.c["perm_sum"] = _label("", self._r(M + 52, y + 5, 200, 16),
+                                    size=11, dim=True)
         v.addSubview_(self.c["perm_sum"])
+        self.c["relaunch"] = _button("立即重启", self._r(CR - 104, y, 104, 26),
+                                     self, "onRelaunch:")
+        v.addSubview_(self.c["relaunch"])
+        self.c["recheck"] = _button("重新检测", self._r(CR - 218, y, 104, 26),
+                                    self, "onRecheck:")
+        v.addSubview_(self.c["recheck"])
+        self._card(v, y + 32, 132)
+        cyy = y + 32
         for i, key in ((0, "ax"), (1, "input")):
-            y = 162 + i * 44
-            self.c["p_%s_dot" % key] = _label("1", self._r(M, y, 20, 16), size=12, bold=True)
+            ry = cyy + PAD + i * 44
+            self.c["p_%s_dot" % key] = _label("1", self._r(cx, ry + 12, 20, 16), size=12, bold=True)
             v.addSubview_(self.c["p_%s_dot" % key])
-            self.c["p_%s_title" % key] = _label("", self._r(M + 22, y, 220, 16),
+            self.c["p_%s_title" % key] = _label("", self._r(cx + 22, ry + 6, 250, 16),
                                                 size=13, bold=True)
             v.addSubview_(self.c["p_%s_title" % key])
-            self.c["p_%s_why" % key] = _label("", self._r(M + 22, y + 20, 430, 15),
+            self.c["p_%s_why" % key] = _label("", self._r(cx + 22, ry + 26, 420, 15),
                                               size=11, dim=True)
             v.addSubview_(self.c["p_%s_why" % key])
-            self.c["p_%s_btn" % key] = _button("打开设置", self._r(W - M - 104, y + 4, 104, 26),
+            self.c["p_%s_btn" % key] = _button("打开设置", self._r(CR - 104, ry + 12, 104, 26),
                                                self, "onPerm:")
             self.c["p_%s_btn" % key].setTag_(i)
             v.addSubview_(self.c["p_%s_btn" % key])
-
-        self.c["hint"] = _label("", self._r(M, 254, 340, 16), size=11, dim=True)
+        self.c["hint"] = _label("", self._r(cx, cyy + PAD + 92, CR - cx, 16), size=11, dim=True)
         v.addSubview_(self.c["hint"])
-        self.c["recheck"] = _button("重新检测", self._r(W - M - 218, 250, 104, 26),
-                                    self, "onRecheck:")
-        v.addSubview_(self.c["recheck"])
-        self.c["relaunch"] = _button("立即重启", self._r(W - M - 104, 250, 104, 26),
-                                     self, "onRelaunch:")
-        v.addSubview_(self.c["relaunch"])
+        cy = cyy + 132
 
-        # ---- 笔输入 ----
-        self._sec(v, "笔输入", 286)
-        v.addSubview_(_label("滑动方式", self._r(M, 310, 76, 18)))
-        self.c["mode"] = _popup(self._r(M + 82, 306, 250, 25), [t for _, t in MODE_LABELS])
+        # ---- 笔的输入 ----
+        cy = self._sec(v, "笔的输入", cy + gap)
+        self._card(v, cy, 4 * ROW_H + 2 * PAD)
+        ry = cy + PAD
+        v.addSubview_(_label("滑动方式", self._r(cx, ry + 5, LBL_W, 18)))
+        self.c["mode"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), [t for _, t in MODE_LABELS])
         self.c["mode"].setTarget_(self)
         self.c["mode"].setAction_("onMode:")
         v.addSubview_(self.c["mode"])
 
         # 触屏模式下的第二个手势: 快速划=滚动, 停住再划=拖拽
-        self.c["hold"] = _button("停住再划 = 拖拽", self._r(M, 338, 170, 20),
+        ry = cy + PAD + ROW_H
+        self.c["hold"] = _button("停住再划 = 拖拽", self._r(cx, ry + 4, 176, 20),
                                  self, "onHold:", switch=True)
         v.addSubview_(self.c["hold"])
-        self.c["hold_ms"] = _popup(self._r(M + 182, 336, 150, 25), list(HOLD_TITLES))
+        self.c["hold_ms"] = _popup(self._r(CTRL_X + CTRL_W - 110, ry + 1, 110, 26), list(HOLD_TITLES))
         self.c["hold_ms"].setTarget_(self)
         self.c["hold_ms"].setAction_("onHoldMs:")
         v.addSubview_(self.c["hold_ms"])
-        self.c["hold_hint"] = _label("", self._r(M + 344, 342, 254, 16), size=11, dim=True)
+        self.c["hold_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
+                                     size=11, dim=True, right=True)
         v.addSubview_(self.c["hold_hint"])
 
-        v.addSubview_(_label("滚动方向", self._r(M, 374, 76, 18)))
-        self.c["nat"] = _popup(self._r(M + 82, 370, 250, 25), [t for _, t in NAT_LABELS])
+        ry = cy + PAD + 2 * ROW_H
+        v.addSubview_(_label("滚动方向", self._r(cx, ry + 5, LBL_W, 18)))
+        self.c["nat"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), [t for _, t in NAT_LABELS])
         self.c["nat"].setTarget_(self)
         self.c["nat"].setAction_("onNat:")
         v.addSubview_(self.c["nat"])
-        self.c["nat_hint"] = _label("", self._r(M + 344, 374, 254, 16), size=11, dim=True)
+        self.c["nat_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
+                                    size=11, dim=True, right=True)
         v.addSubview_(self.c["nat_hint"])
 
-        v.addSubview_(_label("滚动速度", self._r(M, 406, 76, 18)))
-        self.c["gain"] = _popup(self._r(M + 82, 402, 250, 25), self._gain_titles())
+        ry = cy + PAD + 3 * ROW_H
+        v.addSubview_(_label("滚动速度", self._r(cx, ry + 5, LBL_W, 18)))
+        self.c["gain"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), self._gain_titles())
         self.c["gain"].setTarget_(self)
         self.c["gain"].setAction_("onGain:")
         v.addSubview_(self.c["gain"])
-        self.c["gain_hint"] = _label("", self._r(M + 344, 406, 254, 16), size=11, dim=True)
+        self.c["gain_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
+                                     size=11, dim=True, right=True)
         v.addSubview_(self.c["gain_hint"])
+        cy += 4 * ROW_H + 2 * PAD
 
-        self.c["enable"] = _button("启用笔桥接", self._r(M, 434, 160, 20),
-                                   self, "onEnable:", switch=True)
-        v.addSubview_(self.c["enable"])
-        self.c["takeover"] = _button("用笔的绝对坐标驱动光标（试验）",
-                                     self._r(M, 458, 340, 20), self, "onTakeover:", switch=True)
-        v.addSubview_(self.c["takeover"])
-        self.c["unknown"] = _button("允许未验证的小米设备", self._r(M, 482, 260, 20),
-                                    self, "onUnknown:", switch=True)
-        v.addSubview_(self.c["unknown"])
+        # ---- 桥接 ----
+        cy = self._sec(v, "桥接", cy + gap)
+        self._card(v, cy, 3 * cbh + 2 * PAD)
+        for i, (key, title, act) in enumerate((("enable", "启用笔桥接", "onEnable:"),
+                                               ("takeover", "用笔的绝对坐标驱动光标（试验）",
+                                                "onTakeover:"),
+                                               ("unknown", "允许未验证的小米设备", "onUnknown:"))):
+            self.c[key] = _button(title, self._r(cx, cy + PAD + i * cbh + 3, 360, 22),
+                                  self, act, switch=True)
+            v.addSubview_(self.c[key])
+        cy += 3 * cbh + 2 * PAD
 
         # ---- 显示缩放 ----
-        self._sec(v, "显示缩放", 510, note="只改平板那块屏，其他屏不动")
-        v.addSubview_(_label("缩放档位", self._r(M, 534, 76, 18)))
-        self.c["disp"] = _popup(self._r(M + 82, 530, 300, 25), ["正在扫描…"])
+        cy = self._sec(v, "显示缩放", cy + gap, note="只改平板那块屏，其他屏不动")
+        self._card(v, cy, 100)
+        ry = cy + PAD
+        v.addSubview_(_label("缩放档位", self._r(cx, ry + 5, LBL_W, 18)))
+        self.c["disp"] = _popup(self._r(CTRL_X, ry + 1, 340, 26), ["正在扫描…"])
         self.c["disp"].setTarget_(self)
         self.c["disp"].setAction_("onDisp:")
         v.addSubview_(self.c["disp"])
-        self.c["disp_btn"] = _button("重新扫描", self._r(M + 386, 530, 90, 25),
+        self.c["disp_btn"] = _button("重新扫描", self._r(CR - 104, ry + 1, 104, 26),
                                      self, "onDispRescan:")
         v.addSubview_(self.c["disp_btn"])
-        self.c["disp_hint"] = _label("", self._r(M, 560, W - 2 * M, 16), size=11, dim=True)
+        self.c["disp_hint"] = _label("", self._r(cx, ry + 32, CR - cx, 16), size=11, dim=True)
         v.addSubview_(self.c["disp_hint"])
-
-        self.c["disp_allow"] = _button("允许管理未实测的显示器", self._r(M, 582, 300, 20),
+        self.c["disp_allow"] = _button("允许管理未实测的显示器", self._r(cx, ry + 55, 360, 22),
                                        self, "onDispAllow:", switch=True)
         v.addSubview_(self.c["disp_allow"])
+        cy += 100
 
         # ---- 启动与日志 ----
-        self._sec(v, "启动与日志", 610)
-        self.c["autostart"] = _button("登录时自动启动", self._r(M, 630, 150, 20),
+        cy = self._sec(v, "启动与日志", cy + gap)
+        self._card(v, cy, 2 * ROW_H + 2 * PAD)
+        ry = cy + PAD
+        self.c["autostart"] = _button("登录时自动启动", self._r(cx, ry + 2, 170, 22),
                                       self, "onAutostart:", switch=True)
         v.addSubview_(self.c["autostart"])
-        self.c["autostart_hint"] = _label("", self._r(M + 158, 632, 300, 18), size=11, dim=True)
+        self.c["autostart_hint"] = _label("", self._r(cx + 178, ry + 5, CR - cx - 178, 18),
+                                          size=11, dim=True, right=True)
         v.addSubview_(self.c["autostart_hint"])
-
-        self.c["debug"] = _button("详细日志", self._r(M, 654, 120, 20),
+        ry = cy + PAD + ROW_H
+        self.c["debug"] = _button("详细日志", self._r(cx, ry + 2, 130, 22),
                                   self, "onDebug:", switch=True)
         v.addSubview_(self.c["debug"])
-        self.c["log_btn"] = _button("打开日志", self._r(M + 128, 650, 90, 26),
+        self.c["log_btn"] = _button("打开日志", self._r(CR - 212, ry, 104, 26),
                                     self, "onLog:", small=True)
         v.addSubview_(self.c["log_btn"])
-        self.c["diag_btn"] = _button("诊断…", self._r(M + 224, 650, 90, 26),
+        self.c["diag_btn"] = _button("诊断…", self._r(CR - 104, ry, 104, 26),
                                      self, "onDiag:", small=True)
         v.addSubview_(self.c["diag_btn"])
+        cy += 2 * ROW_H + 2 * PAD
 
-        # ---- 页脚: 只有版本行 (用户要求删掉「关于」「退出」; 退出本来就在菜单栏里) ----
-        self.c["ver"] = _label("", self._r(M, 686, 320, 18), size=11, dim=True)
+        # ---- 页脚: 只有版本行 (「关于」「退出」已在菜单栏里) ----
+        self.c["ver"] = _label("", self._r(cx, cy + 14, CR - cx, 16), size=11, dim=True)
         v.addSubview_(self.c["ver"])
+        used = cy + 14 + 16 + 12
+        if abs(used - H) > 6:
+            try:
+                self.app.log("窗口高度对不上: 布局用到 %g, H=%g" % (used, H))
+            except Exception:
+                pass
         return True
 
     @objc.python_method
