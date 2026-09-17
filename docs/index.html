@@ -260,13 +260,10 @@
   <div class="wrap">
     <a class="brand" href="#"><img src="logo.png" alt="Mipad DP Touch logo">Mipad DP Touch</a>
     <div class="links">
-      <a href="#problem">问题</a>
+      <a href="index.html">首页</a>
       <a href="tutorial.html">操作教程</a>
-      <a href="#features">功能</a>
-      <a href="#status">现状</a>
-      <a href="#quickstart">快速开始</a>
       <a href="settings.html">配置说明</a>
-      <a href="#faq">疑难解答</a>
+      <a href="faq.html">疑难解答</a>
       <a class="gh" href="https://github.com/InYvn/mipad-dp-touch">GitHub ↗</a>
     </div>
   </div>
@@ -400,43 +397,7 @@
   </div>
 </section>
 
-<section id="faq">
-  <div class="wrap">
-    <div class="kicker">疑难解答</div>
-    <h2>常见的几种情形</h2>
-    <p class="lead">更多内容见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/INSTALL.md" style="color:var(--accent-hi);text-decoration:none">INSTALL.md</a>。</p>
-    <div class="faq-list">
-    <details>
-      <summary>想弹右键菜单</summary>
-      <div class="body">笔尖停在原地不动，约 <b>0.8 秒</b>后抬手（设置里叫「长按不动」，可改 0.6 / 1.0 秒，也能关）。停住之后又划走的话仍算拖拽，不会误弹菜单。</div>
-    </details>
-    <details>
-      <summary>笔能点、能翻页，就是拖不动窗口 / 划不了选</summary>
-      <div class="body">先看「滑动方式」：<b>滑动翻页</b>模式下快速划动只用来滚动；要拖拽就<b>把笔尖停住约 0.25 秒再划</b>（长按时间在设置窗口里调，嫌误触可调慢或关掉）。想每一笔都是拖拽，切成<b>滑动选择</b>。</div>
-    </details>
-    <details>
-      <summary>笔点了没反应</summary>
-      <div class="body">十有八九是权限。打开设置窗口的「权限」分区，分步做完两步（辅助功能 + 输入监控），然后点「立即重启」。注意 macOS 27 里「辅助功能」改名叫<b>「设备控制和数据访问」</b>。</div>
-    </details>
-    <details>
-      <summary>更新完 App 就失效了</summary>
-      <div class="body">ad-hoc 签名 + TCC 的老问题：重新授权一次即可。<b>升级时 bundle id 故意保持不变</b>，就是尽量别让你重授权。</div>
-    </details>
-    <details>
-      <summary>字太小 / 太糊</summary>
-      <div class="body">用菜单「显示缩放」切到 <code>1704×1136</code>（带「像素 1:1 最锐」标注）。别去系统设置里拉低分辨率，那样会糊。</div>
-    </details>
-    <details>
-      <summary>找不到窗口，只有一个菜单栏图标</summary>
-      <div class="body">这就是菜单栏应用，没有 Dock 窗口。点菜单栏图标 →「设置…」（⌘,）。</div>
-    </details>
-    <details>
-      <summary>光标不跟着笔走</summary>
-      <div class="body">打开「详细日志」：日志会列出笔的坐标和系统光标的差值。差得明显 = 光标没跟上笔；差值为 0 却点不动 = 事件发出去了、系统没认。</div>
-    </details>
-    </div>
-  </div>
-</section>
+<div class="cta-row"><a href="faq.html" class="cta-strip"><b>疑难解答</b> — 右键菜单 · 拖拽 · 权限 · 显示缩放 · 诊断自检 →</a></div>
 
 </main>
 

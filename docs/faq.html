@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>疑难解答 — Mipad DP Touch</title>
+<meta name="description" content="Mipad DP Touch 疑难解答：右键菜单、拖拽、权限、更新失效、显示缩放、日志诊断等常见情形与处理办法。">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-raised: #13161b;
+    --bg-elev: #191d24;
+    --ink: #edeff3;
+    --muted: #999fa9;
+    --faint: #646b76;
+    --border: #242931;
+    --border-hi: #323944;
+    --accent: #ff6900;
+    --accent-hi: #ff8532;
+    --accent-soft: rgba(255, 105, 0, .11);
+    --good: #4cc38a;
+    --bad: #e5534b;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+    --sans: -apple-system, "PingFang SC", "Segoe UI", "Noto Sans SC", sans-serif;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.7; font-size: 15.5px; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  ::selection { background: rgba(255,105,0,.3); }
+  a { color: var(--accent-hi); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3 { text-wrap: balance; }
+  p { text-wrap: pretty; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; color: var(--ink); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(11,13,16,.78); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; }
+  nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; text-decoration: none; color: var(--ink); letter-spacing: -.01em; }
+  nav .brand img { width: 27px; height: 27px; }
+  nav .links { display: flex; align-items: center; gap: 20px; font-size: 14px; }
+  nav .links a { color: var(--muted); text-decoration: none; transition: color .15s; }
+  nav .links a:hover { color: var(--ink); }
+  nav .links a.now { color: var(--accent-hi); }
+  nav .links a.gh { display: inline-flex; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border-hi); background: var(--bg-raised); color: var(--ink); font-weight: 550; }
+  nav .links a.gh:hover { border-color: #4a515c; color: var(--ink); }
+  @media (max-width: 760px) { nav .links { display: none; } }
+
+  header.page { padding: 52px 0 26px; }
+  .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent-hi); margin-bottom: 10px; }
+  h1 { font-size: clamp(26px, 5vw, 36px); font-weight: 720; letter-spacing: -.015em; }
+  .lead { color: var(--muted); margin-top: 10px; max-width: 700px; font-size: 16px; }
+  .lead a { text-decoration: none; }
+
+  section { padding: 34px 0; }
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 14px; }
+  .faq-list { max-width: 780px; }
+  details { border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; background: var(--bg-raised); overflow: hidden; transition: border-color .15s; }
+  details:hover, details[open] { border-color: var(--border-hi); }
+  details summary { cursor: pointer; padding: 15px 20px; font-size: 15px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after { content: "+"; color: var(--muted); font-size: 19px; font-weight: 400; transition: transform .18s; }
+  details[open] summary::after { transform: rotate(45deg); color: var(--accent-hi); }
+  details .body { padding: 0 20px 16px; font-size: 14px; color: var(--muted); }
+  details .body b { color: var(--ink); }
+  details .body code { color: var(--accent-hi); }
+
+  /* symptom table */
+  .table-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); overflow: hidden; max-width: 780px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th { color: var(--muted); font-size: 12.5px; letter-spacing: .06em; font-weight: 600; }
+  td:first-child b { font-weight: 600; color: var(--ink); }
+  td { color: var(--muted); }
+  td code { color: var(--accent-hi); }
+
+  pre.diag {
+    font-family: var(--mono); font-size: 13px; color: var(--ink);
+    background: #08090c; border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; margin-top: 14px; max-width: 780px; line-height: 1.8;
+  }
+  pre.diag .c { color: var(--faint); user-select: none; }
+  pre.diag .v { color: var(--accent-hi); }
+
+  .callout {
+    margin-top: 16px; padding: 15px 20px; border-radius: 12px;
+    border: 1px solid rgba(255,105,0,.3); background: var(--accent-soft);
+    max-width: 780px; font-size: 14px;
+  }
+  .callout b { color: var(--accent-hi); }
+  .callout p { color: var(--ink); font-size: 14px; }
+
+  .more { border-top: 1px solid var(--border); padding: 34px 0 60px; font-size: 14px; color: var(--muted); max-width: 780px; }
+  footer { padding: 30px 0 56px; border-top: 1px solid var(--border); text-align: center; font-size: 13.5px; color: var(--faint); }
+  footer .flinks { display: flex; gap: 22px; justify-content: center; margin-bottom: 10px; font-size: 14px; }
+  footer .flinks a { color: var(--muted); text-decoration: none; border: none; }
+  footer .flinks a:hover { color: var(--ink); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt="Mipad DP Touch logo">Mipad DP Touch</a>
+    <div class="links">
+      <a href="index.html">首页</a>
+      <a href="tutorial.html">操作教程</a>
+      <a href="settings.html">配置说明</a>
+      <a class="now" href="faq.html">疑难解答</a>
+      <a class="gh" href="https://github.com/InYvn/mipad-dp-touch">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page">
+  <div class="wrap">
+    <div class="kicker">疑难解答</div>
+    <h1>出了状况？先对症，再动手</h1>
+    <p class="lead">按现象找处理办法。更深的内容见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/INSTALL.md">INSTALL.md</a>（安装、授权、显示缩放专节）。</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section>
+  <h2>各种情形</h2>
+  <div class="faq-list">
+    <details>
+      <summary>想弹右键菜单</summary>
+      <div class="body">笔尖停在原地不动，约 <b>0.8 秒</b>后抬手（设置里叫「长按不动」，可改 0.6 / 1.0 秒，也能关）。停住之后又划走的话仍算拖拽，不会误弹菜单。</div>
+    </details>
+    <details>
+      <summary>笔能点、能翻页，就是拖不动窗口 / 划不了选</summary>
+      <div class="body">先看「滑动方式」：<b>滑动翻页</b>模式下快速划动只用来滚动；要拖拽就<b>把笔尖停住约 0.25 秒再划</b>（长按时间在设置窗口里调，嫌误触可调慢或关掉）。想每一笔都是拖拽，切成<b>滑动选择</b>。详见 <a href="settings.html#pen-input">配置说明 → 笔的输入</a>。</div>
+    </details>
+    <details>
+      <summary>笔点了没反应</summary>
+      <div class="body">十有八九是权限。打开设置窗口的「权限」分区，分步做完两步（辅助功能 + 输入监控），然后点「立即重启」。注意 macOS 27 里「辅助功能」改名叫<b>「设备控制和数据访问」</b>。</div>
+    </details>
+    <details>
+      <summary>更新完 App 就失效了</summary>
+      <div class="body">ad-hoc 签名 + TCC 的老问题：重新授权一次即可。<b>升级时 bundle id 故意保持不变</b>，就是尽量别让你重授权。如果重开开关仍不行，见下面「权限重置命令」。</div>
+    </details>
+    <details>
+      <summary>字太小 / 太糊</summary>
+      <div class="body">用菜单「显示缩放」切到 <code>1704×1136</code>（带「像素 1:1 最锐」标注）。别去系统设置里拉低分辨率，那样会糊。原理见 <a href="settings.html#display">配置说明 → 显示缩放</a>。</div>
+    </details>
+    <details>
+      <summary>找不到窗口，只有一个菜单栏图标</summary>
+      <div class="body">这就是菜单栏应用，没有 Dock 窗口。点菜单栏图标 →「设置…」（⌘,）。</div>
+    </details>
+    <details>
+      <summary>光标不跟着笔走</summary>
+      <div class="body">打开「详细日志」：日志会列出笔的坐标和系统光标的差值。差得明显 = 光标没跟上笔；差值为 0 却点不动 = 事件发出去了、系统没认。</div>
+    </details>
+    <details>
+      <summary>菜单显示「未检测到设备」</summary>
+      <div class="body">平板没接好，或不在 DP-in 模式。重新插线，看平板是否作为外接屏亮起。线必须是<b>全功能</b> USB-C 转 USB-C、直连 Mac 雷雳口。</div>
+    </details>
+    <details>
+      <summary>点击、滚动都正常，手指没反应</summary>
+      <div class="body"><b>正常，且当前无解。</b>平板对外接主机只上报笔这一路数据，触摸屏那一路压根不存在——这是设备固件的取舍，软件层绕不过去。</div>
+    </details>
+    <details>
+      <summary>滚动方向反了 / 太快太慢</summary>
+      <div class="body">设置窗口「笔的输入」→「滚动方向」选另一个；速度在「滚动速度」里调。默认「跟随系统」，一般不用动。</div>
+    </details>
+    <details>
+      <summary>多屏时「显示缩放」整组变灰</summary>
+      <div class="body">没认出平板那块屏（EDID/名字不匹配）→ 勾「允许管理未实测的显示器」再操作。变灰是保护性设计，防止误改别的屏。</div>
+    </details>
+    <details>
+      <summary>换过分辨率后笔的落点偏了</summary>
+      <div class="body">用<b>菜单里的「显示缩放」</b>切档会自动重算坐标基准，不用重启。如果是在系统设置里改的分辨率，回到 App 菜单随便切一档再看。</div>
+    </details>
+    <details>
+      <summary>什么都不对 / 想全面自检</summary>
+      <div class="body">用 ⌘, 打开设置窗口 →「启动与日志」→「诊断…」跑一遍自检，结果写进日志；「打开日志」看 <code>~/Library/Logs/MipadDPTouch.log</code>。</div>
+    </details>
+  </div>
+
+  <div class="callout">
+    <b>权限重置命令</b>（更新后权限失效、且开关重开无效时用）
+    <p style="margin-top:8px"><code>tccutil reset Accessibility io.github.inyvn.xiaomi-dptouch</code><br>
+    <code>tccutil reset ListenEvent io.github.inyvn.xiaomi-dptouch</code><br>
+    然后重启 App 重新走一遍分步授权。</p>
+  </div>
+</section>
+
+<section>
+  <h2>无头自检（脚本 / 排障用）</h2>
+  <p style="color:var(--muted);font-size:14.5px;max-width:780px">不进 GUI 交互，输出都在 <code>~/Library/Logs/MipadDPTouch.log</code>：</p>
+  <pre class="diag"><span class="c"># 1) 打印真实菜单树 + 认到哪块屏 + 有哪些 HiDPI 档（不改任何设置）</span>
+DPTOUCH_SELFTEST_MENU=exit "/Applications/Mipad DP Touch.app/Contents/MacOS/MipadDPTouch"
+
+<span class="c"># 2) 真走一遍「显示缩放」菜单动作：切 1280×853 再切回 1704×1136</span>
+DPTOUCH_SELFTEST_DISPLAY=exit DPTOUCH_NO_ALERT=1 "/Applications/Mipad DP Touch.app/Contents/MacOS/MipadDPTouch"
+
+<span class="c"># 3) 设置窗口: 控件树 + 布局质检 + 分步授权/首启引导自检</span>
+DPTOUCH_SELFTEST_WINDOW=exit DPTOUCH_NO_GUIDE=1 "/Applications/Mipad DP Touch.app/Contents/MacOS/MipadDPTouch"</pre>
+  <p style="color:var(--muted);font-size:13.5px;margin-top:10px"><code>DPTOUCH_NO_ALERT=1</code> 让所有弹窗只写日志，脚本/无头跑不会挂住。</p>
+</section>
+
+<section class="more">
+  <p><b style="color:var(--ink)">还没装？</b>先看 <a href="index.html#quickstart">快速开始</a>；想改手感（判定时长、滚动方向、速度）在 <a href="settings.html">配置说明</a> 里逐项都有解释。</p>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="flinks">
+      <a href="index.html">首页</a>
+      <a href="tutorial.html">操作教程</a>
+      <a href="settings.html">配置说明</a>
+      <a href="faq.html">疑难解答</a>
+      <a href="https://github.com/InYvn/mipad-dp-touch">GitHub ↗</a>
+    </div>
+    <p>Mipad DP Touch · 疑难解答 · 遵循 MIT License</p>
+  </div>
+</footer>
+
+</body>
+</html>
