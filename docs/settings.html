@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配置说明 — Mipad DP Touch</title>
+<meta name="description" content="Mipad DP Touch 各配置项的作用：滑动方式、停住再划、长按不动、滚动方向与速度、桥接、显示缩放、启动与日志。">
+<style>
+  :root {
+    --bg: #0d0f12;
+    --bg-raised: #14171c;
+    --ink: #e8eaee;
+    --muted: #9aa1ad;
+    --border: #262b33;
+    --accent: #ff6900;
+    --accent-soft: rgba(255, 105, 0, .12);
+    --good: #4cc38a;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+    --sans: -apple-system, "PingFang SC", "Segoe UI", "Noto Sans SC", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.7; font-size: 15.5px; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: var(--mono); font-size: .88em; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  nav { position: sticky; top: 0; z-index: 10; background: rgba(13,15,18,.85); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--ink); }
+  nav .brand img { width: 26px; height: 26px; }
+  nav .links { display: flex; gap: 20px; font-size: 14px; }
+  nav .links a { color: var(--muted); }
+  nav .links a:hover { color: var(--ink); text-decoration: none; }
+  nav .links a.now { color: var(--accent); }
+  @media (max-width: 640px) { nav .links { display: none; } }
+
+  header.page { padding: 52px 0 30px; }
+  .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  h1 { font-size: clamp(26px, 5vw, 36px); font-weight: 700; letter-spacing: -.01em; }
+  .lead { color: var(--muted); margin-top: 10px; max-width: 680px; }
+
+  section { padding: 34px 0; border-top: 1px solid var(--border); }
+  h2 { font-size: 20px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .where { font-family: var(--mono); font-size: 12px; color: var(--muted); font-weight: 400; letter-spacing: .05em; }
+  h3 { font-size: 15px; font-weight: 600; margin: 18px 0 6px; color: var(--ink); }
+  p, li { color: var(--muted); font-size: 14.5px; }
+  p b, li b, .mark { color: var(--ink); }
+  p .hi, li .hi { color: var(--accent); }
+
+  .item { display: grid; grid-template-columns: 220px 1fr; gap: 18px; padding: 16px 0; border-top: 1px solid var(--border); }
+  .item:first-of-type { border-top: none; }
+  @media (max-width: 640px) { .item { grid-template-columns: 1fr; gap: 4px; } }
+  .item .name { font-weight: 600; font-size: 15px; }
+  .item .name small { display: block; font-family: var(--mono); font-size: 11px; color: #6b7280; font-weight: 400; margin-top: 2px; letter-spacing: .04em; }
+  .item .desc { font-size: 14.5px; }
+  .item .desc p { margin-bottom: 6px; }
+  .item .desc .good { color: var(--good); }
+
+  .why { margin-top: 10px; padding: 14px 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-raised); font-size: 13.5px; }
+  .why .tag { display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 4px; letter-spacing: .1em; }
+  .why p { font-size: 13.5px; }
+
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .opt { font-size: 12.5px; font-family: var(--mono); padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .opt.rec { border-color: rgba(255,105,0,.4); color: var(--accent); background: var(--accent-soft); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 14px; }
+  th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+  td b { color: var(--ink); }
+  td.rec { color: var(--accent); }
+
+  .tip { margin-top: 14px; padding: 14px 18px; border-radius: 10px; border: 1px solid rgba(255,105,0,.3); background: var(--accent-soft); font-size: 14px; }
+  .tip b { color: var(--accent); }
+  .tip p { color: var(--ink); font-size: 14px; }
+
+  footer { padding: 40px 0 60px; border-top: 1px solid var(--border); text-align: center; font-size: 13.5px; color: #6b7280; }
+  footer a { color: var(--muted); border-bottom: 1px dotted var(--muted); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.png" alt="Mipad DP Touch logo">Mipad DP Touch · 配置说明</a>
+    <div class="links">
+      <a href="index.html">首页</a>
+      <a class="now" href="settings.html">配置说明</a>
+      <a href="tutorial.html">操作教程</a>
+      <a href="index.html#faq">疑难解答</a>
+      <a href="https://github.com/InYvn/mipad-dp-touch" style="color:var(--accent)">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page">
+  <div class="wrap">
+    <div class="kicker">配置说明</div>
+    <h1>每个设置项是干什么的</h1>
+    <p class="lead">按设置窗口从上到下的分区顺序。全部设置自动保存在 <code>~/Library/Application Support/MipadDPTouch/config.json</code>，下次启动恢复；菜单栏和设置窗口是同一份状态的两个表面，改哪边都一样。</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="status-zone">
+  <h2>状态 <span class="where">窗口顶部</span></h2>
+  <div class="item">
+    <div class="name">连接状态<small>LIVE</small></div>
+    <div class="desc"><p>当前设备状态：如实显示「运行中」「未运行」「等平板上线」，不粉饰。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">事件计数<small>COUNTERS</small></div>
+    <div class="desc"><p><span class="mark">笔事件 / 点击 / 拖拽 / 滚动</span> 实时计数，菜单栏「清零计数」可归零。笔到底有没有 responded，看这里最快。</p></div>
+  </div>
+</section>
+
+<section id="permissions">
+  <h2>权限 <span class="where">分步引导，只做一次</span></h2>
+  <div class="item">
+    <div class="name">为什么必须分步<small>STEP BY STEP</small></div>
+    <div class="desc">
+      <p>macOS 不允许程序自己给自己授权，所以必须你在系统设置里点两下。App 不会把两个弹窗糊你脸上 —— 上一步没完成，下一步是灰的，<span class="mark">每秒对一次权限状态</span>，完成第 ① 步第 ② 步自己亮起来。</p>
+      <div class="opts"><span class="opt rec">① 辅助功能</span><span class="opt rec">② 输入监控</span></div>
+      <p style="margin-top:10px">① <b>辅助功能</b>：允许合成点击与拖拽 —— <span class="hi">不开，笔能移光标但点了没反应</span>。macOS 27 里它改名「设备控制和数据访问」，`隐私与安全性` 两个位置都找一下，哪个有开哪个。</p>
+      <p>② <b>输入监控</b>：读取平板笔的原始数据 —— <span class="hi">不开，收不到任何笔事件</span>。</p>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">立即重启 / 重新检测<small>TCC</small></div>
+    <div class="desc">
+      <p>macOS 的权限判定发生在<b>进程启动时</b>，授权后点「立即重启」才生效（不用手动退出再打开）。「重新检测」则重新连一次，如实告诉你成没成。</p>
+      <div class="tip"><p><b>更新 App 后权限失效？</b> 本 App 是 ad-hoc 签名，按代码哈希记身份，重新打包哈希必变 —— 关掉开关再开没用。终端重置再重启：<code>tccutil reset Accessibility io.github.inyvn.xiaomi-dptouch</code> + <code>tccutil reset ListenEvent io.github.inyvn.xiaomi-dptouch</code>。升级时 bundle id 故意不变，就是尽量别让你走到这一步。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="pen-input">
+  <h2>笔的输入 <span class="where">手感主战场</span></h2>
+  <div class="item">
+    <div class="name">滑动方式<small>SWIPE MODE</small></div>
+    <div class="desc">
+      <p>决定「按住笔尖划动」时做什么。</p>
+      <div class="opts"><span class="opt rec">滑动翻页 · 不选中文字（默认）</span><span class="opt">滑动选择 · 拖拽与划选</span></div>
+      <p style="margin-top:10px"><b>滑动翻页</b>：划动<b>完全不会产生鼠标按键事件</b>，所以不可能误选中文字 —— 不是「划完再取消选择」，而是压根没有「按住」这个状态。适合看文档、翻网页。</p>
+      <p><b>滑动选择</b>：每一笔都当拖拽处理，划选文字最顺手，代价是翻页时容易带选。</p>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">停住再划 = 拖拽<small>PAUSE-DRAG</small></div>
+    <div class="desc">
+      <p>翻页模式下想要第二个手势：笔尖<b>先停住一小会儿再划</b> → 当作拖拽（拖窗口、划选文字、拖滑块）。手势互不干扰：一手开始时判成哪种，整手就按哪种走。</p>
+      <div class="opts"><span class="opt rec">0.25s（默认）</span><span class="opt">四档可选</span><span class="opt">可关闭</span></div>
+      <p style="margin-top:10px">嫌误触就调慢，或者干脆关掉长按、只留点击和翻页。想每一笔都是拖拽，就切换滑动方式，不需要这个停顿。</p>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">长按不动 = 右键菜单<small>HOLD-CLICK</small></div>
+    <div class="desc">
+      <p>笔尖<b>停在原地不动</b>、到时抬手，即弹右键菜单（桌面、Finder、各种 App 都能用）。</p>
+      <div class="opts"><span class="opt rec">0.8s（默认）</span><span class="opt">0.6s</span><span class="opt">1.0s</span><span class="opt">关</span></div>
+      <p style="margin-top:10px">停住之后又划走的话仍算拖拽，不会误弹菜单。</p>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">滚动方向<small>SCROLL DIR</small></div>
+    <div class="desc">
+      <p>默认<span class="mark">跟随系统</span> —— 跟你 Mac「系统设置 → 鼠标/触控板 → 自然滚动」走的设置，你不需要理解原理。觉得方向反了，选「始终自然」或「始终传统」覆盖即可。</p>
+      <div class="opts"><span class="opt rec">跟随系统（默认）</span><span class="opt">始终自然</span><span class="opt">始终传统</span></div>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">滚动速度<small>SCROLL SPEED</small></div>
+    <div class="desc"><p>划动翻页的速度档位，太快或太慢都在这里调。</p></div>
+  </div>
+</section>
+
+<section id="bridge">
+  <h2>桥接 <span class="where">核心开关</span></h2>
+  <div class="item">
+    <div class="name">启用笔桥接<small>BRIDGE</small></div>
+    <div class="desc"><p>总开关。临时停用不用拔线；菜单栏也有同名勾选项，两边状态同步。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">用笔的绝对坐标驱动光标（试验）<small>ABSOLUTE</small></div>
+    <div class="desc"><p>笔本来就是绝对坐标设备，直接用它驱动光标。试验性开关，出问题就关掉。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">允许未验证的小米设备<small>WHITELIST+</small></div>
+    <div class="desc">
+      <p>给未来机型的<b>兜底开关</b>。默认只匹配已实测设备（小米平板 9 Pro Max，VID <code>0x2717</code> / PID <code>0x2D05</code>），避免误碰小米其它产品。如果你的小米平板也是 DP-in 且笔能移光标，打开它试试；能用欢迎提 issue 把型号加进白名单（<code>src/dptouch_engine.py</code> 的 <code>KNOWN_DEVICES</code>）。</p>
+    </div>
+  </div>
+</section>
+
+<section id="display">
+  <h2>显示缩放 <span class="where">只改平板那块屏</span></h2>
+  <div class="item">
+    <div class="name">为什么会有这个功能<small>WHY</small></div>
+    <div class="desc">
+      <p>平板面板原生 <b>3408×2272</b>（13.3″、308 ppi）。按 1x 直接送信号时逻辑 PPI ≈ 308，字比 MacBook Air 小 2.4 倍 —— 这就是「字太小」那档。<b>直接拉低分辨率会糊</b>：帧缓冲小于面板原生，平板要自己放大。</p>
+      <p>正确做法是切到系统已经生成好的 <b>HiDPI 档</b>（按 2x 渲染、再 1:1 送面板，画面仍是最锐的）：</p>
+      <table>
+        <tr><th>档位</th><th>UI 看起来</th><th>帧缓冲（真实信号）</th><th>逻辑 PPI</th><th>锐度</th></tr>
+        <tr><td class="rec"><b>1704×1136</b> @120Hz</td><td>字大了一档，刚好顺手</td><td>3408×2272（= 面板原生，1:1）</td><td>≈154</td><td class="rec">最锐，零放大</td></tr>
+        <tr><td><b>1280×853</b> @120Hz</td><td>字更大</td><td>2560×1706</td><td>≈116</td><td>被平板放大 1.33x，略软</td></tr>
+        <tr><td>3408×2272 1x（原状）</td><td>字极小</td><td>3408×2272</td><td>≈308</td><td>1:1 但几乎没法读</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">多屏安全的设计<small>SAFETY</small></div>
+    <div class="desc">
+      <p>先用 EDID（厂商 <code>25001</code> / 型号 <code>4</code>）+ 屏幕名认出平板，认不出就把整组变灰、什么都不做；多个屏都像平板 → 拒绝（宁可不动也不猜）。<span class="mark">Mac 自带屏永不改</span>——改坏了自己那块屏就没法点菜单自救。提交时只改目标屏的<b>模式</b>，不碰其他屏的分辨率、排列、镜像。</p>
+    </div>
+  </div>
+  <div class="item">
+    <div class="name">允许管理未实测的显示器<small>ALLOW+</small></div>
+    <div class="desc"><p>多屏时「显示缩放」整组变灰说明没认出平板那块屏 —— 勾上这个才允许操作 EDID/名字不匹配的屏。这是防误触碰发的，确认列出来的是平板再开。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">切换立即生效<small>RESYNC</small></div>
+    <div class="desc"><p>切档自动重建坐标基准（<code>engine.resync_display()</code>），笔的落点立刻对齐新尺寸，<b>不用重启 App</b>。档位持久生效，重启后仍是这一档。想回 1x 3408×2272 原生档要用「打开「显示器」设置…」在系统设置里选。</p></div>
+  </div>
+</section>
+
+<section id="startup">
+  <h2>启动与日志</h2>
+  <div class="item">
+    <div class="name">登录时自动启动<small>LAUNCH AT LOGIN</small></div>
+    <div class="desc"><p>登一下开关，登录后自动就绪。以系统实际状态为准并在旁边显示「已登记为登录项」；在「系统设置 → 通用 → 登录项」里可见、随时能关。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">详细日志<small>VERBOSE</small></div>
+    <div class="desc"><p>排查用。开了之后日志会列出笔的坐标和系统光标的差值：<b>差得明显</b> = 光标没跟上笔；<b>差值为 0 却点不动</b> = 事件发出去了、系统没认。日志在 <code>~/Library/Logs/MipadDPTouch.log</code>，只含笔事件计数，不含坐标历史和输入内容（App 不联网）。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">诊断…<small>SELFTEST</small></div>
+    <div class="desc"><p>跑一遍自检，把结果写进日志。「什么都不对」时先点它。也支持无头自检，命令见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/INSTALL.md">INSTALL.md</a>。</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>隐私与卸载</h2>
+  <div class="why">
+    <span class="tag">PRIVACY</span>
+    <p>不联网，没有任何网络代码。只要两项最低权限：输入监控（读笔）+ 辅助功能（发鼠标事件）。卸载 = 菜单退出 → 删 App → 删 <code>~/Library/Application Support/MipadDPTouch/</code>，没有残留服务。</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div>Mipad DP Touch · 配置说明 · 遵循 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/LICENSE">MIT License</a></div>
+</footer>
+
+</body>
+</html>
