@@ -4,7 +4,8 @@
 小米平板 9 Pro Max (DP-in 便携屏) HID 诊断 / 触控桥接
 
 设备事实 (ioreg + 实跑实测):
-  USB 复合设备 VID=0x2717(10007) PID=0x2D05(11525)
+  USB 复合设备 PID=0x2D05(11525), VID 会变: 0x2717(10007, 小米) / 0x18D1(6353, Google 通用身份)
+    -> 认设备一律按 ProductID, 见 make_match()
   接口 0/1 : MTP
   接口 2   : HID  DeviceUsagePage=1  Keyboard / Mouse(相对坐标)   <- 平时不出数据
   接口 3   : HID  DeviceUsagePage=13 Pen(Digitizer)               <- 笔/触控回传
@@ -35,8 +36,9 @@ import datetime
 import sys
 import time
 
-VENDOR = 0x2717
+VENDOR = 0x2717        # 小米身份; 平板会变身份, 匹配不用它, 只留给诊断输出
 PRODUCT = 0x2D05
+TABLET_VIDS = (0x2717, 0x18D1)   # 会话间实测出现过的两种身份
 RAW_LIMIT = 300
 
 cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
@@ -120,9 +122,16 @@ def cfnum(v):
 
 
 def make_match():
-    keys = (ctypes.c_void_p * 2)(cfstr(b"VendorID"), cfstr(b"ProductID"))
-    vals = (ctypes.c_void_p * 2)(cfnum(VENDOR), cfnum(PRODUCT))
-    return cf.CFDictionaryCreate(None, keys, vals, 2, CF_KB(), CF_VB())
+    """按 ProductID 匹配 —— 绝不带 VendorID。
+
+    平板在 DP-in 会话里会把自己报成 0x18D1(Google 通用身份) 而不是 0x2717(小米)，
+    带 VendorID 的匹配表此时命中 0 个设备：平板侧 HID 完好、macOS 也挂上了笔，
+    但 App 一个都打不开 —— 表现就是「等待平板上线」+ 笔全失效。
+    2026-09-17 实测: VID=0x2717 -> 0 命中, VID=0x18D1 -> 2 个 HID 接口。
+    """
+    keys = (ctypes.c_void_p * 1)(cfstr(b"ProductID"))
+    vals = (ctypes.c_void_p * 1)(cfnum(PRODUCT))
+    return cf.CFDictionaryCreate(None, keys, vals, 1, CF_KB(), CF_VB())
 
 
 def ax_opts(prompt=True):

@@ -26,13 +26,19 @@ import time
 import hid_bridge as H
 
 KCFSTRING_UTF8 = 0x08000100
-XIAOMI_VID = 0x2717
+XIAOMI_VID = 0x2717                       # 旧身份, 仅保留作说明
+TABLET_VIDS = (0x2717, 0x18D1)            # 平板会话间会换身份: 小米 / Google 通用
+TABLET_PID = 0x2D05
 
-# 已知设备表：(VID, PID, 显示名, 是否已实测验证)
-# 优先保证小米平板 9 Pro Max —— 小米首款支持 DP-in 的平板。
+# 已知设备表：(PID, 显示名, 是否已实测验证)
+#
+# 认设备按 PID（+ 产品名 "Xiaomi Pad"）判定, **不锁 VendorID**：
+# 同一台平板在不同会话里会把自己报成 0x2717(小米) 或 0x18D1(Google 通用身份)，
+# 锁死单一 VID 会让整轮认不到平板 —— 表现为菜单停在「等待平板上线」、笔全部失效。
+# 2026-09-17 两轮对照实测确认（同一台机、同样 3 接口、HID 描述符一字不差）。
 # 后续小米若再出 DP-in 机型，在这里加一行即可；表外的设备走「允许未验证设备」开关。
 KNOWN_DEVICES = [
-    (0x2717, 0x2D05, "小米平板 9 Pro Max", True),
+    (0x2D05, "小米平板 9 Pro Max", True),
 ]
 
 MODES = {
@@ -148,8 +154,9 @@ def device_info(dev):
 
 
 def friendly_name(vid, pid, raw=""):
-    for v, p, name, _verified in KNOWN_DEVICES:
-        if v == vid and p == pid:
+    """按 PID 认设备 —— 产品名与 VID 都不参与判定, 平板换身份也认得出。"""
+    for p, name, _verified in KNOWN_DEVICES:
+        if p == pid:
             return name
     if raw:
         return "%s (未验证, %04X:%04X)" % (raw, vid, pid)
@@ -333,12 +340,19 @@ class Engine(object):
     # ---------------- 生命周期 ----------------
 
     def _match(self):
+        """IOHIDManager 匹配表。
+
+        已知设备按 **ProductID** 匹配（不带 VendorID）—— 平板在 DP-in 会话里会
+        从 0x2717 变成 0x18D1，带上 VID 就一个也匹配不到。
+        「允许未验证设备」时按 VID 白名单匹配（两种身份都收）。
+        """
         dicts = []
         if self.cfg["allow_unknown"]:
-            dicts.append(_dict([(b"VendorID", XIAOMI_VID)]))
+            for v in TABLET_VIDS:
+                dicts.append(_dict([(b"VendorID", v)]))
         else:
-            for v, p, _n, _ok in KNOWN_DEVICES:
-                dicts.append(_dict([(b"VendorID", v), (b"ProductID", p)]))
+            for p, _n, _ok in KNOWN_DEVICES:
+                dicts.append(_dict([(b"ProductID", p)]))
         arr = (ctypes.c_void_p * len(dicts))(*dicts)
         ret = H.cf.CFArrayCreate(None, arr, len(dicts), CF_AB())
         for d in dicts:
@@ -450,7 +464,7 @@ class Engine(object):
             try:
                 raw, vid, pid = device_info(device)
                 name = friendly_name(vid, pid, raw)
-                known = any(v == vid and p == pid for v, p, _n, _o in KNOWN_DEVICES)
+                known = any(p == pid for p, _n, _o in KNOWN_DEVICES)
                 if added:
                     with eng._lk:
                         if not any(d[1] == vid and d[2] == pid for d in eng.devices):

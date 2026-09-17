@@ -296,7 +296,7 @@ class DPApp(NSObject):
                         "events": 1234, "fwd": 0, "scroll": 34, "click": 12, "drag": 5,
                         "down": 0, "mode": self.cfg["mode"], "flip": False, "error": ""}
 
-            _dev = (("小米平板 9 Pro Max", 0x2717, 0x2D05, True),)
+            _dev = (("小米平板 9 Pro Max", 0x18D1, 0x2D05, True),)
             for _tag, _st_ in (("权限不齐", _fake_st(False, False, -536870174)),
                                ("只缺输入监控", _fake_st(True, False, -536870174)),
                                ("权限就绪", _fake_st(True, True, 0, _dev))):
