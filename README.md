@@ -13,6 +13,11 @@
     <sub>Make the Xiaomi Focus Pen Pro actually usable on macOS when a Xiaomi Pad serves as an external DP-in display.</sub>
   </p>
 
+<p>
+  📖 <b><a href="https://inyvn.github.io/mipad-dp-touch/docs/index.html">在线网站 / 官网</a></b> — 动画操作教程 · 配置逐项说明 · 快速开始
+  <br/>🌐 https://inyvn.github.io/mipad-dp-touch/docs/index.html
+</p>
+
 <p><i>不装驱动、不改任何系统文件、不需要 Apple 开发者签名 —— 删掉 App 就等于卸载</i></p>
 </div>
 
@@ -22,6 +27,7 @@
 ![Python](https://img.shields.io/badge/Python-3.12-3776ab)
 ![界面](https://img.shields.io/badge/UI-%E8%8F%9C%E5%8D%95%E6%A0%8F%20%2B%20%E8%AE%BE%E7%BD%AE%E7%AA%97%E5%8F%A3-4c8bf5)
 [![许可](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![官网](https://img.shields.io/badge/🌐_官网-inyvn.github.io%2Fmipad--dp--touch-ff6900)](https://inyvn.github.io/mipad-dp-touch/docs/index.html)
 
 </div>
 
