@@ -398,25 +398,12 @@ HOLD_MS_OPTS = (200, 250, 350, 500)   # 长按判定档位 (ms): 窗口下拉与
 RC_HOLD_MS_OPTS = (0, 600, 800, 1000)  # ★长按不动 = 右键菜单 的档位 (ms); 0 = 关。窗口下拉与 CLI 共用同一份
 RC_HOLD_DT = 0.8       # 默认: 笔尖停住不动 0.8s -> 抬手时弹右键菜单 (长按之后又划走 => 仍是拖拽)
 
-# ★按键绑定: 笔上的物理按键(笔侧键 / 橡皮擦端)各可以绑一个动作。
-#   设置窗口的下拉和 CLI 共用这一份, 顺序就是下拉里的顺序。
-BIND_ACTIONS = (
-    ("none",   "关"),
-    ("right",  "右键菜单"),
-    ("middle", "中键单击"),
-    ("left",   "左键单击"),
-    ("double", "双击"),
-    ("space",  "空格键"),
-    ("back",   "返回"),
-)
-BIND_TITLES = dict(BIND_ACTIONS)
 OTHERS_DOWN, OTHERS_UP = 25, 26   # kCGEventOtherMouseDown / Up —— 中键就靠这俩
 
 
 class Bridge(object):
     def __init__(self, takeover=False, drag_pen=False, scroll=False, scroll_flip=False,
-                 hold_drag=True, hold_ms=None, rc_hold_ms=0,
-                 bind_barrel="right", bind_eraser="none"):
+                 hold_drag=True, hold_ms=None, rc_hold_ms=0):
         b = cg.CGDisplayBounds(cg.CGMainDisplayID())
         self.ox, self.oy, self.w, self.h = b.origin.x, b.origin.y, b.size.width, b.size.height
         self.x = self.y = 0.0
@@ -435,9 +422,6 @@ class Bridge(object):
         self.hold_dt = (float(hold_ms) / 1000.0) if hold_ms else HOLD_DRAG_DT
         # ★长按不动 = 右键菜单: 只在触屏模式下用; 长按期间笔尖没飘 (hold_ok) 且没划动 (not scrolled)
         self.rc_hold_dt = (float(rc_hold_ms) / 1000.0) if rc_hold_ms else 0.0
-        # 笔侧键 / 橡皮擦端 绑的动作 (硬件真的上报才有效; 见到就记日志)
-        self.bind_barrel = bind_barrel or "none"
-        self.bind_eraser = bind_eraser or "none"
         self.nrc = 0                       # 右键次数
         self.gain = 1.0        # 滚动增益 (GUI 可运行时改; 1.0 = 笔走多少像素滚多少)
         # --scroll 触屏模式的状态
@@ -514,13 +498,6 @@ class Bridge(object):
         self.n += 2
         self.nrc += 1
 
-    # ---- ★按键绑定: 笔侧键 / 橡皮擦端 -> 一个动作 ----
-    def _cursor(self, px=None, py=None):
-        if px is None:
-            p = cg.CGEventGetLocation(cg.CGEventCreate(None))
-            return p.x, p.y
-        return px, py
-
     def key_tap(self, code, cmd=False):
         """敲一下键盘按键 (空格 / 返回), 按下+抬起都发"""
         for down in (True, False):
@@ -529,44 +506,6 @@ class Bridge(object):
                 cg.CGEventSetFlags(ev, 1 << 20)      # kCGEventFlagMaskCommand
             cg.CGEventPost(0, ev)
         self.n += 2
-
-    def bind_down(self, key, px=None, py=None):
-        """笔按键【按下】。左键/中键这里只按下、不抬起 —— 于是
-        『按住侧键 + 动笔』= 拖拽 (等于按住鼠标左键), 松开才结束。"""
-        if not key or key == "none":
-            return
-        x, y = self._cursor(px, py)
-        if key == "right":
-            self.right_click(x, y)
-        elif key == "left":
-            cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, LDOWN, CGPoint(x, y), 0))
-            self.n += 1
-        elif key == "middle":
-            cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, OTHERS_DOWN, CGPoint(x, y), 2))
-            self.n += 1
-        elif key == "double":
-            for i in (1, 2):
-                for kind in (LDOWN, LUP):
-                    ev = cg.CGEventCreateMouseEvent(None, kind, CGPoint(x, y), 0)
-                    try:
-                        cg.CGEventSetIntegerValueField(ev, 1, i)   # kCGMouseEventClickState
-                    except Exception:
-                        pass
-                    cg.CGEventPost(0, ev)
-                    self.n += 1
-        elif key == "space":
-            self.key_tap(49)
-        elif key == "back":
-            self.key_tap(33, cmd=True)
-
-    def bind_up(self, key, px=None, py=None):
-        """笔按键【松开】: 只对按住型的左键/中键有用"""
-        if key in ("left", "middle"):
-            x, y = self._cursor(px, py)
-            kind = LUP if key == "left" else OTHERS_UP
-            cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, kind, CGPoint(x, y),
-                                                         0 if key == "left" else 2))
-            self.n += 1
 
     def drag(self):
         """按下状态下的移动 —— 必须发 LeftMouseDragged, 否则拖拽手势全部失效"""
@@ -787,13 +726,6 @@ def cmd_bridge(seconds):
             rc_hold_ms = int(a.split("=", 1)[1])
     if "--no-rc" in sys.argv:
         rc_hold_ms = 0
-    def _argval(name, dflt):
-        for a in sys.argv:
-            if a.startswith(name + "="):
-                return a.split("=", 1)[1]
-        return dflt
-    bind_barrel = "right" if "--barrel-rc" in sys.argv else _argval("--bind-barrel", "right")
-    bind_eraser = _argval("--bind-eraser", "none")
     pres_thr = None
     for a in sys.argv:
         if a == "--pressure":
@@ -805,8 +737,7 @@ def cmd_bridge(seconds):
         print("   系统设置 > 隐私与安全性 > 辅助功能 -> 打开 Terminal, 完全退出后重开再跑")
     b = Bridge(takeover=takeover, drag_pen=drag_pen, scroll=scroll, scroll_flip=scroll_flip,
                hold_drag=hold_drag, hold_ms=hold_ms,
-               rc_hold_ms=rc_hold_ms,
-               bind_barrel=bind_barrel, bind_eraser=bind_eraser)
+               rc_hold_ms=rc_hold_ms)
     print("按下判据: TipSwitch%s" % (" 或 压力>%d" % pres_thr if pres_thr is not None else ""))
 
     st = {"tip": 0, "pres": 0}

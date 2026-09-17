@@ -201,9 +201,6 @@ class Engine(object):
             "hold_drag": True,        # 触屏模式: 笔尖停住再划 = 拖拽 (否则拖不动窗口)
             "hold_ms": 250,           # 长按判定的时长
             "rc_hold_ms": 800,        # ★长按不动这么久 -> 抬手弹右键菜单 (0 = 关)
-            "rc_barrel": False,       # (旧) 笔侧键/橡皮擦端 -> 右键; 已换成下面两条绑定
-            "bind_barrel": "right",   # ★按键绑定: 笔侧键 -> 动作 (none/right/middle/left/double/space/back)
-            "bind_eraser": "none",    # ★按键绑定: 橡皮擦端 -> 动作
         }
         # HID 回调跑在自己那条线程上, 和主线程 (菜单 / 定时刷新) 共享状态 -> 一把递归锁。
         # 必须在 _new_bridge 之前就位: _apply() 会读 self.debug。
@@ -217,9 +214,6 @@ class Engine(object):
         self._err_logged = set()      # 记过日志的异常, 免得每帧刷屏
         self.reset_counters()
         self._want_down = False
-        self._btn = {}                # BarrelSwitch / Eraser 的上一次状态 (只在按下沿动作)
-        self._btn_seen = set()        # 实测见到过的笔按键名 (日志/诊断用)
-        self.last_btn = None          # 最近按下的笔按键名 (设置窗口的按键绑定栏显示用)
         self.b = None
         self._new_bridge()
         self.mgr = None
@@ -250,10 +244,6 @@ class Engine(object):
         self.b.hold_dt = float(self.cfg.get("hold_ms") or 250) / 1000.0
         # 长按不动 = 右键: 只在触屏模式下有意义 (滑动选择模式每一笔本来就有按键语义)
         self.b.rc_hold_dt = (float(self.cfg.get("rc_hold_ms") or 0) / 1000.0) if self.b.scroll else 0.0
-        # ★按键绑定 (笔侧键 / 橡皮擦端): 旧配置里的布尔开关迁移成绑定值
-        _legacy = bool(self.cfg.get("rc_barrel", False))
-        self.b.bind_barrel = self.cfg.get("bind_barrel") or ("right" if _legacy else "none")
-        self.b.bind_eraser = self.cfg.get("bind_eraser") or ("right" if _legacy else "none")
         if self._rc_log is not None and self.b.rc_hold_dt != self._rc_log:
             self._rc_log = self.b.rc_hold_dt
             self.log("长按不动 -> %s" % ("%.1f s = 右键菜单 (容差 %d px)"
@@ -526,24 +516,6 @@ class Engine(object):
                 self._want_down = False
                 self.pres_cur = 0
                 self._sync()
-        elif page == 0x0D and usage in (0x44, 0x45):       # BarrelSwitch / Eraser
-            # 笔侧键 / 橡皮擦端。macOS 不认这个小工具, 所以要靠我们自己翻成右键。
-            # 这条日志【恒定输出】(不走 debug): 用来确认这支笔到底报不报侧键。
-            self.seen["ev"] += 1
-            was = self._btn.get(usage, 0)
-            self._btn[usage] = 1 if v else 0
-            nm = "笔侧键" if usage == 0x44 else "橡皮擦端"
-            key = self.b.bind_barrel if usage == 0x44 else self.b.bind_eraser
-            if v and not was:
-                self._btn_seen.add(nm)
-                self.last_btn = nm
-                self.log("笔按键: %s 按下 -> %s" % (nm, H.BIND_TITLES.get(key, "关")))
-                self.b.bind_down(key)
-            elif was and not v:
-                # 松开: 只对「按住型」的绑定有用 (按住左键/中键 = 拖拽结束)
-                if self.debug:
-                    self.log("笔按键: %s 松开" % nm)
-                self.b.bind_up(key)
         elif page == 0x01 and usage in (0x30, 0x31) and hi > lo and lo >= 0:
             # 绝对坐标 (笔接口); 相对坐标的鼠标接口 lo < 0, 会被排除
             self.seen["ev"] += 1
