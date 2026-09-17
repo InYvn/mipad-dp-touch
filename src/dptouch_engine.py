@@ -26,17 +26,33 @@ import time
 import hid_bridge as H
 
 KCFSTRING_UTF8 = 0x08000100
-XIAOMI_VID = 0x2717                       # 旧身份, 仅保留作说明
-TABLET_VIDS = (0x2717, 0x18D1)            # 平板会话间会换身份: 小米 / Google 通用
-TABLET_PID = 0x2D05
+
+# ---------------------------------------------------------------------------
+# 已知设备判据（三条同时成立才认）
+#   ① VendorID ∈ SUPPORTED_VENDOR_IDS   ② ProductID == PRODUCT_ID
+#   ③ 接口 = 笔集合(UsagePage 0x0D / Usage 0x02)   另外产品名做二次核对
+#
+# ★ 为什么是**两个** VID：平板开 USB 调试后 gadget 身份会从小米 0x2717 切到
+#   Google/Android 通用 0x18D1。2026-09-17 实测：写死 0x2717 时命中 0 个接口 ——
+#   平板侧 HID 完好、macOS 也挂上了笔，App 一个都打不开，表现为菜单停在
+#   「等待平板上线」+ 笔全失效。
+# ★ 为什么不能只匹配 0x18D1：0x18D1 是通用 Android 身份，别的 Android 设备
+#   也是它。VID 白名单 + PID + 接口 usage 三道门一起上，普通设备进不来。
+# ★★ 绝不要把 0x05AC 混进来：0x05AC(Apple) 是**平板看主机**的 DP Alt Mode SVID
+#   （usb_dp_relay 用它判 is_mac=1 并据此只建 Pen-only 描述符），
+#   与「主机看平板」的 VID 是两个方向、两件事。
+SUPPORTED_VENDOR_IDS = (0x2717, 0x18D1)   # 小米身份 / Google 通用身份
+PRODUCT_ID = 0x2D05                       # Xiaomi Pad 9 Pro Max
+PEN_USAGE_PAGE = 0x0D                     # Digitizer
+PEN_USAGE = 0x02                          # Pen
+PRODUCT_NAME = "Xiaomi Pad 9 Pro Max"
+
+# 兼容旧名（探针脚本在用）
+TABLET_VIDS = SUPPORTED_VENDOR_IDS
+TABLET_PID = PRODUCT_ID
 
 # 已知设备表：(PID, 显示名, 是否已实测验证)
-#
-# 认设备按 PID（+ 产品名 "Xiaomi Pad"）判定, **不锁 VendorID**：
-# 同一台平板在不同会话里会把自己报成 0x2717(小米) 或 0x18D1(Google 通用身份)，
-# 锁死单一 VID 会让整轮认不到平板 —— 表现为菜单停在「等待平板上线」、笔全部失效。
-# 2026-09-17 两轮对照实测确认（同一台机、同样 3 接口、HID 描述符一字不差）。
-# 后续小米若再出 DP-in 机型，在这里加一行即可；表外的设备走「允许未验证设备」开关。
+# 后续小米若再出 DP-in 机型，在这里加一行即可；表外设备走「允许未验证设备」开关。
 KNOWN_DEVICES = [
     (0x2D05, "小米平板 9 Pro Max", True),
 ]
@@ -153,11 +169,26 @@ def device_info(dev):
     return name, vid, pid
 
 
+def is_tablet(vid, pid, raw=""):
+    """是不是本项目的平板：VID 白名单 + ProductID + 产品名（读到才核对）。
+
+    三个条件一起上，是为了既认得出「平板开 USB 调试后换成 0x18D1」这一轮，
+    又不把机器上别的 Android 设备（同样是 0x18D1）收进来。
+    """
+    if vid not in SUPPORTED_VENDOR_IDS or pid != PRODUCT_ID:
+        return False
+    if raw and raw.strip() and PRODUCT_NAME.lower() not in raw.lower():
+        return False
+    return True
+
+
 def friendly_name(vid, pid, raw=""):
-    """按 PID 认设备 —— 产品名与 VID 都不参与判定, 平板换身份也认得出。"""
-    for p, name, _verified in KNOWN_DEVICES:
-        if p == pid:
-            return name
+    """能认出就报中文名；认不出报原始产品名 + 身份，方便贴日志排查。"""
+    if is_tablet(vid, pid, raw):
+        for p, name, _verified in KNOWN_DEVICES:
+            if p == pid:
+                return name
+        return PRODUCT_NAME
     if raw:
         return "%s (未验证, %04X:%04X)" % (raw, vid, pid)
     return "未知设备 (%04X:%04X)" % (vid, pid)
@@ -342,17 +373,20 @@ class Engine(object):
     def _match(self):
         """IOHIDManager 匹配表。
 
-        已知设备按 **ProductID** 匹配（不带 VendorID）—— 平板在 DP-in 会话里会
-        从 0x2717 变成 0x18D1，带上 VID 就一个也匹配不到。
-        「允许未验证设备」时按 VID 白名单匹配（两种身份都收）。
+        默认（严格）：VID 白名单 × ProductID × 笔接口 usage，三条件同时成立。
+          平板开 USB 调试后身份是 0x18D1，写死 0x2717 会一个也匹配不到；
+          但只按 0x18D1 匹配又会撞上机器上别的 Android 设备 —— 所以一起上。
+        「允许未验证设备」时退化成 VID 白名单（给未验证机型 / 接口布局不同的机型留门）。
         """
         dicts = []
         if self.cfg["allow_unknown"]:
-            for v in TABLET_VIDS:
+            for v in SUPPORTED_VENDOR_IDS:
                 dicts.append(_dict([(b"VendorID", v)]))
         else:
-            for p, _n, _ok in KNOWN_DEVICES:
-                dicts.append(_dict([(b"ProductID", p)]))
+            for v in SUPPORTED_VENDOR_IDS:
+                dicts.append(_dict([(b"VendorID", v), (b"ProductID", PRODUCT_ID),
+                                    (b"PrimaryUsagePage", PEN_USAGE_PAGE),
+                                    (b"PrimaryUsage", PEN_USAGE)]))
         arr = (ctypes.c_void_p * len(dicts))(*dicts)
         ret = H.cf.CFArrayCreate(None, arr, len(dicts), CF_AB())
         for d in dicts:
@@ -464,7 +498,7 @@ class Engine(object):
             try:
                 raw, vid, pid = device_info(device)
                 name = friendly_name(vid, pid, raw)
-                known = any(p == pid for p, _n, _o in KNOWN_DEVICES)
+                known = is_tablet(vid, pid, raw)
                 if added:
                     with eng._lk:
                         if not any(d[1] == vid and d[2] == pid for d in eng.devices):

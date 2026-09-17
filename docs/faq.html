@@ -166,7 +166,7 @@
     </details>
     <details>
       <summary>点击、滚动都正常，手指没反应</summary>
-      <div class="body"><b>正常，且当前无解。</b>平板对外接主机只上报笔这一路数据，触摸屏那一路压根不存在——这是设备固件的取舍，软件层绕不过去。</div>
+      <div class="body"><b>不是这个应用的毛病，是平板固件的分支。</b>平板的 USB 服务（<code>usb_dp_relay</code>）会先判断主机是谁：认出 Mac（DP Alt Mode 里 SVID 报 Apple <code>0x05AC</code>）就只创建笔那一路接口，触摸屏那一路的 USB 描述符根本不存在。平板日志原文：<code>adapter_svid: 1452</code> → <code>host type: Mac</code> → <code>is_mac=1</code>。同一块屏接 Windows 时手指正常，因为走了另一个分支。这个判断发生在接口创建之前，Mac 上任何软件（包括驱动）都改不了，只能等小米固件放开。</div>
     </details>
     <details>
       <summary>滚动方向反了 / 太快太慢</summary>

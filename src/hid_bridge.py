@@ -36,9 +36,17 @@ import datetime
 import sys
 import time
 
-VENDOR = 0x2717        # 小米身份; 平板会变身份, 匹配不用它, 只留给诊断输出
+VENDOR = 0x2717        # 小米身份; 匹配走白名单, 这里只留给诊断输出
 PRODUCT = 0x2D05
-TABLET_VIDS = (0x2717, 0x18D1)   # 会话间实测出现过的两种身份
+TABLET_VIDS = (0x2717, 0x18D1)   # 「主机看平板」的两个身份: 小米 / Google 通用
+# 下面两个跟设备匹配无关, 别混用:
+#   0x05AC = Apple, 是「平板看主机」方向的 DP Alt Mode SVID —— 平板的
+#   usb_dp_relay 读到 adapter_svid: 1452(=0x05AC) 就会判 is_mac=1, 只建
+#   Pen-only(107B) 描述符, 于是 macOS 上永远没有手指触控。
+#   它不会、也不能出现在「主机看平板」的设备 VID 里。
+APPLE_SVID = 0x05AC
+PEN_USAGE_PAGE = 0x0D            # Digitizer: 笔集合所在接口
+PEN_USAGE = 0x02                 # Pen
 RAW_LIMIT = 300
 
 cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
@@ -71,11 +79,20 @@ cf.CFSetGetCount.argtypes = [ctypes.c_void_p]
 # 在查找时段错误(实测); 必须用真正的 kCFTypeDictionary*CallBacks
 CF_KB = lambda: ctypes.addressof(ctypes.c_char.in_dll(cf, "kCFTypeDictionaryKeyCallBacks"))
 CF_VB = lambda: ctypes.addressof(ctypes.c_char.in_dll(cf, "kCFTypeDictionaryValueCallBacks"))
+CF_AB = lambda: ctypes.addressof(ctypes.c_char.in_dll(cf, "kCFTypeArrayCallBacks"))
+cf.CFArrayCreate.restype = ctypes.c_void_p
+cf.CFArrayCreate.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_long, ctypes.c_void_p]
+cf.CFRelease.restype = None
+cf.CFRelease.argtypes = [ctypes.c_void_p]
+cf.CFSetGetCount.restype = ctypes.c_long
+cf.CFSetGetCount.argtypes = [ctypes.c_void_p]
 
 iokit.IOHIDManagerCreate.restype = ctypes.c_void_p
 iokit.IOHIDManagerCreate.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
 iokit.IOHIDManagerSetDeviceMatching.restype = None
 iokit.IOHIDManagerSetDeviceMatching.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+iokit.IOHIDManagerSetDeviceMatchingMultiple.restype = None
+iokit.IOHIDManagerSetDeviceMatchingMultiple.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
 iokit.IOHIDManagerCopyDevices.restype = ctypes.c_void_p
 iokit.IOHIDManagerCopyDevices.argtypes = [ctypes.c_void_p]
 iokit.IOHIDManagerOpen.restype = ctypes.c_int
@@ -122,16 +139,30 @@ def cfnum(v):
 
 
 def make_match():
-    """按 ProductID 匹配 —— 绝不带 VendorID。
+    """匹配表: VID 白名单 × ProductID × 笔接口 usage, 三条件同时成立。
 
-    平板在 DP-in 会话里会把自己报成 0x18D1(Google 通用身份) 而不是 0x2717(小米)，
-    带 VendorID 的匹配表此时命中 0 个设备：平板侧 HID 完好、macOS 也挂上了笔，
-    但 App 一个都打不开 —— 表现就是「等待平板上线」+ 笔全失效。
-    2026-09-17 实测: VID=0x2717 -> 0 命中, VID=0x18D1 -> 2 个 HID 接口。
+    三个条件缺一不可：
+      · 写死 0x2717 -> 平板开 USB 调试后身份变 0x18D1, 命中 0 个设备
+        （平板侧 HID 完好、macOS 也挂上了笔, 但 App 一个都打不开,
+        表现就是「等待平板上线」+ 笔全失效）;
+      · 只按 0x18D1 -> 那是通用 Android 身份, 机器上别的 Android 设备也会被收进来;
+      · 加上 PID + 笔接口 usage -> 普通 Android 设备进不来。
+    实测(2026-09-17 平板在 DP-in): 严格表 -> 1 个接口(笔集合);
+    VID 白名单 -> 2 个接口; 写死 0x2717 + PID -> 0 个接口。
     """
-    keys = (ctypes.c_void_p * 1)(cfstr(b"ProductID"))
-    vals = (ctypes.c_void_p * 1)(cfnum(PRODUCT))
-    return cf.CFDictionaryCreate(None, keys, vals, 1, CF_KB(), CF_VB())
+    dicts = []
+    for vid in TABLET_VIDS:
+        items = [(b"VendorID", vid), (b"ProductID", PRODUCT),
+                 (b"PrimaryUsagePage", PEN_USAGE_PAGE), (b"PrimaryUsage", PEN_USAGE)]
+        n = len(items)
+        keys = (ctypes.c_void_p * n)(*[cfstr(k) for k, _v in items])
+        vals = (ctypes.c_void_p * n)(*[cfnum(v) for _k, v in items])
+        dicts.append(cf.CFDictionaryCreate(None, keys, vals, n, CF_KB(), CF_VB()))
+    a = (ctypes.c_void_p * len(dicts))(*dicts)
+    arr = cf.CFArrayCreate(None, a, len(dicts), CF_AB())
+    for d in dicts:
+        cf.CFRelease(d)
+    return arr
 
 
 def ax_opts(prompt=True):
@@ -204,7 +235,7 @@ RAW = {"on": False, "n": 0}
 
 def run(cb, seconds):
     mgr = iokit.IOHIDManagerCreate(None, 0)
-    iokit.IOHIDManagerSetDeviceMatching(mgr, make_match())
+    iokit.IOHIDManagerSetDeviceMatchingMultiple(mgr, make_match())
     if cb is not None:
         KEEP.append(cb)
         iokit.IOHIDManagerRegisterInputValueCallback(mgr, cb, None)
