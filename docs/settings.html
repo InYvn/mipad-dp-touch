@@ -7,7 +7,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#0b0d10">
 <title>配置说明 — Mipad DP Touch</title>
-<meta name="description" content="Mipad DP Touch 各配置项的作用：滑动方式、停住再划、长按不动、滚动方向与速度、桥接、显示缩放、启动与日志。">
+<meta name="description" content="Mipad DP Touch 各配置项的作用：按键绑定（轻点 / 快速滑动 / 停住再滑 / 停住不动）、滚动方向与速度、显示缩放、运行与日志、高级选项。">
 <style>
   :root {
     --bg: #0d0f12;
@@ -143,28 +143,21 @@
 <section id="pen-input">
   <h2>笔的输入 <span class="where">手感主战场</span></h2>
   <div class="item">
-    <div class="name">滑动方式<small>SWIPE MODE</small></div>
+    <div class="name">按键绑定<small>BINDINGS</small></div>
     <div class="desc">
-      <p>决定「按住笔尖划动」时做什么。</p>
-      <div class="opts"><span class="opt rec">滑动翻页 · 不选中文字（默认）</span><span class="opt">滑动选择 · 拖拽与划选</span></div>
-      <p style="margin-top:10px"><b>滑动翻页</b>：划动<b>完全不会产生鼠标按键事件</b>，所以不可能误选中文字 —— 不是「划完再取消选择」，而是压根没有「按住」这个状态。适合看文档、翻网页。</p>
-      <p><b>滑动选择</b>：每一笔都当拖拽处理，划选文字最顺手，代价是翻页时容易带选。</p>
-    </div>
-  </div>
-  <div class="item">
-    <div class="name">停住再划 = 拖拽<small>PAUSE-DRAG</small></div>
-    <div class="desc">
-      <p>翻页模式下想要第二个手势：笔尖<b>先停住一小会儿再划</b> → 当作拖拽（拖窗口、划选文字、拖滑块）。手势互不干扰：一手开始时判成哪种，整手就按哪种走。</p>
-      <div class="opts"><span class="opt rec">0.25s（默认）</span><span class="opt">四档可选</span><span class="opt">可关闭</span></div>
-      <p style="margin-top:10px">嫌误触就调慢，或者干脆关掉长按、只留点击和翻页。想每一笔都是拖拽，就切换滑动方式，不需要这个停顿。</p>
-    </div>
-  </div>
-  <div class="item">
-    <div class="name">长按不动 = 右键菜单<small>HOLD-CLICK</small></div>
-    <div class="desc">
-      <p>笔尖<b>停在原地不动</b>、到时抬手，即弹右键菜单（桌面、Finder、各种 App 都能用）。</p>
-      <div class="opts"><span class="opt rec">0.8s（默认）</span><span class="opt">0.6s</span><span class="opt">1.0s</span><span class="opt">关</span></div>
-      <p style="margin-top:10px">停住之后又划走的话仍算拖拽，不会误弹菜单。</p>
+      <p>一支笔能做的事按<b>形态</b>分成四类手势，每一类都能绑一个动作。<b>默认就是一直以来的手感</b>，所以升级过来不用改；改坏了点右上角「恢复默认」。</p>
+      <table>
+        <tr><th>手势</th><th>怎么算</th><th>默认动作</th></tr>
+        <tr><td class="rec"><b>轻点</b></td><td>笔尖点一下就走</td><td>左键单击</td></tr>
+        <tr><td><b>快速滑动</b></td><td>一笔划过去（位移 ≥ 12px）</td><td>滚动翻页</td></tr>
+        <tr><td><b>停住再滑</b></td><td>笔尖先停住一小会儿，然后再划</td><td>拖拽 · 移动窗口</td></tr>
+        <tr><td><b>停住不动</b></td><td>笔尖停住又没划走，抬手时算</td><td>右键菜单</td></tr>
+      </table>
+      <p style="margin-top:10px">可绑的动作：<b>关</b> / 左键单击 / 右键菜单 / 中键单击 / 双击 / 滚动翻页 / 拖拽 / 空格键 / 返回 / <b>切换屏幕</b>。同一个「拖拽」在两个手势下叫法不同 —— 绑在<b>快速滑动</b>上叫<b>「拖拽 · 选中文字」</b>（起手就划，快进快出划选一段），绑在<b>停住再滑</b>上叫<b>「拖拽 · 移动窗口」</b>（先按住在挪）。每一类手势只列出它<b>真的做得到</b>的那些（轻点没有位移，就绑不了滚动和拖拽）。</p>
+      <p><b>想每一笔都是拖拽？</b>把「快速滑动」的动作改成<b>「拖拽 · 选中文字」</b> —— 这就是老版本的「滑动选择」模式，现在不需要单独的开关了。</p>
+      <p><b>为什么划动不会误选文字？</b>因为「滚动翻页」全程<b>一个鼠标按键都不发</b> —— 不是「划完再取消选择」，而是压根没有「按住」这个状态。</p>
+      <p><b>切换屏幕</b> = 把<a href="#advanced">光标基准屏</a>换到<b>下一块</b>在线屏：顺序按桌面排列从左到右、到头绕回第一块，循环。<b>只换笔的落点</b>，不改任何一块屏的分辨率 / 排列 / 镜像；只接了一块屏时按了不动作（日志会写一句）。接了两块以上屏、又不想每次都去点菜单栏时，把它绑到一类手势上（例如「停住不动」）就行了。</p>
+      <p>组合起来就是一套自己的手感，例如：轻点 = 双击、停住不动 = 空格键（翻 PPT）、快速滑动 = 拖拽；多屏时「停住不动 = 切换屏幕」也很顺手。改完立即生效，不用重启。</p>
     </div>
   </div>
   <div class="item">
@@ -181,20 +174,10 @@
 </section>
 
 <section id="bridge">
-  <h2>桥接 <span class="where">核心开关</span></h2>
+  <h2>运行 <span class="where">常用开关</span></h2>
   <div class="item">
     <div class="name">启用笔桥接<small>BRIDGE</small></div>
-    <div class="desc"><p>总开关。临时停用不用拔线；菜单栏也有同名勾选项，两边状态同步。</p></div>
-  </div>
-  <div class="item">
-    <div class="name">用笔的绝对坐标驱动光标（试验）<small>ABSOLUTE</small></div>
-    <div class="desc"><p>笔本来就是绝对坐标设备，直接用它驱动光标。试验性开关，出问题就关掉。</p></div>
-  </div>
-  <div class="item">
-    <div class="name">允许未验证的小米设备<small>WHITELIST+</small></div>
-    <div class="desc">
-      <p>给未来机型的<b>兜底开关</b>。默认只匹配已实测设备（小米平板 9 Pro Max，VID <code>0x2717</code> / PID <code>0x2D05</code>），避免误碰小米其它产品。如果你的小米平板也是 DP-in 且笔能移光标，打开它试试；能用欢迎提 issue 把型号加进白名单（<code>src/dptouch_engine.py</code> 的 <code>KNOWN_DEVICES</code>）。</p>
-    </div>
+    <div class="desc"><p>总开关。临时停用不用拔线；菜单栏也有同名勾选项，两边状态同步。其余不常用的开关都在「高级选项…」小窗里。</p></div>
   </div>
 </section>
 
@@ -220,12 +203,48 @@
     </div>
   </div>
   <div class="item">
+    <div class="name">切换立即生效<small>RESYNC</small></div>
+    <div class="desc"><p>切档自动重建坐标基准（<code>engine.resync_display()</code>），笔的落点立刻对齐新尺寸，<b>不用重启 App</b>。档位持久生效，重启后仍是这一档。想回 1x 3408×2272 原生档要用「打开「显示器」设置…」在系统设置里选。</p></div>
+  </div>
+</section>
+
+<section id="advanced">
+  <h2>高级选项 <span class="where">独立小窗</span></h2>
+  <div class="item">
+    <div class="name">为什么要单独一个小窗<small>WHY</small></div>
+    <div class="desc"><p>主窗口只留常用开关，不常用的都收进「高级选项…」—— 界面不至于一屏全是开关，也不至于把排查用的开关藏得找不到。状态与主窗口同一份，改完立即生效。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">光标基准屏<small>TARGET SCREEN</small></div>
+    <div class="desc"><p>笔是<b>绝对坐标</b>设备：它报的是「笔尖在平板上的位置」，App 再把这个位置换算成<b>某一块屏</b>上的点 —— 换算到哪块屏就是这里选的。<b>跟随光标</b>（默认）不移动光标，光标在哪块屏笔就在那块屏上生效；选<b>平板那块屏</b>或<b>任意一块在线屏</b>时笔接管光标，一比一铺到那块屏上。</p><p>这就是让笔跨到别的屏上的办法：菜单里换一块屏即可，改完立即生效。指定的屏被拔掉时自动退回「跟随光标」（日志里有说明）。<b>只改换算，不碰任何屏幕的设置、排列、镜像</b>。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">拖拽位置跟随笔尖<small>DRAG SOURCE</small></div>
+    <div class="desc"><p>拖拽时拿什么当落点。<b>关</b>（默认）= 以按下那一刻的光标为起点、跟着笔尖的位移走 —— 和「轻点」的落点一致；<b>开</b> = 直接用笔尖在平板上的绝对位置，笔到哪就拖到哪。只在「拖拽的起点总是不对」时才需要开。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">允许未验证的小米设备<small>WHITELIST+</small></div>
+    <div class="desc">
+      <p>给未来机型的<b>兜底开关</b>。默认只匹配已实测设备（小米平板 9 Pro Max，VID <code>0x2717</code> / <code>0x18D1</code> / PID <code>0x2D05</code> + 笔接口 usage），避免误碰小米其它产品。如果你的小米平板也是 DP-in 且笔能移光标，打开它试试；能用欢迎提 issue 把型号加进白名单（<code>src/dptouch_engine.py</code> 的 <code>KNOWN_DEVICES</code>）。</p>
+    </div>
+  </div>
+  <div class="item">
     <div class="name">允许管理未实测的显示器<small>ALLOW+</small></div>
     <div class="desc"><p>多屏时「显示缩放」整组变灰说明没认出平板那块屏 —— 勾上这个才允许操作 EDID/名字不匹配的屏。这是防误触碰发的，确认列出来的是平板再开。</p></div>
   </div>
   <div class="item">
-    <div class="name">切换立即生效<small>RESYNC</small></div>
-    <div class="desc"><p>切档自动重建坐标基准（<code>engine.resync_display()</code>），笔的落点立刻对齐新尺寸，<b>不用重启 App</b>。档位持久生效，重启后仍是这一档。想回 1x 3408×2272 原生档要用「打开「显示器」设置…」在系统设置里选。</p></div>
+    <div class="name">自动检查更新<small>UPDATE</small></div>
+    <div class="desc"><p>整个程序只有这一项会让它联网：启动后静默查一次 GitHub 上的最新版本，之后每天一次；查到了就弹窗告诉你有新版。关掉它就完全不联网。</p><p>更新流程是：下载 → 按发版正文里的 <code>SHA256</code> 校验 → 退出程序 → 替换 App（旧版先备份，任何一步失败都回滚）→ 重新打开。设置和日志都在你自己的 <code>~/Library/</code> 下，更新不动它们。<b>只有查更新这一步会联网</b>（<code>api.github.com</code> 查版本、<code>github.com</code> 取安装包）。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">立即检查更新<small>CHECK NOW</small></div>
+    <div class="desc"><p>手动查一次。有新版本会给出更新说明和「下载并安装」；没有就告诉你已是最新；连不上 GitHub 会说清原因（这台机器上 <code>github.com</code> 有时不通，换网络再试）。</p></div>
+  </div>
+  <div class="item">
+    <div class="name">停住再滑 / 停住不动的判定时长<small>THRESHOLDS</small></div>
+    <div class="desc">
+      <p>「停住再滑」默认 <b>0.25s</b> 算停住（四档：0.2 / 0.25 / 0.35 / 0.5s）；「停住不动」默认 <b>0.8s</b>（可 0.6 / 1.0s，选「关」则该手势不再触发）。太灵敏就调慢。停住之后又划走仍算拖拽，不会误弹菜单。</p>
+    </div>
   </div>
 </section>
 

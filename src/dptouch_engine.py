@@ -23,6 +23,7 @@ import subprocess
 import threading
 import time
 
+import dptouch_display as DP
 import hid_bridge as H
 
 KCFSTRING_UTF8 = 0x08000100
@@ -221,6 +222,24 @@ def system_natural_scrolling():
         return False
 
 
+def counters_tail(st):
+    """状态行的计数尾巴。
+
+    报什么由**绑定表**决定: 有手势绑了「滚动」就报滚动, 否则报拖拽 —— 以前是按
+    全局模式报的, 现在模式没了, 表就是唯一判据。
+    """
+    used = set((st.get("binds") or {}).values())
+    if "scroll" in used:
+        tail = "%d 滚动 / %d 点击" % (st["scroll"], st["click"])
+    elif "drag" in used:
+        tail = "%d 拖拽 / %d 点击" % (st["drag"], st["click"])
+    else:
+        tail = "%d 点击" % st["click"]
+    if st.get("rclick"):
+        tail += " / %d 右键" % st["rclick"]
+    return tail
+
+
 # --------------------------------------------------------------------------
 # 引擎
 # --------------------------------------------------------------------------
@@ -230,19 +249,25 @@ class Engine(object):
         _init_ctypes()
         self.log = log if log is not None else (lambda m: None)
         self.cfg = {
-            "mode": "scroll",         # scroll | select
             "natural": "system",      # system | on | off
             "gain": 1.0,              # 滚动增益
-            "takeover": False,        # 试验性: 用笔的绝对坐标驱动光标
+            "target_display": DP.TARGET_AUTO,   # 光标基准屏: auto | tablet | "<displayID>"
             "drag_pen": False,        # 拖拽位置源改用笔坐标
             "allow_unknown": False,   # 允许未验证设备
-            "hold_drag": True,        # 触屏模式: 笔尖停住再划 = 拖拽 (否则拖不动窗口)
-            "hold_ms": 250,           # 长按判定的时长
-            "rc_hold_ms": 800,        # ★长按不动这么久 -> 抬手弹右键菜单 (0 = 关)
+            "display_allow_unknown": False,     # 允许把未实测的屏当平板屏
+            "hold_ms": 250,           # 「停住再滑」的判定时长
+            "rc_hold_ms": 800,        # 「停住不动」的判定时长 (0 = 关)
         }
+        # 手势 -> 动作 的绑定。唯一出处是 hid_bridge 顶部那张 BIND_GESTURES 表,
+        # 这里只把默认值摊平成配置键 (bind_tap / bind_swipe / bind_hold_swipe / bind_hold)。
+        for _g, _a in H.DEFAULT_BINDS.items():
+            self.cfg[H.bind_key(_g)] = _a
         # HID 回调跑在自己那条线程上, 和主线程 (菜单 / 定时刷新) 共享状态 -> 一把递归锁。
         # 必须在 _new_bridge 之前就位: _apply() 会读 self.debug。
         self._lk = threading.RLock()
+        # 「切换屏幕」是在 HID 线程里切的 (笔一按就得换, 不能等主线程那一拍), 但落盘和
+        # 菜单打勾只能在主线程做 -> 这里留一个「待办」, 由 App 的定时器取走 (见 next_screen)。
+        self.pending_target = None
         self.debug = False            # 详细日志开关 (菜单里可切)
         self._th = None               # HID 线程
         self._rl = None               # HID 线程的 CFRunLoop
@@ -252,6 +277,8 @@ class Engine(object):
         self._err_logged = set()      # 记过日志的异常, 免得每帧刷屏
         self.reset_counters()
         self._want_down = False
+        self.target = {}              # 光标基准屏 (笔的绝对坐标铺到哪块屏上)
+        self._tgt_key = None
         self.b = None
         self._new_bridge()
         self.mgr = None
@@ -265,31 +292,97 @@ class Engine(object):
 
     def _new_bridge(self):
         """(重)建 Bridge。只丢中间状态，累计计数由 Engine 自己保管。"""
-        self.b = H.Bridge(takeover=False, drag_pen=False, scroll=True, hold_drag=True)
+        self.b = H.Bridge(takeover=False, drag_pen=False, binds=H.DEFAULT_BINDS)
         self.b.say = self.log
+        self.b.on_switch_screen = self.next_screen      # 绑定动作「切换屏幕」的落点
         # 构造期先同步一次基准值, 免得日志里先打一行引擎默认值、再打一行真实值 (看着像设置没生效)
         self._rc_log = None        # None = 还没拿到真实配置, 所以构造期那一次不打日志
         self._apply()
 
     def _apply(self):
-        m = self.cfg["mode"]
+        binds = H.binds_from_cfg(self.cfg)
         self.b.debug = bool(self.debug)
-        self.b.takeover = bool(self.cfg["takeover"])
-        self.b.scroll = (m == "scroll") and not self.b.takeover
+        self._sync_target()
         self.b.drag_pen = bool(self.cfg["drag_pen"])
-        # 长按拖拽只在触屏模式下有意义 (滑动选择模式下每一笔本来就是拖拽)
-        self.b.hold_drag = bool(self.cfg.get("hold_drag", True)) and self.b.scroll
+        self.b.set_binds(binds)
         self.b.hold_dt = float(self.cfg.get("hold_ms") or 250) / 1000.0
-        # 长按不动 = 右键: 只在触屏模式下有意义 (滑动选择模式每一笔本来就有按键语义)
-        self.b.rc_hold_dt = (float(self.cfg.get("rc_hold_ms") or 0) / 1000.0) if self.b.scroll else 0.0
+        self.b.set_rc_hold_ms(self.cfg.get("rc_hold_ms") or 0)
         if self._rc_log is not None and self.b.rc_hold_dt != self._rc_log:
             self._rc_log = self.b.rc_hold_dt
-            self.log("长按不动 -> %s" % ("%.1f s = 右键菜单 (容差 %d px)"
+            self.log("停住不动 -> %s" % ("%.1f s 判定 (容差 %d px)"
                                         % (self.b.rc_hold_dt, H.RC_MAX_PX) if self.b.rc_hold_dt
                                         else "关"))
         self.b.gain = float(self.cfg["gain"])
         self.b.scroll_flip = self._flip()
         self._rc_log = self.b.rc_hold_dt
+
+    def _sync_target(self, infos=None):
+        """按配置算出「光标基准屏」并下发给 Bridge。
+
+        笔报的是归一化绝对坐标, 乘进哪块屏的矩形, 光标就只能在**那块屏**里动 —— 这
+        正是「接了第二块屏, 笔跨不过去」的全部原因。所以基准屏是可选项:
+          · 跟随光标: 不接管坐标 (笔不移动光标, 只在光标所在那块屏上点/拖/滚)
+          · 平板 / 指定某块屏: 接管坐标, 绝对映射铺到那块屏上 (笔能把光标带过去)
+        """
+        r = DP.resolve_target(self.cfg.get("target_display"),
+                              infos=infos,
+                              allow_unknown=bool(self.cfg.get("display_allow_unknown")))
+        self.target = r
+        if self.target_changed(r):
+            self.log("光标基准屏 -> %s%s" % (
+                r["label"], ("  (接管坐标: 绝对的, 笔到哪光标到哪)" if r["takeover"] else "")))
+        if r.get("note"):
+            self.log(r["note"])
+        rect = r.get("rect")
+        if rect:
+            self.b.set_rect(rect[0], rect[1], rect[2], rect[3], r["label"])
+        self.b.takeover = bool(r["takeover"])
+        return r
+
+    def target_changed(self, r):
+        """和上次下发的是不是同一块屏 (只影响日志, 不影响行为)"""
+        key = (r.get("value"), r.get("takeover"), tuple(r.get("rect") or ()))
+        if key != getattr(self, "_tgt_key", None):
+            self._tgt_key = key
+            return True
+        return False
+
+    # ---------------- 「切换屏幕」绑定动作 ----------------
+
+    def next_screen(self):
+        """基准屏按顺序切到**下一块** (到头绕回第一块)。成功返回新值, 否则 None。
+
+        跑在 HID 线程上, 所以这里只做「立刻生效」的那一半: 换矩形 + 接管标志 —— 笔的
+        下一笔就已经在新那块屏上了。配置落盘 / 菜单打勾交给主线程的 take_pending_target。
+
+        几块屏就按几块屏转; 只有一块屏则什么都不做 (宁可不响应, 也不切到不存在的地方)。
+        """
+        try:
+            with self._lk:
+                infos = DP.displays()
+                value, why = DP.next_target(
+                    self.cfg.get("target_display"), infos=infos,
+                    allow_unknown=bool(self.cfg.get("display_allow_unknown")),
+                    cursor=DP.cursor_point())
+                if not value:
+                    self.log("切换屏幕: %s" % why)
+                    return None
+                self.cfg["target_display"] = value
+                r = self._sync_target(infos)
+                self.pending_target = value
+                self.log("切换屏幕 -> %s" % (r.get("label") or value))
+                return value
+        except Exception as e:
+            # 切屏失败绝不能把这一笔的其它事件也带崩 (HID 回调里抛异常会被静默吞掉)
+            self.log("切换屏幕失败: %r" % (e,))
+            return None
+
+    def take_pending_target(self):
+        """主线程取走「笔上切换屏幕」的结果 (取完即清)。"""
+        with self._lk:
+            v = self.pending_target
+            self.pending_target = None
+            return v
 
     def _flip(self):
         nat = self.cfg["natural"]
@@ -305,14 +398,15 @@ class Engine(object):
     def _update_locked(self, kw):
         if "debug_log" in kw:
             self.debug = bool(kw["debug_log"])
-        before = (self.cfg["mode"], self.cfg["allow_unknown"],
-                  bool(self.cfg.get("hold_drag", True)))
+        before = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
+                  self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")))
         self.cfg.update(kw)
         self._apply()
-        if before != (self.cfg["mode"], self.cfg["allow_unknown"],
-                      bool(self.cfg.get("hold_drag", True))):
-            self.b.reset_state()
-        if self.cfg["allow_unknown"] != before[1] and self.mgr is not None:
+        after = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
+                 self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")))
+        if before != after:
+            self.b.reset_state()      # 绑定变了: 半按/划动中的残留不能带到下一笔
+        if after[1] != before[1] and self.mgr is not None:
             return self.restart()      # 匹配条件变了, 必须重建 manager
         return 0
 
@@ -357,8 +451,11 @@ class Engine(object):
         try:
             p = H.cg.CGEventGetLocation(H.cg.CGEventCreate(None))
             qx, qy = b.pen_screen()
-            return ("笔尖 (%.4f,%.4f) -> 屏 %.0f,%.0f | 光标 @%.0f,%.0f | 差 %.0f,%.0f | 按下=%s"
-                    % (b.x, b.y, qx, qy, p.x, p.y, p.x - qx, p.y - qy, b.down))
+            return ("笔尖 (%.4f,%.4f) -> 屏 %.0f,%.0f | 基准 %s%s | 光标 @%.0f,%.0f"
+                    " | 差 %.0f,%.0f | 按下=%s"
+                    % (b.x, b.y, qx, qy, self.target.get("label", "?"),
+                       "(接管坐标)" if b.takeover else "(不接管: 差 无意义)",
+                       p.x, p.y, p.x - qx, p.y - qy, b.down))
         except Exception as e:
             return "笔尖自检异常: %r" % (e,)
 
@@ -479,7 +576,8 @@ class Engine(object):
         with self._lk:
             self._new_bridge()
             w, h = self.b.w, self.b.h
-        self.log("坐标范围已更新: %.0fx%.0f" % (w, h))
+        self.log("坐标范围已更新: %.0fx%.0f (基准屏 %s)"
+                 % (w, h, self.target.get("label", "?")))
         return (w, h)
 
     def ax_trusted(self):
@@ -573,12 +671,15 @@ class Engine(object):
                 b.x = nrm
             else:
                 b.y = nrm
-            if b.takeover:
-                b.post(H.LDRAGGED if b.down else H.MOVED)
-            elif b.down and b.scroll:
-                b.on_move()
+            if b.takeover and not b.down:
+                # 接管了绝对坐标: 笔就是鼠标, 悬停也得把光标挪过去
+                b.post(H.MOVED)
             elif b.down:
-                b.drag()
+                # ★按下之后的移动一律交给手势判定 —— 快速滑动(滚动/划选), 停住再滑(拖拽),
+                #   全在 on_move 里按绑定表决定, 判定之前一个鼠标按键都不发。
+                #   这里曾经读过一个不存在的 b.scroll 属性: 笔一按下去就抛 AttributeError,
+                #   回调被 except 吞掉 -> 拖拽和滚动全部失效 (2026-09-18 定位)。
+                b.on_move()
             if self.debug:
                 # 每 0.4 秒一条: 笔尖位置 vs 系统光标。光标没跟着笔走时一眼看出来。
                 b.dbg(self._dbg_hover_line(b), min_dt=0.4)
@@ -596,7 +697,7 @@ class Engine(object):
         if want:
             b.press()
         else:
-            if not b.scroll:
+            if b.dragging:
                 b.last_drag = 0.0     # 抬起前补发最后一段拖拽
                 b.drag()
             b.release()
@@ -620,7 +721,10 @@ class Engine(object):
             "drag": self.b.nd if self.b else 0,
             "rclick": self.b.nrc if self.b else 0,
             "down": bool(self.b.down) if self.b else False,
-            "mode": self.cfg["mode"],
+            # 手势 -> 动作: 状态行按它决定报「滚动」还是「拖拽」
+            "binds": H.binds_from_cfg(self.cfg),
+            "target": self.target.get("label", ""),     # 光标基准屏
+            "target_takeover": bool(self.target.get("takeover")),
             "flip": bool(self.b.scroll_flip) if self.b else False,
             "error": self.last_error,
         }
@@ -634,10 +738,7 @@ class Engine(object):
         if not st["devices"]:
             return "已开启 · 等平板上线"
         names = "、".join(d[0] for d in st["devices"])
-        tail = "%d 滚动 / %d 点击" % (st["scroll"], st["click"]) \
-            if st["mode"] == "scroll" else "%d 拖拽 / %d 点击" % (st["drag"], st["click"])
-        if st.get("rclick"):
-            tail += " / %d 右键" % st["rclick"]
+        tail = counters_tail(st)
         return "已连接 · %s · %s" % (names, tail)
 
     def status_line_short(self):
@@ -648,8 +749,5 @@ class Engine(object):
         if not st["devices"]:
             return "已开启 · 等平板上线"
         names = "、".join(d[0] for d in st["devices"])
-        tail = "%d 滚动 / %d 点击" % (st["scroll"], st["click"]) \
-            if st["mode"] == "scroll" else "%d 拖拽 / %d 点击" % (st["drag"], st["click"])
-        if st.get("rclick"):
-            tail += " / %d 右键" % st["rclick"]
+        tail = counters_tail(st)
         return "已连接 · %s · %s" % (names, tail)

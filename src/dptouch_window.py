@@ -67,10 +67,13 @@ class _CardView(NSView):
         b.fill()
 
 
-from hid_bridge import HOLD_MS_OPTS as _HOLD_MS   # 长按判定档位(ms), 与 CLI 同源
-from hid_bridge import RC_HOLD_MS_OPTS as _RC_HOLD   # 长按不动=右键 的档位(ms), 与 CLI 同源
+import hid_bridge as HB
+from hid_bridge import HOLD_MS_OPTS as _HOLD_MS   # 「停住再滑」判定档位(ms), 与 CLI 同源
+from hid_bridge import RC_HOLD_MS_OPTS as _RC_HOLD   # 「停住不动」判定档位(ms), 与 CLI 同源
 
-W, H = 620.0, 918.0                         # 窗口内容尺寸(固定; 不设 Resizable)
+W, H = 620.0, 826.0                         # 主窗口内容尺寸(固定; 不设 Resizable)
+AW, AH = 520.0, 262.0                       # 「高级选项」小窗口的内容尺寸
+                                            # (多了末尾「立即检查更新」那一行 30pt)
 M = 22.0                                    # 页面左右留白
 PAD = 12.0                                  # 卡片内边距
 LBL_W = 94.0                                # 标签列宽
@@ -83,12 +86,31 @@ CB_H = 26.0                                 # 复选框一行的高度
 SEC_GAP = 16.0                              # 卡片之间的间距
 
 # UI 文案 —— 短句, 不用括号。菜单里不再出现这些选项, 这里是唯一出处。
-MODE_LABELS = [("scroll", "滑动翻页 · 不选中文字"),
-               ("select", "滑动选择 · 拖拽与划选")]
 NAT_LABELS = [("system", "跟随系统"), ("on", "始终自然"), ("off", "始终传统")]
 HOLD_TITLES = ["%.2gs %s" % (ms / 1000.0, lab)
                for ms, lab in zip(_HOLD_MS, ("极快", "快", "标准", "慢"))]
 RC_TITLES = ["关" if not ms else "%.1f 秒" % (ms / 1000.0) for ms in _RC_HOLD]
+
+# 主窗口「笔的输入」那张表: 四类手势, 每一类一个下拉 (可绑的动作来自 hid_bridge 那张表,
+# 唯一出处 —— 界面里出现的选项一定有实现)。
+BIND_ROWS = tuple((g, title, HB.gesture_actions(g), d)
+                  for g, title, _o, d in HB.BIND_GESTURES)
+SCROLL_ROWS = (("nat", "滚动方向"), ("gain", "滚动速度"))
+
+# 高级选项 (不常用的): 控件键, 配置键, 标题, 动作
+ADV_SWITCHES = (
+    ("drag_pen", "drag_pen", "拖拽位置跟随笔尖", "onDragPen:"),
+    ("unknown", "allow_unknown", "允许未验证的小米设备", "onUnknown:"),
+    ("disp_allow", "display_allow_unknown", "允许管理未实测的显示器", "onDispAllow:"),
+    # 只有这一项会让程序联网 (查 GitHub 上的最新版本); 关掉它就完全不联网
+    ("update_auto", "update_auto", "自动检查更新", "onUpdateAuto:"),
+)
+ADV_POPUPS = (
+    # 光标基准屏: 笔的绝对坐标铺到哪块屏上 —— 接了多块屏时靠它决定笔"在哪块屏上"工作
+    ("target", "target_display", "光标基准屏", "onTarget:"),
+    ("hold_ms", "hold_ms", "停住再滑判定", "onHoldMs:"),
+    ("rc_hold", "rc_hold_ms", "停住不动判定", "onRcHold:"),
+)
 
 # 分步授权的两条 (顺序就是展示顺序)
 PERM_STEPS = (
@@ -197,6 +219,14 @@ def _rect(v):
     return (float(f.origin.x), float(f.origin.y), float(f.size.width), float(f.size.height))
 
 
+def _ident(v):
+    """控件的 identifier (背景卡片 = "bg")。拿不到就给空串。"""
+    try:
+        return v.identifier() or ""
+    except Exception:
+        return ""
+
+
 def _hit(a, b, slack=0.5):
     """两个矩形是否真重叠 —— 只挨着不算(布局里行与行本来就是贴着的)。"""
     return (a[0] + a[2] - slack > b[0] and b[0] + b[2] - slack > a[0]
@@ -217,10 +247,18 @@ def check_layout(view, w=W, h=H):
         except Exception:
             pass
         txt = ""
-        try:
-            txt = v.stringValue() or ""
-        except Exception:
-            pass
+        # 按钮 (含 _FirstMouseButton 这类子类) 的 stringValue 是"选中态"("0"/"1"),
+        # 报告里要的是那句标题; 下拉框是按钮的子类, 但它走下面 titleOfSelectedItem 那条路。
+        if isinstance(v, NSButton) and not isinstance(v, NSPopUpButton):
+            try:
+                txt = v.title() or ""
+            except Exception:
+                txt = ""
+        if not txt:
+            try:
+                txt = v.stringValue() or ""
+            except Exception:
+                pass
         if not txt:
             try:
                 txt = v.titleOfSelectedItem() or ""
@@ -245,6 +283,21 @@ def check_layout(view, w=W, h=H):
         if need > r[2] + 1.0:
             bad.append("文字放不下: %r 需要 %.0fpt, frame 只有 %.0fpt"
                        % (txt[:24], need, r[2]))
+    # 「贴到卡片顶边」也看不出来 —— 用户报过的那次就是: 「恢复默认」按钮底边比卡片
+    # 顶边还低 1pt, 不算重叠(重叠那条判据要两边都压过 slack, 1pt 只压了一边, 而且
+    # 卡片自己在建 items 时就被跳过了), 但看着就是和下面的框粘在一起。留最小呼吸间距。
+    # 注意坐标系: _r() 转出来的 frame 是 AppKit 的 y 向上, 卡片「顶边」= y + h。
+    MIN_GAP = 3.5
+    _cards = [_rect(_v) for _v in view.subviews() if _ident(_v) == "bg"]
+    for v, r, txt in items:
+        for _c in _cards:
+            _ct = _c[1] + _c[3]                     # 卡片顶边
+            _hx = min(r[0] + r[2], _c[0] + _c[2]) - max(r[0], _c[0])
+            if _hx <= 0:
+                continue                            # 水平上不在卡片上方, 不算
+            if r[1] < _ct + MIN_GAP and r[1] + r[3] > _ct:
+                bad.append("贴到卡片顶边: %r 底边离卡片顶边只有 %.1fpt (要 >= %gpt)"
+                           % (txt[:18], r[1] - _ct, MIN_GAP))
     # 控件的 action 名字写错(例如 setAction_("onMode_") —— 少了冒号)会静默失效:
     # 界面看着完全正常, 点了就是没反应。只能靠这条查出来。
     for v, r, txt in items:
@@ -309,7 +362,7 @@ def logo_view(path):
 def dump_layout(view):
     for v in view.subviews():
         txt = ""
-        if v.__class__.__name__ == "NSButton":
+        if isinstance(v, NSButton) and not isinstance(v, NSPopUpButton):
             # NSButton 的 stringValue 是"选中态"不是标题, 这里要的是人看得懂的那句
             try:
                 txt = "%s %s" % ("v" if v.state() else " ", v.title())
@@ -325,6 +378,12 @@ def dump_layout(view):
                 txt = v.titleOfSelectedItem() or ""
             except Exception:
                 pass
+        try:                                # 下拉框: 把候选项也打出来 (布局检查看不到内容)
+            _items = v.itemArray()
+        except Exception:
+            _items = None
+        if _items:
+            txt = "%s [%s]" % (txt, " | ".join(str(it.title()) for it in _items))
         try:
             if v.isHidden():
                 txt = txt + "   [隐藏]"
@@ -337,7 +396,39 @@ def dump_layout(view):
 
 # ---------------------------------------------------------------- 窗口
 
-class SettingsWindow(NSObject):
+class _Pane(NSObject):
+    """两个窗口共用的手算坐标小工具 (子类设好 self._W / self._H 即可)。
+
+    坐标一律按「从上往下」写, 这里翻成 AppKit 的从左下角 —— 布局代码读起来就是
+    视觉顺序, 不用在脑子里做减法。
+    """
+
+    @objc.python_method
+    def _r(self, x, y_top, w, h):
+        return NSMakeRect(x, self._H - y_top - h, w, h)
+
+    @objc.python_method
+    def _card(self, v, y_top, h):
+        """垫在控件底下的一块圆角分组底。要先加, 才在控件下面。"""
+        b = _CardView.alloc().initWithFrame_(self._r(M, y_top, self._W - 2 * M, h))
+        b.setIdentifier_("bg")
+        v.addSubview_(b)
+        return b
+
+    @objc.python_method
+    def _select(self, popup, keys, value):
+        """把下拉拉到 value 那一项。数字档位对不上时退到最接近的一档。"""
+        try:
+            i = keys.index(value)
+        except ValueError:
+            try:
+                i = min(range(len(keys)), key=lambda k: abs(float(keys[k]) - float(value)))
+            except Exception:
+                i = 0
+        popup.selectItemAtIndex_(i)
+
+
+class SettingsWindow(_Pane):
     """设置窗口。常驻一个实例, 反复开关只做 orderFront_ / orderOut_。"""
 
     def initWithApp_appName_version_(self, app, name, version):
@@ -347,6 +438,7 @@ class SettingsWindow(NSObject):
         self.app = app
         self.name = name or ""
         self.version = version or ""
+        self._W, self._H = W, H              # 手算坐标用 (见 _Pane)
         self.c = {}                          # 控件登记表
         self._syncing = False
         self._n = 0
@@ -355,11 +447,7 @@ class SettingsWindow(NSObject):
         self._build()
         return self
 
-    # ---------------- 坐标: 按"从上往下"写, 这里翻成 AppKit 的从左下角 ----------------
-    @objc.python_method
-    def _r(self, x, y_top, w, h):
-        return NSMakeRect(x, H - y_top - h, w, h)
-
+    # ---------------- 坐标: 见 _Pane ----------------
     @objc.python_method
     def _sec(self, v, text, y_top, note=None):
         """一行分组标题, 返回它下面那块卡片的起始 y。"""
@@ -369,14 +457,6 @@ class SettingsWindow(NSObject):
             v.addSubview_(_label(note, self._r(CR - 300, y_top, 300, 16),
                                  size=11, dim=True, right=True))
         return y_top + 22
-
-    @objc.python_method
-    def _card(self, v, y_top, h):
-        """垫在控件底下的一块圆角分组底。要先加, 才在控件下面。"""
-        b = _CardView.alloc().initWithFrame_(self._r(M, y_top, W - 2 * M, h))
-        b.setIdentifier_("bg")
-        v.addSubview_(b)
-        return b
 
     # ---------------- 构建 ----------------
     @objc.python_method
@@ -442,78 +522,47 @@ class SettingsWindow(NSObject):
         v.addSubview_(self.c["hint"])
         cy = cyy + 132
 
-        # ---- 笔的输入 ----
+        # ---- 笔的输入: 手势 -> 动作 的绑定表 ----
         cy = self._sec(v, "笔的输入", cy + gap)
-        self._card(v, cy, 5 * ROW_H + 2 * PAD)
+        # 「恢复默认」这把小按钮挂在分组标题那一行的右边。它比卡片顶边高一截才算
+        # 干净: 原来是 cy-19, 按钮底边 (cy+1) 压在卡片顶边上 1pt, 看着像粘在一起
+        # (用户报过)。cy-26 -> 底边 cy-6, 和卡片留 6pt 呼吸, 同时也和标题行对齐。
+        self.c["reset_binds"] = _button("恢复默认", self._r(CR - 84, cy - 26, 84, 20),
+                                        self, "onResetBinds:", small=True)
+        v.addSubview_(self.c["reset_binds"])
+        self._card(v, cy, len(BIND_ROWS + SCROLL_ROWS) * ROW_H + 2 * PAD)
         ry = cy + PAD
-        v.addSubview_(_label("滑动方式", self._r(cx, ry + 5, LBL_W, 18)))
-        self.c["mode"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), [t for _, t in MODE_LABELS])
-        self.c["mode"].setTarget_(self)
-        self.c["mode"].setAction_("onMode:")
-        v.addSubview_(self.c["mode"])
-
-        # 触屏模式下的第二个手势: 快速划=滚动, 停住再划=拖拽
-        ry = cy + PAD + ROW_H
-        self.c["hold"] = _button("停住再划 = 拖拽", self._r(cx, ry + 4, 176, 20),
-                                 self, "onHold:", switch=True)
-        v.addSubview_(self.c["hold"])
-        self.c["hold_ms"] = _popup(self._r(CTRL_X + CTRL_W - 110, ry + 1, 110, 26), list(HOLD_TITLES))
-        self.c["hold_ms"].setTarget_(self)
-        self.c["hold_ms"].setAction_("onHoldMs:")
-        v.addSubview_(self.c["hold_ms"])
-        self.c["hold_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
-                                     size=11, dim=True, right=True)
-        v.addSubview_(self.c["hold_hint"])
-
-        # 触屏模式下的第三个手势: 停在原地不动 -> 抬手弹右键菜单。
-        # 与上面那条不冲突: 「停住再划」= 拖拽, 「停住不划」= 右键。
-        ry = cy + PAD + 2 * ROW_H
-        v.addSubview_(_label("长按不动", self._r(cx, ry + 5, LBL_W, 18)))
-        self.c["rc_hold"] = _popup(self._r(CTRL_X, ry + 1, 130, 26), list(RC_TITLES))
-        self.c["rc_hold"].setTarget_(self)
-        self.c["rc_hold"].setAction_("onRcHold:")
-        v.addSubview_(self.c["rc_hold"])
-        self.c["rc_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
-                                   size=11, dim=True, right=True)
-        v.addSubview_(self.c["rc_hint"])
-
-        ry = cy + PAD + 3 * ROW_H
-        v.addSubview_(_label("滚动方向", self._r(cx, ry + 5, LBL_W, 18)))
-        self.c["nat"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), [t for _, t in NAT_LABELS])
-        self.c["nat"].setTarget_(self)
-        self.c["nat"].setAction_("onNat:")
-        v.addSubview_(self.c["nat"])
-        self.c["nat_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
-                                    size=11, dim=True, right=True)
-        v.addSubview_(self.c["nat_hint"])
-
-        ry = cy + PAD + 4 * ROW_H
-        v.addSubview_(_label("滚动速度", self._r(cx, ry + 5, LBL_W, 18)))
-        self.c["gain"] = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), self._gain_titles())
-        self.c["gain"].setTarget_(self)
-        self.c["gain"].setAction_("onGain:")
-        v.addSubview_(self.c["gain"])
-        self.c["gain_hint"] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
-                                     size=11, dim=True, right=True)
-        v.addSubview_(self.c["gain_hint"])
-        cy += 5 * ROW_H + 2 * PAD
-
-
-        # ---- 桥接 ----
-        cy = self._sec(v, "桥接", cy + gap)
-        self._card(v, cy, 3 * cbh + 2 * PAD)
-        for i, (key, title, act) in enumerate((("enable", "启用笔桥接", "onEnable:"),
-                                               ("takeover", "用笔的绝对坐标驱动光标（试验）",
-                                                "onTakeover:"),
-                                               ("unknown", "允许未验证的小米设备", "onUnknown:"))):
-            self.c[key] = _button(title, self._r(cx, cy + PAD + i * cbh + 3, 360, 22),
-                                  self, act, switch=True)
-            v.addSubview_(self.c[key])
-        cy += 3 * cbh + 2 * PAD
+        for i, (g, title, opts, _d) in enumerate(BIND_ROWS):
+            v.addSubview_(_label(title, self._r(cx, ry + 5, LBL_W, 18)))
+            pop = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26),
+                         HB.gesture_action_titles(g))
+            pop.setTarget_(self)
+            pop.setAction_("onBind:")
+            pop.setTag_(i)
+            v.addSubview_(pop)
+            self.c["bind_%s" % g] = pop
+            self.c["bind_%s_hint" % g] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
+                                                size=11, dim=True, right=True)
+            v.addSubview_(self.c["bind_%s_hint" % g])
+            ry += ROW_H
+        # 滚动方向 / 速度: 只在有手势绑了「滚动」时才有意义 (所以放同一张卡里, 挨着手势)
+        for key, title in SCROLL_ROWS:
+            v.addSubview_(_label(title, self._r(cx, ry + 5, LBL_W, 18)))
+            items = [t for _v, t in NAT_LABELS] if key == "nat" else self._gain_titles()
+            pop = _popup(self._r(CTRL_X, ry + 1, CTRL_W, 26), items)
+            pop.setTarget_(self)
+            pop.setAction_("onNat:" if key == "nat" else "onGain:")
+            v.addSubview_(pop)
+            self.c[key] = pop
+            self.c["%s_hint" % key] = _label("", self._r(HINT_X, ry + 5, CR - HINT_X, 18),
+                                             size=11, dim=True, right=True)
+            v.addSubview_(self.c["%s_hint" % key])
+            ry += ROW_H
+        cy += len(BIND_ROWS + SCROLL_ROWS) * ROW_H + 2 * PAD
 
         # ---- 显示缩放 ----
         cy = self._sec(v, "显示缩放", cy + gap, note="只改平板那块屏，其他屏不动")
-        self._card(v, cy, 100)
+        self._card(v, cy, ROW_H + 16 + 2 * PAD)
         ry = cy + PAD
         v.addSubview_(_label("缩放档位", self._r(cx, ry + 5, LBL_W, 18)))
         self.c["disp"] = _popup(self._r(CTRL_X, ry + 1, 340, 26), ["正在扫描…"])
@@ -525,32 +574,44 @@ class SettingsWindow(NSObject):
         v.addSubview_(self.c["disp_btn"])
         self.c["disp_hint"] = _label("", self._r(cx, ry + 32, CR - cx, 16), size=11, dim=True)
         v.addSubview_(self.c["disp_hint"])
-        self.c["disp_allow"] = _button("允许管理未实测的显示器", self._r(cx, ry + 55, 360, 22),
-                                       self, "onDispAllow:", switch=True)
-        v.addSubview_(self.c["disp_allow"])
-        cy += 100
+        cy += ROW_H + 16 + 2 * PAD
 
-        # ---- 启动与日志 ----
-        cy = self._sec(v, "启动与日志", cy + gap)
-        self._card(v, cy, 2 * ROW_H + 2 * PAD)
-        ry = cy + PAD
-        self.c["autostart"] = _button("登录时自动启动", self._r(cx, ry + 2, 170, 22),
-                                      self, "onAutostart:", switch=True)
-        v.addSubview_(self.c["autostart"])
-        self.c["autostart_hint"] = _label("", self._r(cx + 178, ry + 5, CR - cx - 178, 18),
-                                          size=11, dim=True, right=True)
+        # ---- 运行 (常用开关就这三个, 其余都在「高级选项」里) ----
+        cy = self._sec(v, "运行", cy + gap)
+        self._card(v, cy, 3 * cbh + 2 * PAD)
+        for i, (key, title, act) in enumerate((("enable", "启用笔桥接", "onEnable:"),
+                                               ("autostart", "登录时自动启动", "onAutostart:"),
+                                               ("debug", "详细日志", "onDebug:"))):
+            self.c[key] = _button(title, self._r(cx, cy + PAD + i * cbh + 3, 220, 22),
+                                  self, act, switch=True)
+            v.addSubview_(self.c[key])
+        self.c["autostart_hint"] = _label(
+            "", self._r(cx + 228, cy + PAD + cbh + 8, CR - cx - 228, 16), size=11, dim=True,
+            right=True)
         v.addSubview_(self.c["autostart_hint"])
-        ry = cy + PAD + ROW_H
-        self.c["debug"] = _button("详细日志", self._r(cx, ry + 2, 130, 22),
-                                  self, "onDebug:", switch=True)
-        v.addSubview_(self.c["debug"])
-        self.c["log_btn"] = _button("打开日志", self._r(CR - 212, ry, 104, 26),
+        self.c["log_btn"] = _button("打开日志", self._r(CR - 212, cy + PAD + 2 * cbh + 1, 104, 24),
                                     self, "onLog:", small=True)
         v.addSubview_(self.c["log_btn"])
-        self.c["diag_btn"] = _button("诊断…", self._r(CR - 104, ry, 104, 26),
+        self.c["diag_btn"] = _button("诊断…", self._r(CR - 104, cy + PAD + 2 * cbh + 1, 104, 24),
                                      self, "onDiag:", small=True)
         v.addSubview_(self.c["diag_btn"])
-        cy += 2 * ROW_H + 2 * PAD
+        cy += 3 * cbh + 2 * PAD
+
+        # ---- 高级选项: 入口一张卡, 里面那几项不常用, 单独一个小窗 ----
+        cy += gap
+        self._card(v, cy, ROW_H + 2 * PAD)
+        self.c["adv"] = _button("高级选项…", self._r(cx, cy + PAD + 1, 120, 26),
+                                self, "onAdvanced:")
+        v.addSubview_(self.c["adv"])
+        self.c["adv_hint"] = _label("光标基准屏 · 未验证设备 · 判定时长",
+                                    self._r(cx + 128, cy + PAD + 5, CR - cx - 128, 18),
+                                    size=11, dim=True, right=True)
+        v.addSubview_(self.c["adv_hint"])
+        cy += ROW_H + 2 * PAD
+
+        # 高级选项窗口: 独立小窗。内容全在主窗口这类里算 frame 会牵动整页重排,
+        # 而且「高级」本来就该离常用开关远一点。
+        self.adv = AdvancedWindow.alloc().initWithOwner_(self)
 
         # ---- 页脚: 只有版本行 (「关于」「退出」已在菜单栏里) ----
         self.c["ver"] = _label("", self._r(cx, cy + 14, CR - cx, 16), size=11, dim=True)
@@ -610,6 +671,10 @@ class SettingsWindow(NSObject):
         if self.win is not None and self.win.isVisible():
             self._focus_left = 0
             self.win.orderOut_(None)
+            try:
+                self.adv.hide()          # 主窗口收起时高级选项跟着收起 (它是同一套设置)
+            except Exception:
+                pass
             return False
         return self.show()
 
@@ -622,12 +687,28 @@ class SettingsWindow(NSObject):
     def refresh(self, st=None, force=False):
         if self.win is None:
             return
+        # 高级选项是独立小窗: 它自己判可见性 (主窗口关着、它开着的时候也得刷)
+        try:
+            if self.adv is not None:
+                self.adv.refresh()
+        except Exception as e:
+            self.app.log("高级选项窗口刷新失败: %r" % (e,))
         if not force and not self.win.isVisible():
             return
         try:
             self._refresh(st, force)
         except Exception as e:              # 定时器回调里出错不能静默
             self.app.log("设置窗口刷新失败: %r" % (e,))
+
+    @objc.python_method
+    def refresh_all(self):
+        """主窗口 + 高级选项一起刷 (改高级里那几项, 主窗口的可用状态也跟着变)。"""
+        self.refresh(force=True)
+        try:
+            if self.adv is not None:
+                self.adv.refresh(force=True)
+        except Exception as e:
+            self.app.log("高级选项窗口刷新失败: %r" % (e,))
 
     @objc.python_method
     def _refresh(self, st, force):
@@ -693,35 +774,29 @@ class SettingsWindow(NSObject):
         self.c["relaunch"].setHidden_(not need_re)
 
         # --- 开关与下拉(借用挡板, 免得设置动作反过来写一遍) ---
+        binds = HB.binds_from_cfg(a.cfg)
         self._syncing = True
         try:
             self.c["enable"].setState_(1 if a.enabled else 0)
-            self.c["takeover"].setState_(1 if a.cfg["takeover"] else 0)
-            self.c["unknown"].setState_(1 if a.cfg["allow_unknown"] else 0)
-            self.c["disp_allow"].setState_(1 if a.cfg["display_allow_unknown"] else 0)
             self.c["debug"].setState_(1 if a.cfg["debug_log"] else 0)
-            self.c["hold"].setState_(1 if a.cfg.get("hold_drag") else 0)
-            self._select(self.c["hold_ms"], list(_HOLD_MS), a.cfg.get("hold_ms", 250))
-            self._select(self.c["rc_hold"], list(_RC_HOLD), int(a.cfg.get("rc_hold_ms") or 0))
-            self._select(self.c["mode"], [k for k, _ in MODE_LABELS], a.cfg["mode"])
+            for g, _t, opts, _d in BIND_ROWS:
+                self._select(self.c["bind_%s" % g], list(opts), binds.get(g))
             self._select(self.c["nat"], [k for k, _ in NAT_LABELS], a.cfg["natural"])
             from dptouch_engine import GAINS
             self._select(self.c["gain"], [g for g, _ in GAINS], a.cfg["gain"])
         finally:
             self._syncing = False
-        # 滚动方向/速度在"滑动选择"或"绝对坐标接管"下不生效
-        usable = a.cfg["mode"] == "scroll" and not a.cfg["takeover"]
+        # 滚动方向 / 速度: 只有「没有手势绑滚动」时才没意义
+        # (「指定目标屏」下笔会顺便把光标带过去, 滚轮仍落在光标处 —— 不冲突, 不再禁用)
+        usable = "scroll" in binds.values()
         self.c["nat"].setEnabled_(usable)
         self.c["gain"].setEnabled_(usable)
-        self.c["hold"].setEnabled_(usable)
-        self.c["hold_ms"].setEnabled_(usable and bool(a.cfg.get("hold_drag")))
-        self.c["rc_hold"].setEnabled_(usable and bool(a.cfg.get("hold_drag")))
-        self.c["rc_hint"].setStringValue_("弹出右键菜单" if usable else "仅滑动翻页模式生效")
-        self.c["hold_hint"].setStringValue_(self._hold_hint(usable))
         self.c["nat_hint"].setStringValue_(
             "系统当前：%s" % ("自然" if self._sys_natural() else "传统")
-            if a.cfg["natural"] == "system" else "")
-        self.c["gain_hint"].setStringValue_("" if usable else "仅滑动翻页模式生效")
+            if (usable and a.cfg["natural"] == "system") else ("" if usable else "没有手势绑滚动"))
+        self.c["gain_hint"].setStringValue_("" if usable else "没有手势绑滚动")
+        for g, _t, _opts, _d in BIND_ROWS:
+            self.c["bind_%s_hint" % g].setStringValue_(self._bind_hint(g, binds.get(g)))
 
         # 窗口起来了却还没成为 key: 再抢几次(菜单收起那一刻的激活请求系统会忽略)。
         # 抢到就停, 免得一直跟用户抢焦点。
@@ -747,21 +822,18 @@ class SettingsWindow(NSObject):
         self.c["ver"].setStringValue_("%s %s · MIT License" % (self.name, self.version))
 
     @objc.python_method
-    def _select(self, popup, keys, value):
-        try:
-            i = keys.index(value)
-        except ValueError:
-            try:
-                i = min(range(len(keys)), key=lambda k: abs(float(keys[k]) - float(value)))
-            except Exception:
-                i = 0
-        popup.selectItemAtIndex_(i)
-
-    @objc.python_method
-    def _hold_hint(self, usable):
-        if not usable:
-            return "滑动选择模式下每笔都是拖拽"
-        return "" if self.app.cfg.get("hold_drag") else "关掉就只有点击和滚动"
+    def _bind_hint(self, gesture, action):
+        """绑定的行尾说明 —— 只在「这一行的状态容易误解」时给一句。"""
+        if action == "none":
+            return "关"
+        if gesture == "swipe":
+            return "方向与速度见下" if action == "scroll" else ""
+        if gesture == "hold_swipe":
+            return "先停住 %.2f 秒再划" % (int(self.app.cfg.get("hold_ms") or 250) / 1000.0)
+        if gesture == "hold":
+            ms = int(self.app.cfg.get("rc_hold_ms") or 0)
+            return "停住 %.1f 秒不动" % (ms / 1000.0) if ms else "判定时长在高级选项"
+        return ""
 
     @objc.python_method
     def _sys_natural(self):
@@ -824,31 +896,66 @@ class SettingsWindow(NSObject):
         self.app.actToggleEnable_(None)
         self.refresh(force=True)
 
-    def onTakeover_(self, sender):
-        self.app.actTakeover_(None)
-        self.refresh(force=True)
+    def onTarget_(self, sender):
+        """高级选项里的「光标基准屏」下拉 —— 值按下标回到 app._tgt_opts 里取。"""
+        if self._syncing:
+            return
+        opts = list(getattr(self.app, "_tgt_opts", []) or [])
+        i = max(0, int(sender.indexOfSelectedItem()))
+        if i < len(opts):
+            self.app.set_target(opts[i][0])
+        self.refresh_all()
+
+    def onDragPen_(self, sender):
+        self.app.actDragPen_(None)
+        self.refresh_all()
 
     def onUnknown_(self, sender):
         self.app.actUnknown_(None)
-        self.refresh(force=True)
+        self.refresh_all()
 
-    def onHold_(self, sender):
-        self.app.actHold_(None)
-        self.refresh(force=True)
+    def onBind_(self, sender):
+        """手势下拉: 第 tag 行 (BIND_ROWS 的顺序) 选了第 index 个动作。"""
+        if self._syncing:
+            return
+        i = max(0, int(sender.tag()))
+        if i >= len(BIND_ROWS):
+            return
+        g, _t, opts, _d = BIND_ROWS[i]
+        self.app.set_bind(g, opts[max(0, int(sender.indexOfSelectedItem()))])
+        self.refresh_all()
+
+    def onResetBinds_(self, sender):
+        self.app.reset_binds()
+        self.refresh_all()
+
+    def onAdvanced_(self, sender):
+        self.adv.show()
+        self.refresh_all()
 
     def onHoldMs_(self, sender):
+        if self._syncing:
+            return
         self.app.set_hold_ms(_HOLD_MS[max(0, sender.indexOfSelectedItem())])
-        self.refresh(force=True)
+        self.refresh_all()
 
     def onRcHold_(self, sender):
         if self._syncing:
             return
         self.app.set_rc_hold(_RC_HOLD[max(0, sender.indexOfSelectedItem())])
-        self.refresh(force=True)
+        self.refresh_all()
 
     def onDispAllow_(self, sender):
         self.app.actDispAllow_(None)
-        self.refresh(force=True)
+        self.refresh_all()
+
+    def onUpdateAuto_(self, sender):
+        self.app.actUpdateAuto_(None)
+        self.refresh_all()
+
+    def onCheckUpdate_(self, sender):
+        """手动查一次新版本。查到/查不到/查不动都由 app 那边弹窗说明。"""
+        self.app.actCheckUpdate_(None)
 
     def onDebug_(self, sender):
         self.app.actDebugLog_(None)
@@ -856,12 +963,6 @@ class SettingsWindow(NSObject):
 
     def onAutostart_(self, sender):
         self.app.actAutostart_(None)
-        self.refresh(force=True)
-
-    def onMode_(self, sender):
-        if self._syncing:
-            return
-        self.app.set_mode(MODE_LABELS[max(0, sender.indexOfSelectedItem())][0])
         self.refresh(force=True)
 
     def onNat_(self, sender):
@@ -893,3 +994,139 @@ class SettingsWindow(NSObject):
 
     def onDiag_(self, sender):
         self.app.actDiagnostics_(None)
+
+
+# ---------------------------------------------------------------- 高级选项
+
+class AdvancedWindow(_Pane):
+    """高级选项 —— 不常用的那几项都搬这儿, 主窗口只留常用开关。
+
+    为什么是独立小窗而不是折叠块: 主窗口的 frame 是手算的 (见模块头), 折叠会让整页
+    重排; 而且「高级」本来就该离常用开关远一点, 免得两边互相干扰。
+
+    状态不在这里另存一份: 控件全指向 SettingsWindow 的那几个动作, 读一律读 app.cfg。
+    """
+
+    def initWithOwner_(self, owner):
+        self = objc.super(AdvancedWindow, self).init()
+        if self is None:
+            return None
+        self.owner = owner
+        self.app = owner.app
+        self._W, self._H = AW, AH
+        self.c = {}
+        self._syncing = False
+        self._build()
+        return self
+
+    @objc.python_method
+    def _build(self):
+        style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+        self.win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, AW, AH), style, NSBackingStoreBuffered, False)
+        self.win.setTitle_("高级选项")
+        self.win.setReleasedWhenClosed_(False)
+        self.win.center()
+        v = self.win.contentView()
+        cx = M + PAD
+        y = 12.0
+        cw = AW - M - PAD - cx                 # 控件可用宽度
+        # 末尾那 30pt 是「立即检查更新」按钮这一行 (和提示文字同一行)
+        h = len(ADV_SWITCHES) * CB_H + len(ADV_POPUPS) * ROW_H + 30 + 2 * PAD
+        self._card(v, y, h)
+        for i, (key, _cfg, title, act) in enumerate(ADV_SWITCHES):
+            self.c[key] = _button(title, self._r(cx, y + PAD + i * CB_H + 3, cw, 22),
+                                  self.owner, act, switch=True)
+            v.addSubview_(self.c[key])
+        ry = y + PAD + len(ADV_SWITCHES) * CB_H
+        for key, _cfg, title, act in ADV_POPUPS:
+            v.addSubview_(_label(title, self._r(cx, ry + 5, 100, 18)))
+            if key == "target":
+                titles = [t for _v, t in self.app.target_choices()]
+                wide = 348            # 屏名 + 分辨率比时长档长得多
+            elif key == "hold_ms":
+                titles, wide = list(HOLD_TITLES), 130
+            else:
+                titles, wide = list(RC_TITLES), 130
+            pop = _popup(self._r(cx + 104, ry + 1, wide, 26), titles)
+            pop.setTarget_(self.owner)
+            pop.setAction_(act)
+            v.addSubview_(pop)
+            self.c[key] = pop
+            if key == "target":
+                self._tgt_titles = list(titles)
+            ry += ROW_H
+        by = ry + 6            # ry 已经在 popups 循环里走到它们下面了, 别再乘一遍
+        self.c["check_upd"] = _button("立即检查更新", self._r(cx, by, 128, 24),
+                                      self.owner, "onCheckUpdate:")
+        v.addSubview_(self.c["check_upd"])
+        self.c["hint"] = _label("改完立即生效", self._r(cx + 136, by + 5, cw - 136, 16),
+                                size=11, dim=True)
+        v.addSubview_(self.c["hint"])
+        return True
+
+    @objc.python_method
+    def show(self):
+        if self.win is None:
+            return False
+        self.refresh(force=True)
+        try:
+            self.owner._activate()          # 菜单栏 App 的窗口要自己抢一次焦点, 否则下拉是灰的
+        except Exception:
+            pass
+        self.win.makeKeyAndOrderFront_(None)
+        self.win.orderFrontRegardless()
+        try:                                # 贴在主窗口右边; 主窗口不在屏幕上就居中
+            mf = self.owner.win.frame()
+            if mf.size.width > 1 and mf.size.height > 1:
+                self.win.setFrameOrigin_((mf.origin.x + mf.size.width + 12,
+                                          mf.origin.y + mf.size.height - AH))
+            else:
+                self.win.center()
+        except Exception:
+            self.win.center()
+        self.app.log("高级选项: 已打开")
+        return True
+
+    @objc.python_method
+    def hide(self):
+        if self.win is not None and self.win.isVisible():
+            self.win.orderOut_(None)
+            return True
+        return False
+
+    @objc.python_method
+    def is_visible(self):
+        return bool(self.win is not None and self.win.isVisible())
+
+    @objc.python_method
+    def refresh(self, force=False):
+        """控件拉回 app.cfg 的真值 (借用挡板, 免得设置动作反过来把状态写一遍)。"""
+        if self.win is None:
+            return
+        if not force and not self.win.isVisible():
+            return
+        a = self.app
+        self._syncing = True
+        try:
+            for key, cfg, _t, _act in ADV_SWITCHES:
+                self.c[key].setState_(1 if a.cfg.get(cfg) else 0)
+            self._sync_target_popup(a)
+            self._select(self.c["hold_ms"], list(_HOLD_MS), int(a.cfg.get("hold_ms") or 250))
+            self._select(self.c["rc_hold"], list(_RC_HOLD), int(a.cfg.get("rc_hold_ms") or 0))
+        finally:
+            self._syncing = False
+
+    @objc.python_method
+    def _sync_target_popup(self, a):
+        """光标基准屏: 屏插拔过就重建条目, 再按配置值选中 (值对不上退到第一项)。"""
+        pop, opts = self.c.get("target"), list(a.target_choices())
+        if pop is None:
+            return
+        titles = [t for _v, t in opts]
+        if titles != getattr(self, "_tgt_titles", None):
+            pop.removeAllItems()
+            pop.addItemsWithTitles_(titles)
+            self._tgt_titles = titles
+        cur = str(a.cfg.get("target_display") or "auto")
+        pop.selectItemAtIndex_(next((i for i, (v, _t) in enumerate(opts) if v == cur), 0))

@@ -8,7 +8,7 @@ APP_NAME="Mipad DP Touch"
 APP="dist-pyi/${APP_NAME}.app"
 [ -d "$APP" ] || { echo "==> 没找到 $APP ，先跑 ./build_app.sh"; exit 1; }
 
-VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" 2>/dev/null || echo "1.0.0")
+VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" 2>/dev/null || echo "unknown")
 OUT="dist-pyi/Mipad-DP-Touch-${VER}.dmg"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT

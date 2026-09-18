@@ -21,11 +21,14 @@
   python3 src/hid_bridge.py listen 30 raw    # 额外打印逐帧数值
   python3 src/hid_bridge.py probe 12         # 分三轮: 笔悬停 / 笔按下 / 只用手指  (关键!)
   python3 src/hid_bridge.py finger 12        # 分两轮: 笔放远只用手指 / 只用笔悬停 (指纹对比, 判定手指到底有没有上报)
-  python3 src/hid_bridge.py bridge           # 补点击+拖拽: TipSwitch->鼠标左键, 按下后移动->LeftMouseDragged
+  python3 src/hid_bridge.py bridge           # ★触屏式 (默认): 轻点=左键单击, 快速划=滚动 (不选中文字),
+                                             #   笔尖停住 0.25s 再划=拖拽/划选, 停住不动 0.8s=右键菜单
   python3 src/hid_bridge.py bridge --drag-pen    # 拖拽位置改用笔绝对坐标 (默认用系统光标位置)
-  python3 src/hid_bridge.py bridge --scroll      # ★触屏式: 轻点=点击, 快速划=滚轮滚动 (不会选中文字),
-                                             #   笔尖先停住 0.25s 再划=拖拽 (--hold-drag-ms=N 调档, --no-hold-drag 关)
-                                             #   方向反了加 --scroll-flip
+  python3 src/hid_bridge.py bridge --bind-swipe=drag --bind-hold=none
+                                             # 改按键绑定: 手势 tap/swipe/hold_swipe/hold
+                                             #   动作 none/left/right/middle/double/scroll/drag/space/back
+                                             #   老开关仍在: --select (划动=拖拽) --no-hold-drag --no-rc
+                                             #   判定时长: --hold-drag-ms=N --rc-hold-ms=N; 方向反了: --scroll-flip
   python3 src/hid_bridge.py bridge --takeover    # 全接管: X/Y 也由脚本驱动 (默认只跟随系统光标)
 
 权限: listen/probe/scan 需『输入监控』; bridge 另需『辅助功能』
@@ -414,6 +417,19 @@ cg.CGDisplayBounds.argtypes = [ctypes.c_uint32]
 # 滚轮事件是 C 可变参数函数 (…, int32_t wheel1, ...): 声明了 argtypes 反而传不进可变部分,
 # 所以这里【只】声明 restype —— 不声明的话 64 位指针会被截成 int32 直接崩。
 cg.CGEventCreateScrollWheelEvent.restype = ctypes.c_void_p
+# 键盘事件 / 事件字段: 不声明 argtypes 的话 64 位指针会被截成 int32 (见上面那条注释)
+cg.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+cg.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+cg.CGEventSetFlags.restype = None
+cg.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+cg.CGEventSetIntegerValueField.restype = None
+cg.CGEventSetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int64]
+# 事件字段号: kCGMouseEventClickState(1) 让「双击」真的是双击 (应用看 clickCount),
+# kCGMouseEventButtonNumber(3) 让中键事件带对按键号。
+CLICK_STATE_FIELD = 1
+BUTTON_NUM_FIELD = 3
+MIDDLE_BUTTON = 2
+CMD_MASK = 1 << 20      # kCGEventFlagMaskCommand
 
 ax = ctypes.CDLL(ctypes.util.find_library("ApplicationServices"))
 ax.AXIsProcessTrusted.restype = ctypes.c_bool
@@ -440,59 +456,228 @@ RC_HOLD_DT = 0.8       # 默认: 笔尖停住不动 0.8s -> 抬手时弹右键�
 
 OTHERS_DOWN, OTHERS_UP = 25, 26   # kCGEventOtherMouseDown / Up —— 中键就靠这俩
 
+# ---------------------------------------------------------------------------
+# 按键绑定表 —— 「一笔操作」怎么归类, 每一类发什么动作
+#
+# 四类手势 (按形态分, 不是按功能分):
+#   tap        轻点        笔尖点一下就走
+#   swipe      快速滑动     一笔划过去
+#   hold_swipe 停住再滑     笔尖先停住、再划
+#   hold       停住不动     笔尖停住又没划走, 抬手那一刻算
+#
+# 默认值 = 2026-09 之前的硬编码行为, 所以升级上来的用户什么都不用改;
+# 窗口里的「恢复默认」就是把 DEFAULT_BINDS 写回去。
+#
+# ★ 这张表是唯一出处: 窗口下拉 / CLI 的 --bind-<手势>=<动作> / Bridge 的派发
+#   全都读它 —— 界面上出现过的选项一定有实现, 不会出现"选了没反应"的死标签。
+BIND_ACTIONS = (
+    ("none", "关"),
+    ("left", "左键单击"),
+    ("right", "右键菜单"),
+    ("middle", "中键单击"),
+    ("double", "双击"),
+    ("scroll", "滚动翻页"),
+    ("drag", "拖拽"),
+    ("space", "空格键"),
+    ("back", "返回"),
+    ("screen", "切换屏幕"),      # App 级动作: 基准屏按顺序切到下一块 (见 Bridge.switch_screen)
+)
+BIND_TITLES = dict(BIND_ACTIONS)
+
+# 同一个动作在不同手势下叫法不一样 —— 说的不是实现, 是**用途**:
+#   快速滑动 + 拖拽 = 划选文字 (快进快出, 一笔扫过要选的那段)
+#   停住再滑 + 拖拽 = 挪窗口/图标/文件 (先按住在慢慢挪, 不然重命名/关闭按钮会误触)
+# 两者发出去的事件序列完全一样 (LeftMouseDown/Dragged/Up), 差别在手势本身。
+# ★「选中文字」只挂在快速滑动上 —— 停住再滑不该被说成选中文字。
+BIND_ACTION_TITLES = {
+    "swipe": {"drag": "拖拽 · 选中文字"},
+    "hold_swipe": {"drag": "拖拽 · 移动窗口"},
+}
+
+
+def action_title(gesture, action):
+    """某个手势下的动作叫法 (没有特指就用通用名)。"""
+    return str((BIND_ACTION_TITLES.get(gesture) or {}).get(action)
+               or BIND_TITLES.get(action) or action)
+
+
+def gesture_action_titles(gesture):
+    """窗口下拉用: 这一类手势的动作, 顺序同上, 名字用这一类手势的叫法。"""
+    return tuple(action_title(gesture, a) for a in gesture_actions(gesture))
+
+# (配置键, 行标题, 这一类手势能绑的动作, 默认动作)
+# 「能绑的动作」按语义收窄: 轻点没有位移, 绑不了滚动/拖拽; 滑动那两类的位移是
+# 连续量, 只给「按住状态」的动作 (滚动 / 拖拽) + 一次性动作。每个选项都有实现。
+BIND_GESTURES = (
+    ("tap", "轻点",
+     ("none", "left", "right", "middle", "double", "space", "back", "screen"), "left"),
+    ("swipe", "快速滑动",
+     ("none", "scroll", "drag", "right", "middle", "space", "back", "screen"), "scroll"),
+    ("hold_swipe", "停住再滑",
+     ("none", "drag", "right", "middle", "space", "back", "screen"), "drag"),
+    ("hold", "停住不动",
+     ("none", "right", "left", "middle", "double", "space", "back", "screen"), "right"),
+)
+BIND_PREFIX = "bind_"
+DEFAULT_BINDS = {g: d for g, _t, _o, d in BIND_GESTURES}
+
+KEY_SPACE = 49        # kVK_Space
+KEY_LBRACKET = 33     # kVK_ANSI_LeftBracket —— 配 ⌘ = 返回
+
+
+def bind_key(gesture):
+    """配置键: 手势 -> bind_<手势>"""
+    return BIND_PREFIX + gesture
+
+
+def bind_cfg_keys():
+    return [bind_key(g) for g, _t, _o, _d in BIND_GESTURES]
+
+
+def gesture_title(gesture):
+    for g, t, _o, _d in BIND_GESTURES:
+        if g == gesture:
+            return t
+    return gesture
+
+
+def gesture_actions(gesture):
+    """这一类手势能绑的动作 (窗口下拉按这个顺序列)。"""
+    for g, _t, o, _d in BIND_GESTURES:
+        if g == gesture:
+            return tuple(o)
+    return ()
+
+
+def legacy_binds(cfg):
+    """老配置 (mode / hold_drag / rc_hold_ms) -> 等价的四类手势绑定。
+
+    2026-09 之前只有一个全局「滑动方式」开关和两个勾选框。升级时把它翻译过来,
+    用户不必重新设一遍 (也不会有人的手感在升级后悄悄变了)。
+    """
+    cfg = cfg or {}
+    out = dict(DEFAULT_BINDS)
+    if str(cfg.get("mode") or "scroll") == "select":
+        # 滑动选择: 每一笔都是拖拽 -> 快速滑动=拖拽, 另外两个手势原本就没生效
+        out["swipe"] = "drag"
+        out["hold_swipe"] = "none"
+        out["hold"] = "none"
+        return out
+    if not cfg.get("hold_drag", True):
+        out["hold_swipe"] = "none"
+    if not int(cfg.get("rc_hold_ms") or 0):
+        out["hold"] = "none"
+    return out
+
+
+def binds_from_cfg(cfg):
+    """配置 -> 绑定表。带 bind_* 键就用它; 否则按老配置翻译 (迁移)。"""
+    cfg = cfg or {}
+    if not any(k in cfg for k in bind_cfg_keys()):
+        return legacy_binds(cfg)
+    out = dict(DEFAULT_BINDS)
+    for g in DEFAULT_BINDS:
+        a = cfg.get(bind_key(g))
+        if a in BIND_TITLES:
+            out[g] = a
+    return out
+
 
 class Bridge(object):
-    def __init__(self, takeover=False, drag_pen=False, scroll=False, scroll_flip=False,
-                 hold_drag=True, hold_ms=None, rc_hold_ms=0):
+    def __init__(self, takeover=False, drag_pen=False, binds=None, scroll_flip=False,
+                 hold_ms=None, rc_hold_ms=0):
+        # 兜底基准 (只给命令行单独跑桥接用)。App 里由 engine 按「光标基准屏」下发,
+        # 因为写死主屏 = 接了第二块屏后笔的落点会跑到别的屏上 (见 set_rect)。
         b = cg.CGDisplayBounds(cg.CGMainDisplayID())
         self.ox, self.oy, self.w, self.h = b.origin.x, b.origin.y, b.size.width, b.size.height
+        # 「切换屏幕」不是合成事件, 而是换掉上面这个矩形 —— 那是 App 级的事 (要读配置、
+        # 要遍历显示器), 所以 Bridge 只留一个钩子: App 起来时接上 engine.next_screen。
+        # 没接 (命令行单独跑桥接) -> 这个动作什么都不做, 但绝不报错、绝不乱发事件。
+        self.on_switch_screen = None
+        self.rect_label = ""
         self.x = self.y = 0.0
         self.down = False
         self.n = 0
         self.nd = 0
         self.ns = 0            # 滚轮事件数
-        self.ns0 = 0           # 本手划动开始时的滚轮基数
+        self.ns0 = 0           # 本笔划动开始时的滚轮基数
         self.nclk = 0          # 轻点(点击)次数
+        self.nrc = 0           # 右键次数
         self.last_drag = 0.0
         self.takeover = takeover
         self.drag_pen = drag_pen
-        self.scroll = scroll
         self.scroll_flip = scroll_flip
-        self.hold_drag = bool(hold_drag)   # 触屏模式下允许「先停住再划 = 拖拽」
+        self.bind = dict(DEFAULT_BINDS)     # 手势 -> 动作 (表见文件顶部 BIND_GESTURES)
         self.hold_dt = (float(hold_ms) / 1000.0) if hold_ms else HOLD_DRAG_DT
-        # ★长按不动 = 右键菜单: 只在触屏模式下用; 长按期间笔尖没飘 (hold_ok) 且没划动 (not scrolled)
-        self.rc_hold_dt = (float(rc_hold_ms) / 1000.0) if rc_hold_ms else 0.0
-        self.nrc = 0                       # 右键次数
+        self.rc_hold_ms = float(rc_hold_ms or 0)
+        self.rc_hold_dt = 0.0
+        self.set_binds(binds)
+        self.set_rc_hold_ms(self.rc_hold_ms)
         self.gain = 1.0        # 滚动增益 (GUI 可运行时改; 1.0 = 笔走多少像素滚多少)
-        # --scroll 触屏模式的状态
-        self.scrolled = False            # 本次触摸是否已超过轻点阈值
-        self.dragging = False            # 本次触摸是否已升级成长按拖拽
-        self.hold_ok = True              # 长按期间是否一直"停住"(没飘出 HOLD_RADIUS_PX)
-        self.hold_t0 = 0.0               # 笔尖按下的时刻 (长按计时起点)
-        self.nd0 = 0                     # 本手开始时的拖拽基数 (只为日志好看)
+        # 手势判定的状态
+        self.scrolled = False            # 本笔是否已超过轻点阈值 (判定为快速滑动)
+        self.dragging = False            # 本笔是否已进入按住拖拽
+        self.consumed = False            # 本笔是否已发过一个「一次性」动作 (右键/空格/返回…)
+        self.hold_ok = True              # 「停住」期间是否一直没飘出 HOLD_RADIUS_PX
+        self.hold_t0 = 0.0               # 笔尖按下的时刻 (停住判定的计时起点)
+        self.nd0 = 0                     # 本笔开始时的拖拽基数 (只为日志好看)
         self.anchor_x = self.anchor_y = 0.0
         self.dev_hist = []               # [(时刻, 距锚点偏移px)]: 抬手时取中位数判「有没有在动」
-        self.dev_max = 0.0               # 整手期间的最大偏移 (日志用)
+        self.dev_max = 0.0               # 整笔期间的最大偏移 (日志用)
         self.last_pen_y = None
         self.pend = 0.0                  # 累积未发出的滚动位移 (px)
         self.last_scroll = 0.0
         self.tap_pos = (0.0, 0.0)
+        self.drag_root = (0.0, 0.0)      # 本次拖拽的参考点 (见 drag_pos)
+        self.drag_pen0 = (0.0, 0.0)      # 按下瞬间的笔尖位置 (算位移用)
         self.debug = False       # 详细日志 (排查用): 打笔尖坐标 / 光标 / 落点
         self._dbg_t = 0.0
-        print("主显示器: origin=(%.0f,%.0f)  %.0fx%.0f" % (self.ox, self.oy, self.w, self.h))
-        print("模式: %s" % ("触屏式 (笔尖轻点=点击 / 按住上下划=滚轮滚动, 不产生选中)" if (scroll and not takeover)
-                          else "全接管 (脚本发移动+点击, 可用 --flip-y 翻 Y)" if takeover
-                          else "只补点击+拖拽 (光标沿用系统原生)"))
-        if not takeover:
-            if scroll:
-                print("      轻点阈值 %.0f px   滚动方向: %s"
-                      % (SCROLL_TAP_PX, "翻转 (--scroll-flip)" if scroll_flip else "自然 (往上划=看后面的内容)"))
-                print("      长按拖拽: %s"
-                      % ("笔尖停住 %.2fs 再划 = 拖拽 (拖窗口/文件/划选文字)" % self.hold_dt
-                         if self.hold_drag else "关 (划动一律滚动, 拖不动窗口)"))
-            else:
-                print("      拖拽位置源: %s" % ("笔绝对坐标 (--drag-pen)"
-                                              if drag_pen else "系统光标 (若按下时拖不动, 改加 --drag-pen)"))
+        print("按键绑定: " + "  ".join(
+            "%s=%s" % (gesture_title(g), action_title(g, self.bind[g]))
+            for g, _t, _o, _d in BIND_GESTURES))
+        if self.takeover:
+            print("模式: 全接管 (脚本发移动+点击, 可用 --flip-y 翻 Y)")
+        elif self.bind.get("swipe") == "scroll":
+            print("      轻点阈值 %.0f px   滚动方向: %s"
+                  % (SCROLL_TAP_PX, "翻转 (--scroll-flip)" if scroll_flip
+                     else "自然 (往上划=看后面的内容)"))
+        if not self.takeover and self.bind.get("hold_swipe") != "none":
+            print("      「停住再滑」: 笔尖先停住 %.2fs, 之后一动就进入拖拽" % self.hold_dt)
+        if self.drag_pen:
+            print("      拖拽位置源: 笔的绝对坐标 (--drag-pen)")
+
+    def set_binds(self, binds):
+        """换一张绑定表 (只认表里有的手势/动作, 别的忽略)。"""
+        out = dict(DEFAULT_BINDS)
+        for g, a in (binds or {}).items():
+            if g in DEFAULT_BINDS and a in BIND_TITLES:
+                out[g] = a
+        self.bind = out
+        self._sync_rc()
+
+    def set_rc_hold_ms(self, ms):
+        """「停住不动」的判定时长; 这个手势绑成「关」时它不起作用。"""
+        self.rc_hold_ms = float(ms or 0)
+        self._sync_rc()
+
+    def _sync_rc(self):
+        self.rc_hold_dt = (self.rc_hold_ms / 1000.0) \
+            if self.bind.get("hold") not in (None, "none") else 0.0
+
+    def set_rect(self, ox, oy, w, h, label=""):
+        """笔的绝对坐标铺到哪块屏的矩形上 —— 由 App 的 engine 按「光标基准屏」下发。
+
+        多屏铁律: 基准屏必须显式给。笔报的是归一化绝对坐标, 乘进哪块屏的矩形, 光标
+        就只能在哪块屏里动 —— 铺死在一块屏上, 笔就永远跨不出去。
+        """
+        self.ox, self.oy, self.w, self.h = float(ox), float(oy), float(w), float(h)
+        self.rect_label = label or self.rect_label
+        said = (self.rect_label, round(self.ox), round(self.oy),
+                round(self.w), round(self.h))
+        if said != getattr(self, "_rect_said", None):
+            self._rect_said = said
+            print("坐标基准屏: %s  origin=(%.0f,%.0f)  %.0fx%.0f"
+                  % (self.rect_label or "(未命名)", self.ox, self.oy, self.w, self.h))
 
     def pen_screen(self):
         """笔尖绝对坐标 (归一化) -> 屏幕像素。用来和系统光标对照。"""
@@ -508,9 +693,29 @@ class Bridge(object):
         self._dbg_t = now
         self.say(msg)
 
-    def post(self, kind, use_pen=None):
+    def drag_pos(self):
+        """拖拽中指针该在哪 —— 笔尖的【位移】加到按下时的参考点上。
+
+        ★为什么不能像别的合成那样直接读系统光标: Mac 上笔不驱动光标 (「跟随光标」模式),
+        每次读到的都是同一个点, 「按下 + 移动 + 抬手」就退化成一记原地按压 —— 拖拽必然失效
+        (窗口挪不动、文字划不选)。相对量的另一个好处: 起点和「轻点」一致 (都落在按下瞬间的
+        参考点上), 不会因为笔的绝对位置而跳一下。
+        参考点: 默认取按下瞬间的光标; 勾了「拖拽位置跟随笔尖」或这块屏接管了绝对坐标,
+        就用笔尖自己的位置 (那时光标本来就跟着笔走)。
+        """
+        px = self.ox + self.x * self.w
+        py = self.oy + self.y * self.h
+        if self.drag_pen:
+            return (px, py)
+        ax, ay = self.drag_pen0
+        rx, ry = self.drag_root
+        return (rx + (px - ax), ry + (py - ay))
+
+    def post(self, kind, use_pen=None, at=None):
         pen = self.takeover if use_pen is None else use_pen
-        if pen:
+        if at is not None:                 # 显式给坐标 (拖拽走笔尖位移, 见 drag_pos)
+            px, py = float(at[0]), float(at[1])
+        elif pen:
             px = self.ox + self.x * self.w
             py = self.oy + self.y * self.h
         else:
@@ -553,23 +758,116 @@ class Bridge(object):
         if now - self.last_drag < DRAG_MIN_DT:
             return
         self.last_drag = now
-        self.post(LDRAGGED, use_pen=self.drag_pen)
+        self.post(LDRAGGED, at=self.drag_pos())    # 跟笔尖走, 不能读光标 (见 drag_pos)
 
     def say(self, msg):
         print("    >> " + msg)
         sys.stdout.flush()
 
-    # ---------------- --scroll 触屏模式 ----------------
-    # 核心思路: 按下时【先不发 LeftMouseDown】, 而是等看清楚这手是"点"还是"划":
-    #   位移 < SCROLL_TAP_PX  -> 抬手时补一个 Down+Up = 点击
-    #   位移 >= SCROLL_TAP_PX -> 全程不发任何鼠标按键, 只发滚轮事件
-    # 因为压根没有按住状态, 应用永远不会把它解释成"拖拽选中"。
+    # ---------------- 手势判定与派发 ----------------
+    # 一笔怎么走, 全看「位移 + 按住时长」落在哪一类手势里 (表见文件顶部):
+    #   位移 < SCROLL_TAP_PX, 抬手时也没满足「停住不动」   -> 轻点
+    #   位移 >= SCROLL_TAP_PX                            -> 快速滑动
+    #   先停住 >= hold_dt 且期间没飘出圈, 之后才划          -> 停住再滑
+    #   按住 >= rc_hold_dt 且整笔基本没动, 抬手             -> 停住不动
+    # 每一类手势发什么动作由 self.bind 决定。
+    # 关键: 判定之前**一个鼠标按键都不发** —— 所以轻点不会留下拖影,
+    # 快速滑动也不会被应用解释成划选。
+
+    def fire(self, action, px, py):
+        """发一个**一次性**动作 (按下+抬起), 返回是否真的发了。
+
+        scroll / drag 是「按住状态」的动作, 走 arm_gesture(), 不走这里。
+        """
+        if not action or action == "none":
+            return False
+        if action == "right":
+            self.right_click(px, py)
+            return True
+        if action == "middle":
+            for kind in (OTHERS_DOWN, OTHERS_UP):
+                ev = cg.CGEventCreateMouseEvent(None, kind, CGPoint(px, py), 0)
+                cg.CGEventSetIntegerValueField(ev, BUTTON_NUM_FIELD, MIDDLE_BUTTON)
+                cg.CGEventPost(0, ev)
+            self.n += 2
+            return True
+        if action == "space":
+            self.key_tap(KEY_SPACE)
+            return True
+        if action == "back":
+            self.key_tap(KEY_LBRACKET, cmd=True)      # ⌘[ = 返回
+            return True
+        if action == "double":
+            self.click(px, py, 2)
+            return True
+        if action == "left":
+            self.click(px, py, 1)
+            return True
+        if action == "screen":
+            self.switch_screen()
+            return True
+        return False
+
+    def switch_screen(self):
+        """「切换屏幕」: 基准屏按顺序切到下一块 (多屏时才动)。
+
+        与别的动作最大的不同: **一个鼠标/键盘事件都不发** —— 它只换基准矩形, 笔接着
+        就在新那块屏上生效了。所以绑给「停住不动」不会在屏幕上留下任何点击。
+        """
+        fn = self.on_switch_screen
+        if fn is None:
+            self.say("切换屏幕 -> 没接上引擎, 忽略 (命令行单独跑桥接时正常)")
+            return False
+        try:
+            return bool(fn())
+        except Exception as e:
+            self.say("切换屏幕失败: %r" % (e,))
+            return False
+
+    def click(self, px, py, clicks=1):
+        """在 (px,py) 合成点击。clicks=2 时带上 ClickState —— 不带的话应用只当两次单击。"""
+        for i in range(1, clicks + 1):
+            for kind in (LDOWN, LUP):
+                ev = cg.CGEventCreateMouseEvent(None, kind, CGPoint(px, py), 0)
+                cg.CGEventSetIntegerValueField(ev, CLICK_STATE_FIELD, i)
+                cg.CGEventPost(0, ev)
+        self.n += 2 * clicks
+        self.nclk += clicks
+
+    def arm_gesture(self, action, which, gesture=""):
+        """一笔已经判定成某类手势了 —— 按绑定表把动作发出去。
+
+        drag / left : 进入按住拖拽 (起点用锚点), 之后每次移动发 LeftMouseDragged
+        scroll      : 进入滚动, 之后按笔尖位移发滚轮
+        其它        : 立刻在锚点发一次完整动作, 本笔就此作废 (不再重复判定)
+        gesture 只用来选动作的叫法 (「拖拽」在快速滑动上是划选, 在停住再滑上是挪窗口)。
+        """
+        if not action or action == "none":
+            self.consumed = True
+            self.say("%s -> 无动作 (这一项关着)" % which)
+            return
+        if action in ("drag", "left"):
+            self.begin_drag(which)
+            self.drag()
+            return
+        if action == "scroll":
+            self.say("%s -> 滚动 (全程不发鼠标按键, 不会选中文字)" % which)
+            return
+        if self.drag_pen:
+            ax, ay = self.pen_screen_anchor()
+        else:
+            ax, ay = self.tap_pos
+        if self.fire(action, ax, ay):
+            self.consumed = True
+            self.say("%s -> %s @%.0f,%.0f"
+                     % (which, action_title(gesture, action), ax, ay))
 
     def press(self):
-        """笔尖接触屏幕"""
+        """笔尖接触屏幕 —— 只记锚点, 一个鼠标按键都不发 (判定留给 on_move / release)"""
         self.down = True
         self.scrolled = False
         self.dragging = False
+        self.consumed = False
         self.hold_ok = True
         self.hold_t0 = time.time()
         self.anchor_x, self.anchor_y = self.x, self.y
@@ -577,76 +875,85 @@ class Bridge(object):
         self.dev_max = 0.0
         self.last_pen_y = None
         self.pend = 0.0
-        if not self.scroll:
-            self.post(LDOWN)
-            return
         p = cg.CGEventGetLocation(cg.CGEventCreate(None))
         self.tap_pos = (p.x, p.y)   # 落点取按下瞬间的光标, 免得抬手时的微小漂移把点击带偏
+        # 拖拽的两个基准 (见 drag_pos): 笔尖按下时的位置 + 这次拖拽的参考点。
+        # 接管了绝对坐标的屏上, 光标本来就跟着笔走 -> 参考点直接取笔尖; 否则取光标
+        # (和「轻点」的落点保持一致: 笔在这块屏上干活, 起点是你把光标停住的地方)。
+        self.drag_pen0 = self.pen_screen()
+        self.drag_root = self.drag_pen0 if self.takeover else self.tap_pos
         if self.debug:
             qx, qy = self.pen_screen()
             self.dbg("笔尖按下: 光标@%.0f,%.0f | 笔尖->屏 %.0f,%.0f | 差 %.0f,%.0f"
                      % (p.x, p.y, qx, qy, p.x - qx, p.y - qy))
 
     def release(self):
-        """笔尖离开屏幕"""
+        """笔尖离开屏幕 —— 抬手这一刻把「停住不动 / 轻点」也一起判掉"""
         self.down = False
         if self.dragging:
             self.dragging = False
             self.last_drag = 0.0        # 抬起前补发最后一段, 免得丢掉拖拽末尾点位
             self.drag()
-            self.post(LUP, use_pen=self.drag_pen)
-            self.say("拖拽结束 (本手共 %d 次拖拽)" % (self.nd - self.nd0))
-            # ★笔尖有 1~5px 抖动时, 长按期间那点抖动会让本手【提前升级成拖拽】(门槛才 2px),
-            #   于是「长按不动」在抬手前就被吃掉了。所以这里补一次判定: 这一手其实没动 ->
-            #   按长按不动处理, 弹右键菜单 (前面那次无位移的拖拽等同于一次点击, 无害)。
-            if self.rc_hold_dt > 0:
+            self.post(LUP, at=self.drag_pos())
+            self.say("拖拽结束 (本笔共 %d 次拖拽)" % (self.nd - self.nd0))
+            # ★笔尖有 1~5px 抖动时, 「停住」期间那点抖动会让本笔【提前升级成拖拽】(门槛才 2px),
+            #   于是「停住不动」在抬手前就被吃掉了。所以这里补一次判定: 这一笔其实没动 ->
+            #   仍按「停住不动」处理 (前面那次无位移的拖拽等同于一次点击, 无害)。
+            if self.rc_hold_dt > 0 and not self.scrolled:
                 med, held = self.rc_stats()
                 if held >= self.rc_hold_dt and med <= RC_PHANTOM_MAX_PX:
-                    self.right_click(*self.tap_pos)
-                    self.say("长按不动 %.2fs (中位偏移 %.0fpx ≤ %dpx / 峰值 %.0fpx) -> 右键菜单 @%.0f,%.0f"
-                             " (笔尖抖动曾被当成拖拽)"
-                             % (held, med, RC_PHANTOM_MAX_PX, self.dev_max,
-                                self.tap_pos[0], self.tap_pos[1]))
+                    self.fire_hold(" (笔尖抖动曾被当成拖拽)")
             return
-        if not self.scroll:
-            self.post(LUP)
+        if self.consumed:
+            return                      # 本笔已经在 arm_gesture() 里发过完整动作了
+        if self.scrolled:
+            if self.bind.get("swipe") == "scroll":
+                self.flush_scroll()
+                self.say("滚动结束 (本笔共 %d 次滚轮事件, 累计 %d)" % (self.ns - self.ns0, self.ns))
             return
-        # ★长按不动 -> 右键菜单。判据全在抬手这一刻: 按住了够久 (rc_hold_dt) + 整手笔尖基本没动。
+        # ★停住不动。判据全在抬手这一刻: 按住了够久 (rc_hold_dt) + 整笔笔尖基本没动。
         #   「没动」= 中位偏移 <= RC_MAX_PX, 不是 6px 的瞬时圈 —— 真人握笔静止时笔尖有 1~5px 抖动,
         #   偶尔还有一下尖峰, 所以只看中位数、不看峰值 (峰值只进日志), 否则这手势永远触发不了。
-        #   划走超过 RC_MAX_PX 就不是长按了: 「停住再划」依旧走拖拽, 两个手势不打架。
+        #   划走超过 RC_MAX_PX 就不算停住了: 那一笔在 on_move 里已经按「快速滑动」走了。
         if self.rc_hold_dt > 0:
             med, held = self.rc_stats()
-            px, py = self.tap_pos
             if held >= self.rc_hold_dt and med <= RC_MAX_PX:
-                self.pend = 0.0              # 抖动累积的那点滚动量丢掉, 只弹菜单
-                self.right_click(px, py)
-                self.say("长按不动 %.2fs (中位偏移 %.0fpx / 峰值 %.0fpx) -> 右键菜单 @%.0f,%.0f"
-                         % (held, med, self.dev_max, px, py))
+                self.fire_hold("")
                 return
             if held >= self.rc_hold_dt:
-                self.say("长按判定: 按住 %.2fs 但笔尖在动 (中位偏移 %.0fpx > 容差 %dpx) -> 当点击处理"
+                self.say("停住不动判定: 按住 %.2fs 但笔尖在动 (中位偏移 %.0fpx > 容差 %dpx) -> 当轻点处理"
                          % (held, med, RC_MAX_PX))
-        self.flush_scroll()
-        if not self.scrolled:
-            px, py = self.tap_pos
-            if self.debug:
-                # 这条是排查「点击没反应」的关键: 落点(按下时光标) / 笔尖位置 / 抬手时光标
-                # 三者一对照就知道是「光标没跟着笔走」还是「点击发出去被系统吃了」。
-                qx, qy = self.pen_screen()
-                c = cg.CGEventGetLocation(cg.CGEventCreate(None))
-                self.dbg("落点自检: 落点@%.0f,%.0f | 笔尖->屏 %.0f,%.0f (差 %.0f,%.0f) | "
-                         "抬手时光标@%.0f,%.0f"
-                         % (px, py, qx, qy, px - qx, py - qy, c.x, c.y))
-            cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, LDOWN, CGPoint(px, py), 0))
-            cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, LUP, CGPoint(px, py), 0))
-            self.n += 2
-            self.nclk += 1
-            _m, _h = self.rc_stats()
-            self.say("轻点 -> 点击 @%.0f,%.0f (按住 %.2fs / 中位偏移 %.0fpx 峰值 %.0fpx)"
-                     % (px, py, _h, _m, self.dev_max))
+        self.fire_tap()
+
+    def fire_hold(self, extra=""):
+        """抬手时的「停住不动」-> 这个手势绑的动作 (默认右键菜单)。"""
+        med, held = self.rc_stats()
+        a = self.bind.get("hold", "right")
+        self.pend = 0.0                # 抖动累积的那点滚动量丢掉, 只发这个动作
+        px, py = self.tap_pos
+        self.say("停住不动 %.2fs (中位偏移 %.0fpx / 峰值 %.0fpx) -> %s @%.0f,%.0f%s"
+                 % (held, med, self.dev_max, action_title("hold", a), px, py, extra))
+        self.fire(a, px, py)
+
+    def fire_tap(self):
+        """抬手时没被别的判定吃掉 -> 轻点, 发这个手势绑的动作 (默认左键单击)。"""
+        px, py = self.tap_pos
+        a = self.bind.get("tap", "left")
+        if a == "none":
+            self.say("轻点 -> 无动作 (这一项关着)")
             return
-        self.say("滚动结束 (本手共 %d 次滚轮事件, 累计 %d)" % (self.ns - self.ns0, self.ns))
+        if self.debug:
+            # 这条是排查「点击没反应」的关键: 落点(按下时光标) / 笔尖位置 / 抬手时光标
+            # 三者一对照就知道是「光标没跟着笔走」还是「点击发出去被系统吃了」。
+            qx, qy = self.pen_screen()
+            c = cg.CGEventGetLocation(cg.CGEventCreate(None))
+            self.dbg("落点自检: 落点@%.0f,%.0f | 笔尖->屏 %.0f,%.0f (差 %.0f,%.0f) | "
+                     "抬手时光标@%.0f,%.0f"
+                     % (px, py, qx, qy, px - qx, py - qy, c.x, c.y))
+        if self.fire(a, px, py):
+            _m, _h = self.rc_stats()
+            self.say("轻点 -> %s @%.0f,%.0f (按住 %.2fs / 中位偏移 %.0fpx 峰值 %.0fpx)"
+                     % (action_title("tap", a), px, py, _h, _m, self.dev_max))
 
     def rc_stats(self):
         """抬手时的长按判据 -> (中位偏移px, 按住秒数)。
@@ -664,11 +971,11 @@ class Bridge(object):
         """按下那一刻的笔尖坐标 -> 屏幕像素"""
         return (self.ox + self.anchor_x * self.w, self.oy + self.anchor_y * self.h)
 
-    def begin_drag(self):
-        """长按成立 —— 这时才补一个 LeftMouseDown (落在按下时的锚点), 之后按拖拽走。
+    def begin_drag(self, which=""):
+        """进入按住拖拽 —— 这时才补一个 LeftMouseDown (落在按下时的锚点), 之后按拖拽走。
 
-        为什么要"长按"才补按键: 触屏模式下快速划动 = 滚动, 全程一个按键都不发,
-        应用不可能把它解释成划选; 只有笔尖先停住、再划, 才升级成拖拽。
+        为什么要等判定才补按键: 「快速滑动」全程一个按键都不发, 应用不可能把它解释成
+        划选; 只有绑成拖拽的那类手势 (默认「停住再滑」) 才升级成拖拽。
         """
         self.dragging = True
         self.last_drag = 0.0
@@ -676,41 +983,46 @@ class Bridge(object):
         if self.drag_pen:
             ax, ay = self.pen_screen_anchor()
         else:
-            ax, ay = self.tap_pos
-        cg.CGEventPost(0, cg.CGEventCreateMouseEvent(None, LDOWN, CGPoint(ax, ay), 0))
+            ax, ay = self.drag_root
+        self.post(LDOWN, at=(ax, ay))
         self.n += 1
-        self.say("长按 %.2fs -> 进入拖拽 (起点 %.0f,%.0f)" % (self.hold_dt, ax, ay))
+        self.say("%s -> 进入拖拽 (起点 %.0f,%.0f)" % (which or "按住", ax, ay))
 
     def on_move(self):
         """按下状态下的移动 (X / Y 任一事件都会进来)"""
         dx = abs(self.x - self.anchor_x) * self.w
         dy = abs(self.y - self.anchor_y) * self.h
         moved = dx if dx > dy else dy
-        # 整手的偏移曲线: 抬手时用中位数判「停住不动」(抗笔尖抖动), 峰值只进日志
+        # 整笔的偏移曲线: 抬手时用中位数判「停住不动」(抗笔尖抖动), 峰值只进日志
         if moved > self.dev_max:
             self.dev_max = moved
         self.dev_hist.append((time.time(), moved))
         if len(self.dev_hist) > 60:
             del self.dev_hist[:-60]
-        if not self.scrolled and not self.dragging:
-            # ★零死区: 长按一旦成立, 笔尖再动一点点就【立刻】升级成拖拽 —— 不再等 12px
-            # 轻点阈值。否则"停住之后再划"的前十几像素没有任何反应, 手感就是"拖不动"。
-            if (self.hold_drag and self.hold_ok and moved >= HOLD_ARM_PX
+        if self.dragging:
+            self.drag()                 # 已进入拖拽: 之后的移动一律发 LeftMouseDragged
+            return
+        if self.consumed:
+            return                      # 本笔已经发过完整动作 (右键/空格/返回…), 不再重复
+        if not self.scrolled:
+            # ★零死区: 「停住再滑」一旦成立, 笔尖再动一点点就【立刻】进入拖拽 —— 不再等
+            # 12px 轻点阈值。否则"停住之后再划"的前十几像素没有任何反应, 手感就是"拖不动"。
+            hs = self.bind.get("hold_swipe", "none")
+            if (hs != "none" and self.hold_ok and moved >= HOLD_ARM_PX
                     and (time.time() - self.hold_t0) >= self.hold_dt):
-                self.begin_drag()
-                self.drag()             # 起点立刻补一个 Dragged: 窗口/文字从第一个像素就跟着走
+                self.arm_gesture(hs, "停住再滑", "hold_swipe")
                 return
             if moved < SCROLL_TAP_PX:
                 if moved > HOLD_RADIUS_PX:
-                    self.hold_ok = False    # 容差内但飘出"停住"圈 -> 这一手不算长按
+                    self.hold_ok = False    # 容差内但飘出"停住"圈 -> 这一笔不算「停住再滑」
                 return                  # 还在轻点容差内, 什么都别发
             self.scrolled = True
             self.last_pen_y = self.y * self.h
             self.ns0 = self.ns
-            self.say("判定为划动 -> 进入滚动模式 (不再产生点击/选中)")
-            return                      # 这一步只用来确认"这是划动", 不产生滚动量
-        if self.dragging:
-            self.drag()                 # 已升级为拖拽: 之后的移动一律发 LeftMouseDragged
+            self.arm_gesture(self.bind.get("swipe", "scroll"), "快速滑动", "swipe")
+            return                      # 这一步只用来判定"这是划动", 不产生滚动量
+        # 「快速滑动」绑的是滚动才继续按位移发滚轮; 绑成别的动作时, 上面那一步已经发完了
+        if self.bind.get("swipe") != "scroll":
             return
         ypx = self.y * self.h
         if self.last_pen_y is None:
@@ -724,10 +1036,11 @@ class Bridge(object):
             self.flush_scroll()
 
     def reset_state(self):
-        """清空一次触摸的中间状态 (切换模式/重新开始时用, 累计计数器不动)"""
+        """清空一笔的中间状态 (换绑定/重新开始时用, 累计计数器不动)"""
         self.down = False
         self.scrolled = False
         self.dragging = False
+        self.consumed = False
         self.hold_ok = True
         self.pend = 0.0
         self.last_pen_y = None
@@ -753,18 +1066,38 @@ def cmd_bridge(seconds):
     takeover = "--takeover" in sys.argv
     flip = "--flip-y" in sys.argv
     drag_pen = "--drag-pen" in sys.argv
-    scroll = "--scroll" in sys.argv and not takeover
     scroll_flip = "--scroll-flip" in sys.argv
-    hold_drag = "--no-hold-drag" not in sys.argv
+    # 绑定表: 默认就是图形界面那份 (轻点=左键单击 / 快速滑动=滚动 / 停住再滑=拖拽 / 停住不动=右键菜单)。
+    # 老开关继续认: --no-hold-drag、--no-rc 等于把对应手势绑成「关」; --select 是老「滑动选择」模式。
+    # 逐项改: --bind-<手势>=<动作>, 手势 tap/swipe/hold_swipe/hold, 动作见 BIND_ACTIONS。
+    binds = dict(DEFAULT_BINDS)
+    if "--no-hold-drag" in sys.argv:
+        binds["hold_swipe"] = "none"
+    if "--no-rc" in sys.argv:
+        binds["hold"] = "none"
+    if "--select" in sys.argv:
+        binds.update(swipe="drag", hold_swipe="none", hold="none")
+    for a in sys.argv:
+        if a.startswith("--bind-"):
+            g, _, val = a[len("--bind-"):].partition("=")
+            g = g.strip().replace("-", "_")
+            if g not in DEFAULT_BINDS:
+                print("!! 不认识的手势 %r。可选: %s" % (g, "、".join(DEFAULT_BINDS)))
+            elif val not in BIND_TITLES:
+                print("!! 不认识的动作 %r。可选: %s"
+                      % (val, "、".join(k for k, _ in BIND_ACTIONS)))
+            else:
+                binds[g] = val
+    scroll = (binds.get("swipe") == "scroll") and not takeover   # 只用于下面的提示文案
     hold_ms = None
     for a in sys.argv:
         if a.startswith("--hold-drag-ms="):
             hold_ms = int(a.split("=", 1)[1])
-    rc_hold_ms = RC_HOLD_DT * 1000        # 长按不动=右键: 默认开
+    rc_hold_ms = RC_HOLD_DT * 1000        # 停住不动=右键菜单: 默认开
     for a in sys.argv:
         if a.startswith("--rc-hold-ms="):
             rc_hold_ms = int(a.split("=", 1)[1])
-    if "--no-rc" in sys.argv:
+    if binds["hold"] == "none":
         rc_hold_ms = 0
     pres_thr = None
     for a in sys.argv:
@@ -775,9 +1108,9 @@ def cmd_bridge(seconds):
     if not ax.AXIsProcessTrusted():
         print("!! 缺『辅助功能』权限 —— 合成出来的鼠标事件会被系统丢掉。")
         print("   系统设置 > 隐私与安全性 > 辅助功能 -> 打开 Terminal, 完全退出后重开再跑")
-    b = Bridge(takeover=takeover, drag_pen=drag_pen, scroll=scroll, scroll_flip=scroll_flip,
-               hold_drag=hold_drag, hold_ms=hold_ms,
-               rc_hold_ms=rc_hold_ms)
+    b = Bridge(takeover=takeover, drag_pen=drag_pen, binds=binds, scroll_flip=scroll_flip,
+               hold_ms=hold_ms, rc_hold_ms=rc_hold_ms)
+    b.set_rect(b.ox, b.oy, b.w, b.h, "跟随光标 (命令行只认系统光标那块)")
     print("按下判据: TipSwitch%s" % (" 或 压力>%d" % pres_thr if pres_thr is not None else ""))
 
     st = {"tip": 0, "pres": 0}
@@ -789,8 +1122,7 @@ def cmd_bridge(seconds):
         now = time.time()
         if now - tickat[0] >= 1.5:
             tickat[0] = now
-            tail = ("滚轮 %d / 轻点 %d / 拖拽 %d" % (b.ns, b.nclk, b.nd)) if scroll \
-                else ("拖拽 %d" % b.nd)
+            tail = "滚轮 %d / 轻点 %d / 拖拽 %d / 右键 %d" % (b.ns, b.nclk, b.nd, b.nrc)
             print("    [状态] 事件 %d (X %d / Y %d / TipSwitch %d / 压力 当前 %d 峰值 %d) -> 已转发 %d (%s)"
                   % (seen["ev"], seen["x"], seen["y"], seen["tip"], st["pres"], peak[0], b.n, tail))
             peak[0] = 0
@@ -803,7 +1135,7 @@ def cmd_bridge(seconds):
         if want:
             b.press()
         else:
-            if not scroll:
+            if b.dragging:
                 b.last_drag = 0.0    # 抬起前补发最后一段拖拽, 避免丢掉末尾点位
                 b.drag()
             b.release()
@@ -849,38 +1181,38 @@ def cmd_bridge(seconds):
                     b.y = nrm
                 if b.takeover:
                     b.post(LDRAGGED if b.down else MOVED)
-                elif b.down and b.scroll:
-                    # 触屏模式: 移动走滚轮, 全程不发鼠标按键 -> 应用不可能解释成选中
-                    b.on_move()
                 elif b.down:
-                    # ★ 核心修复: 按下状态下的移动必须发 kCGEventLeftMouseDragged(type 6)。
-                    #   只发 MouseMoved(type 5) 时, 应用看到的是
-                    #   "按下 -> 无按键的移动 -> 抬起", 于是拖拽(拖窗口/划选文字/拖滑块)
-                    #   全部失效、只有原地点击成立。
-                    b.drag()
+                    # 按下之后的移动交给手势判定 (快速滑动=滚动 / 停住再滑=拖拽 …)。
+                    # ★ 进入拖拽后必须发 kCGEventLeftMouseDragged(type 6): 只发
+                    #   MouseMoved(type 5) 时应用看到的是"按下 -> 无按键的移动 -> 抬起",
+                    #   于是拖拽(拖窗口/划选文字/拖滑块)全部失效、只有原地点击成立。
+                    b.on_move()
             tick()
         except Exception as e:
             print("    [bridge err] %r" % (e,))
 
     print("桥接中 (Ctrl+C 停止)。")
-    if scroll:
-        print("  拿笔试这两件事:")
-        print("    ① 笔尖轻点图标             -> 应点中 (抬手那一刻才确认, 所以按下去不会有拖影/选中)")
-        print("    ② 笔尖按住并上下划一段距离 -> 页面应跟着滚动 (★ 不会选中文字)")
-        print("    ③ 笔尖先停住 %.2fs 再划       -> 拖拽 / 划选 (拖窗口、拖文件、选文字)"
-              % b.hold_dt)
-        print("  快速划=滚动, 停一下再划=拖拽 —— 两个手势互不干扰")
-        print("  长按太灵敏/太迟钝: --hold-drag-ms=200|250|350|500; 不要长按: --no-hold-drag")
-        print("  方向反了就加 --scroll-flip; 嫌滚得太快/太慢说一声, 我加增益参数")
-    elif takeover:
+    if takeover:
         print("  ① 笔悬停移动 -> 光标应跟随   ② 笔尖点图标 -> 应点中   ③ 笔尖按住拖动 -> 应能拖窗口/划选")
         print("  上下颠倒加 --flip-y; 落点整体偏移就把上面的状态行贴我, 我来加校准")
     else:
-        print("  拿笔试这三件事:")
-        print("    ① 笔尖轻点图标           -> 应点中")
-        print("    ② 笔尖按住并拖动一段距离 -> 应能拖窗口 / 划选文字 / 拖滑块   ★本次修复重点")
-        print("    ③ 笔悬停移动             -> 光标跟随 (系统原生通道, 不经过本脚本)")
-        print("  若 ② 仍然只能点不能拖: 说明按下时光标没跟笔走 -> 改用  --drag-pen")
+        print("  拿笔试这几件事 (按上面的绑定表):")
+        print("    ① 笔尖轻点                  -> %s (抬手那一刻才确认, 按下去不会有拖影/选中)"
+              % action_title("tap", binds["tap"]))
+        if binds["swipe"] != "none":
+            print("    ② 笔尖快速划一段            -> %s%s"
+                  % (action_title("swipe", binds["swipe"]),
+                     " (全程不发鼠标按键, ★ 不会选中文字)" if binds["swipe"] == "scroll" else ""))
+        if binds["hold_swipe"] != "none":
+            print("    ③ 笔尖先停住 %.2fs 再划       -> %s"
+                  % (b.hold_dt, action_title("hold_swipe", binds["hold_swipe"])))
+        if binds["hold"] != "none":
+            print("    ④ 笔尖停住不动 %.2fs 再抬手   -> %s"
+                  % (b.rc_hold_dt, action_title("hold", binds["hold"])))
+        print("  改绑定: --bind-swipe=drag / --bind-hold=none … (动作可选: %s)"
+              % "/".join(k for k, _ in BIND_ACTIONS))
+        print("  停住判定太灵敏/太迟钝: --hold-drag-ms=200|250|350|500 --rc-hold-ms=600|800|1000;"
+              " 方向反了加 --scroll-flip")
         print("  注意: 手指在此模式下一定无效 —— macOS 不拿手指坐标驱动光标")
     try:
         run(cb, seconds)

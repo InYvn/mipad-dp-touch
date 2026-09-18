@@ -99,7 +99,22 @@ def _one(did):
         "fb": fb,
         "hz": round(Quartz.CGDisplayModeGetRefreshRate(m), 1),
         "hidpi": fb[0] == 2 * lg[0] and fb[1] == 2 * lg[1],
+        "bounds": _bounds(did),
     }
+
+
+def _bounds(did):
+    """这块屏在桌面坐标系里的矩形 (ox, oy, w, h)。
+
+    多屏时每块屏各占桌面坐标系里的一段 —— 笔的绝对坐标该铺到哪一块, 全靠它。
+    注意: 不能用 CGMainDisplayID 顶替, 否则接了第二块屏之后笔会落在系统主屏上。
+    """
+    try:
+        r = Quartz.CGDisplayBounds(int(did))
+        return (float(r.origin.x), float(r.origin.y),
+                float(r.size.width), float(r.size.height))
+    except Exception:
+        return None
 
 
 def by_id(did):
@@ -157,6 +172,175 @@ def guard(info, allow_unverified=False):
         return False, "「%s」像小米屏但未实测验证 —— 勾选「允许管理未识别的显示器」后再试" % \
             info.get("name", "?")
     return False, "「%s」不是平板那块屏, 拒绝改动 (多屏保护)" % info.get("name", "?")
+
+
+# --------------------------------------------------------------------------
+# 光标基准屏 —— 笔的绝对坐标铺到哪块屏上
+#
+# 「笔跨不到别的屏」的根因在这: 笔报的是归一化绝对坐标 (x,y ∈ [0,1]), 乘进哪块屏的
+# 矩形, 光标就只能在哪块屏里动。铺死在一块屏上 = 永久困在那块屏。所以基准屏必须是
+# 可选项, 而不是写死的 CGMainDisplayID。
+# --------------------------------------------------------------------------
+
+TARGET_AUTO = "auto"          # 跟随光标: 不接管坐标, 光标在哪块屏笔就在那块屏生效
+TARGET_TABLET = "tablet"      # 平板那块屏
+
+
+def cursor_point():
+    """系统光标现在在哪 (桌面坐标)。取不到返回 None。"""
+    try:
+        p = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+        return (float(p.x), float(p.y))
+    except Exception:
+        return None
+
+
+def bounds_of(info):
+    """info -> (ox, oy, w, h)。注入的测试数据自带 bounds, 真机现取。"""
+    if not info:
+        return None
+    b = info.get("bounds")
+    if b:
+        return tuple(b)
+    if info.get("id") is None:
+        return None
+    return _bounds(info["id"])
+
+
+def screen_at(x, y, infos=None):
+    """点 (x,y) 落在哪块屏上 —— 「光标在哪块屏」就是这么判的。"""
+    for d in (displays() if infos is None else infos):
+        b = bounds_of(d)
+        if b and b[0] <= x < b[0] + b[2] and b[1] <= y < b[1] + b[3]:
+            return d
+    return None
+
+
+def main_display(infos=None):
+    """系统主屏 (兜底用; 改显示模式的路径一律不用它)"""
+    for d in (displays() if infos is None else infos):
+        if d.get("main"):
+            return d
+    return None
+
+
+def _target(value, kind, info, takeover, note=""):
+    return {
+        "value": value,
+        "kind": kind,
+        "id": (info or {}).get("id"),
+        "name": (info or {}).get("name") or "",
+        "rect": bounds_of(info),
+        "takeover": bool(takeover),
+        "label": ("跟随光标" if kind == TARGET_AUTO else ((info or {}).get("name") or "?")),
+        "note": note,
+    }
+
+
+def resolve_target(value, infos=None, allow_unknown=False, cursor=None):
+    """配置里的 target_display -> 这次该把笔的绝对坐标铺到哪块屏。
+
+    返回 {"value","kind","id","name","rect","takeover","label","note"}。
+    取值: "auto" 跟随光标 (不接管坐标) / "tablet" 平板那块屏 / "<displayID>" 指定某块屏。
+    指定的屏不在线、或认不出平板屏 -> 退回「跟随光标」并在 note 里说明 (绝不猜)。
+    """
+    infos = displays() if infos is None else infos
+    value = "" if value is None else str(value)
+    if value == TARGET_TABLET:
+        tab, why = pick_target(allow_unknown, infos)
+        if tab:
+            return _target(TARGET_TABLET, TARGET_TABLET, tab, True)
+        return _auto(infos, cursor, "认不出平板那块屏, 已退回「跟随光标」: %s" % why)
+    if value.isdigit():
+        d = None
+        for x in infos:
+            if int(x["id"]) == int(value):
+                d = x
+                break
+        if d:
+            return _target(str(int(value)), "display", d, True)
+        return _auto(infos, cursor, "上次指定的那块屏现在不在线, 已退回「跟随光标」")
+    return _auto(infos, cursor)
+
+
+def _auto(infos, cursor=None, note=""):
+    """跟随光标: 不接管坐标。rect 只取光标那块屏, 供日志/调试对照用。"""
+    pt = cursor if cursor is not None else cursor_point()
+    d = screen_at(pt[0], pt[1], infos) if pt else None
+    d = d or main_display(infos) or (infos[0] if infos else None)
+    r = _target(TARGET_AUTO, TARGET_AUTO, d, False, note)
+    r["value"] = TARGET_AUTO
+    return r
+
+
+def target_choices(infos=None, allow_unknown=False):
+    """「光标基准屏」下拉/菜单的条目: [(值, 标题)]。值与 cfg["target_display"] 同构。"""
+    infos = displays() if infos is None else infos
+    out = [(TARGET_AUTO, "跟随光标")]
+    tab, _why = pick_target(allow_unknown, infos)
+    if tab:
+        out.append((TARGET_TABLET, "平板 · %s" % tab.get("name", "?")))
+    for d in infos:
+        if tab and d.get("id") == tab.get("id"):
+            continue
+        b = bounds_of(d) or (0, 0, 0, 0)
+        out.append((str(int(d["id"])),
+                    "%s · %d×%d%s" % (d.get("name", "?"), b[2], b[3],
+                                      " (自带屏)" if d.get("builtin") else "")))
+    return out
+
+
+def order_displays(infos=None):
+    """所有在线屏按**桌面坐标顺序**排 —— 「切换屏幕」遍历的就是这个顺序。
+
+    左到右、再上到下 (同一列的两块屏按上下)。屏幕在系统设置里怎么摆, 笔就按什么顺序
+    走, 用户心里那本账才是对的 —— 拿 CGGetActiveDisplayList 的返回顺序做遍历, 结果
+    是随机的, 按一次跳到哪儿全看运气。
+    """
+    infos = displays() if infos is None else infos
+    out = []
+
+    def key(d):
+        b = bounds_of(d)
+        return (0 if b else 1, b[0] if b else 0.0, b[1] if b else 0.0, int(d.get("id") or 0))
+
+    for d in sorted(infos, key=key):
+        out.append(d)
+    return out
+
+
+def target_value_of(d, infos=None, allow_unknown=False):
+    """某块屏在配置里的写法 —— 必须和 target_choices() 一个口径, 一个字都不能差。
+
+    平板那块屏在配置里叫 "tablet" (写死它的 displayID 会在重插线换 ID 后失效); 别的屏
+    才写 displayID。遍历出来的值要能直接进菜单/配置, 所以一律从这里翻译 —— 上一版直接
+    吐 displayID, 结果菜单里根本没有那一条, 切完勾不动、父项标题还回落到「跟随光标」。
+    """
+    infos = displays() if infos is None else infos
+    tab, _why = pick_target(allow_unknown, infos)
+    if tab and d.get("id") == tab.get("id"):
+        return TARGET_TABLET
+    return str(int(d["id"]))
+
+
+def next_target(value, infos=None, allow_unknown=False, cursor=None):
+    """「切换屏幕」: 当前基准屏 -> 按顺序的下一块屏。返回 (值|None, 原因)。
+
+    值经 target_value_of() 翻译 (与 cfg["target_display"] 及下去/菜单条目同构), 到头绕
+    回第一块 —— 多屏时反复按就是在屏之间转圈。只有一块屏 -> (None, 说明), 调用方记日志。
+    """
+    infos = displays() if infos is None else infos
+    seq = order_displays(infos)
+    if len(seq) < 2:
+        return None, "只有 %d 块屏, 不用切" % len(seq)
+    cur = resolve_target(value, infos=infos, allow_unknown=allow_unknown, cursor=cursor)
+    ids = [int(d["id"]) for d in seq]
+    try:
+        i = ids.index(int(cur["id"]))
+    except (TypeError, ValueError):
+        i = -1          # 现在这块认不出来 -> 从第一块开始, 不卡死
+    nxt = seq[(i + 1) % len(seq)]
+    return target_value_of(nxt, infos, allow_unknown), ""
 
 
 # --------------------------------------------------------------------------
