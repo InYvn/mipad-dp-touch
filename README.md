@@ -30,7 +30,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/window.png" width="620" alt="Mipad DP Touch 设置窗口"/>
+  <img src="docs/window.png?v=1.1" width="620" alt="Mipad DP Touch 设置窗口"/>
   <br/>
   <sub>设置窗口</sub>
 </p>
