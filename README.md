@@ -1,6 +1,6 @@
 <div align="center">
   <h1 align="center">
-    <img src="docs/logo.png" width="170" alt="Mipad DP Touch"/>
+    <img src="docs/logo.png?v=1.2" width="170" alt="Mipad DP Touch"/>
     <br/>
     Mipad DP Touch
   </h1>
