@@ -6,8 +6,8 @@
 <link rel="icon" href="favicon.ico?v=1.2" sizes="any">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2">
 <meta name="theme-color" content="#0b0d10">
-<title>配置说明 — Mipad DP Touch</title>
-<meta name="description" content="Mipad DP Touch 各配置项的作用：按键绑定（轻点 / 快速滑动 / 停住再滑 / 停住不动）、滚动方向与速度、显示缩放、运行与日志、高级选项。">
+<title>配置说明 — Mipad DP Touch Enhanced</title>
+<meta name="description" content="Mipad DP Touch Enhanced 各配置项的作用：按键绑定（轻点 / 快速滑动 / 停住再滑 / 停住不动）、滚动方向与速度、显示缩放、运行与日志、高级选项。">
 <style>
   :root {
     --bg: #0d0f12;
@@ -87,7 +87,7 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="index.html"><img src="logo.png?v=1.2" alt="Mipad DP Touch logo">Mipad DP Touch · 配置说明</a>
+    <a class="brand" href="index.html"><img src="logo.png?v=1.2" alt="Mipad DP Touch Enhanced logo">Mipad DP Touch <span class="badge">Enhanced</span> · 配置说明</a>
     <div class="links">
       <a href="index.html">首页</a>
       <a href="tutorial.html">操作教程</a>
@@ -102,26 +102,26 @@
   <div class="wrap">
     <div class="kicker">配置说明</div>
     <h1>每个设置项是干什么的</h1>
-    <p class="lead">按设置窗口从上到下的分区顺序。全部设置自动保存在 <code>~/Library/Application Support/MipadDPTouch/config.json</code>，下次启动恢复；菜单栏和设置窗口是同一份状态的两个表面，改哪边都一样。</p>
+    <p class="lead">窗口是**侧栏 + 四页**：左侧常驻（设备概览 / 手势映射 / 显示与缩放 / 运行与诊断），右侧显示当前页。全部设置自动保存在 <code>~/Library/Application Support/MipadDPTouch/config.json</code>，下次启动恢复；菜单栏和设置窗口是同一份状态的两个表面，改哪边都一样。</p>
   </div>
 </header>
 
 <main class="wrap">
 
 <section id="status-zone">
-  <h2>状态 <span class="where">窗口顶部</span></h2>
+  <h2>状态 <span class="where">顶部一行 + 侧栏设备区</span></h2>
   <div class="item">
     <div class="name">连接状态<small>LIVE</small></div>
     <div class="desc"><p>当前设备状态：如实显示「运行中」「未运行」「等平板上线」，不粉饰。</p></div>
   </div>
   <div class="item">
     <div class="name">事件计数<small>COUNTERS</small></div>
-    <div class="desc"><p><span class="mark">笔事件 / 点击 / 拖拽 / 滚动</span> 实时计数，菜单栏「清零计数」可归零。笔到底有没有 responded，看这里最快。</p></div>
+    <div class="desc"><p>侧栏设备区的 <span class="mark">输入事件</span> 实时计数，菜单栏「清零计数」可归零。笔到底有没有反应，看这里最快。</p></div>
   </div>
 </section>
 
 <section id="permissions">
-  <h2>权限 <span class="where">分步引导，只做一次</span></h2>
+  <h2>权限 <span class="where">设备概览 · 只做一次</span></h2>
   <div class="item">
     <div class="name">为什么必须分步<small>STEP BY STEP</small></div>
     <div class="desc">
@@ -141,7 +141,11 @@
 </section>
 
 <section id="pen-input">
-  <h2>笔的输入 <span class="where">手感主战场</span></h2>
+  <h2>手势映射 <span class="where">手感主战场</span></h2>
+  <div class="item">
+    <div class="name">增强模式<small>ENHANCED</small></div>
+    <div class="desc"><p>手指触控的开关，默认开（自动识别两种数据格式）。平板侧刷入模块后触摸屏接口才会出现，右侧会写明当前状态；没装模块时打开也不影响笔 —— 行为与之前完全一致。</p></div>
+  </div>
   <div class="item">
     <div class="name">按键绑定<small>BINDINGS</small></div>
     <div class="desc">
@@ -174,7 +178,7 @@
 </section>
 
 <section id="bridge">
-  <h2>运行 <span class="where">常用开关</span></h2>
+  <h2>运行 <span class="where">运行与诊断 · 常用开关</span></h2>
   <div class="item">
     <div class="name">启用笔桥接<small>BRIDGE</small></div>
     <div class="desc"><p>总开关。临时停用不用拔线；菜单栏也有同名勾选项，两边状态同步。其余不常用的开关都在「高级选项…」小窗里。</p></div>
@@ -182,7 +186,7 @@
 </section>
 
 <section id="display">
-  <h2>显示缩放 <span class="where">只改平板那块屏</span></h2>
+  <h2>显示与缩放 <span class="where">只改平板那块屏</span></h2>
   <div class="item">
     <div class="name">为什么会有这个功能<small>WHY</small></div>
     <div class="desc">
@@ -275,7 +279,7 @@
 </main>
 
 <footer>
-  <div>Mipad DP Touch · 配置说明 · 遵循 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/LICENSE">MIT License</a></div>
+  <div>Mipad DP Touch Enhanced · 配置说明 · 遵循 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/LICENSE">MIT License</a></div>
 </footer>
 
 </body>

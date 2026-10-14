@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>疑难解答 — Mipad DP Touch</title>
-<meta name="description" content="Mipad DP Touch 疑难解答：右键菜单、拖拽、权限、更新失效、显示缩放、日志诊断等常见情形与处理办法。">
+<title>疑难解答 — Mipad DP Touch Enhanced</title>
+<meta name="description" content="Mipad DP Touch Enhanced 疑难解答：右键菜单、拖拽、权限、更新失效、显示缩放、日志诊断等常见情形与处理办法。">
 <link rel="icon" href="favicon.ico?v=1.2" sizes="any">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2">
 <meta name="theme-color" content="#0b0d10">
@@ -108,7 +108,7 @@
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="index.html"><img src="logo.png?v=1.2" alt="Mipad DP Touch logo">Mipad DP Touch</a>
+    <a class="brand" href="index.html"><img src="logo.png?v=1.2" alt="Mipad DP Touch Enhanced logo">Mipad DP Touch <span class="badge">Enhanced</span></a>
     <div class="links">
       <a href="index.html">首页</a>
       <a href="tutorial.html">操作教程</a>
@@ -138,7 +138,7 @@
     </details>
     <details>
       <summary>笔能点、能翻页，就是拖不动窗口 / 划不了选</summary>
-      <div class="body">拖窗口：<b>把笔尖停住约 0.25 秒再划</b>（拖拽默认绑在「停住再滑」上，判定时长在「高级选项」里调）。划选文字：把<b>快速滑动</b>的动作改成<b>「拖拽 · 选中文字」</b>（起手就划，快进快出）—— 默认它绑的是<b>滚动翻页</b>，划动只滚动、一个鼠标按键都不发。改坏了点「恢复默认」。详见 <a href="settings.html#pen-input">配置说明 → 笔的输入</a>。</div>
+      <div class="body">拖窗口：<b>把笔尖停住约 0.25 秒再划</b>（拖拽默认绑在「停住再滑」上，判定时长在「高级选项」里调）。划选文字：把<b>快速滑动</b>的动作改成<b>「拖拽 · 选中文字」</b>（起手就划，快进快出）—— 默认它绑的是<b>滚动翻页</b>，划动只滚动、一个鼠标按键都不发。改坏了点「恢复默认」。详见 <a href="settings.html#pen-input">配置说明 → 手势映射</a>。</div>
     </details>
     <details>
       <summary>笔点了没反应</summary>
@@ -170,11 +170,11 @@
     </details>
     <details>
       <summary>点击、滚动都正常，手指没反应</summary>
-      <div class="body"><b>不是这个应用的毛病，是平板固件的分支。</b>平板的 USB 服务（<code>usb_dp_relay</code>）会先判断主机是谁：认出 Mac（DP Alt Mode 里 SVID 报 Apple <code>0x05AC</code>）就只创建笔那一路接口，触摸屏那一路的 USB 描述符根本不存在。平板日志原文：<code>adapter_svid: 1452</code> → <code>host type: Mac</code> → <code>is_mac=1</code>。同一块屏接 Windows 时手指正常，因为走了另一个分支。这个判断发生在接口创建之前，Mac 上任何软件（包括驱动）都改不了，只能等小米固件放开。</div>
+      <div class="body"><b>根源在平板固件的分支，不在这个应用。</b>平板的 USB 服务（<code>usb_dp_relay</code>）会先判断主机是谁：认出 Mac（DP Alt Mode 里 SVID 报 Apple <code>0x05AC</code>）就只创建笔那一路接口，触摸屏那一路的 USB 描述符根本不存在（日志原文：<code>adapter_svid: 1452</code> → <code>host type: Mac</code> → <code>is_mac=1</code>）。<b>现在已经能解开</b>：在平板侧装上模块，把固件的判定骗过去，它就会按「非 Mac 主机」建出「触摸屏 + 笔」二合一接口，手指的点击、拖拽直接可用。装法见<a href="index.html#touch">首页「手指触控」一节</a>；没装模块时行为与之前完全一致。</div>
     </details>
     <details>
       <summary>滚动方向反了 / 太快太慢</summary>
-      <div class="body">设置窗口「笔的输入」→「滚动方向」选另一个；速度在「滚动速度」里调。默认「跟随系统」，一般不用动。</div>
+      <div class="body">「手势映射」页 →「滚动方向」选另一个；速度在「滚动速度」里调。默认「跟随系统」，一般不用动。</div>
     </details>
     <details>
       <summary>接了第二块屏，笔只能在一块屏上用</summary>
@@ -182,7 +182,7 @@
     </details>
     <details>
       <summary>多屏时想让笔上按一下换屏</summary>
-      <div class="body">把某一类手势绑成<b>切换屏幕</b>（设置窗口「笔的输入」，常用「停住不动」——默认它绑的是右键菜单）。笔上按一下 = 光标基准屏换到<b>下一块</b>屏，顺序按桌面排列从左到右、到头绕回第一块，循环。只换笔的落点，不改任何屏的分辨率 / 排列 / 镜像；只接了一块屏时按了不动作。详见 <a href="settings.html#pen-input">配置说明 → 笔的输入</a>。</div>
+      <div class="body">把某一类手势绑成<b>切换屏幕</b>（「手势映射」页，常用「停住不动」——默认它绑的是右键菜单）。笔上按一下 = 光标基准屏换到<b>下一块</b>屏，顺序按桌面排列从左到右、到头绕回第一块，循环。只换笔的落点，不改任何屏的分辨率 / 排列 / 镜像；只接了一块屏时按了不动作。详见 <a href="settings.html#pen-input">配置说明 → 手势映射</a>。</div>
     </details>
     <details>
       <summary>多屏时「显示缩放」整组变灰</summary>
@@ -235,7 +235,7 @@ DPTOUCH_SELFTEST_WINDOW=exit DPTOUCH_NO_GUIDE=1 "/Applications/Mipad DP Touch.ap
       <a href="faq.html">疑难解答</a>
       <a href="https://github.com/InYvn/mipad-dp-touch">GitHub ↗</a>
     </div>
-    <p>Mipad DP Touch · 疑难解答 · 遵循 MIT License</p>
+    <p>Mipad DP Touch Enhanced · 疑难解答 · 遵循 MIT License</p>
   </div>
 </footer>
 

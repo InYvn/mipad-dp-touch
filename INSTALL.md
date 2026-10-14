@@ -150,7 +150,7 @@ tccd: Failed to match existing code requirement for subject io.github.inyvn.xiao
 
 [高级选项…]   光标基准屏 · 未验证设备 · 判定时长 · 自动检查更新
 
-Mipad DP Touch 1.1 · MIT License
+Mipad DP Touch Enhanced 1.1 · MIT License
 ```
 
 **更新**：有新版时菜单栏会提示，点「下载并安装」即可 —— 程序自己下载、按发版正文里的
@@ -296,8 +296,8 @@ DPTOUCH_SELFTEST_WINDOW=exit DPTOUCH_NO_GUIDE=1 "$APP"
 **「允许未验证的小米设备」** 试试；能用的话欢迎提 issue 把型号加进白名单
 （`src/dptouch_engine.py` 的 `KNOWN_DEVICES`）。
 
-> **注意**：这个 app 只解决**笔**。**手指触控暂不可用** —— 平板在 DP-in 下认出 Mac 后
-> 只输出笔这一路，预计需要在平板上拿到 root 权限才可能解开。
+> **注意**：这个 app 解决**笔**；**手指触控需要平板侧解锁** —— 平板在 DP-in 下默认只输出笔这一路，
+> 用临时 root 在平板侧刷入模块（`tablet/`）后触摸屏接口就会出现，手指可直接点击、拖拽。
 > 详见 README 的「它解决什么问题」一节。
 
 ---

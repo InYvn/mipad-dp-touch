@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Mipad DP Touch · 设置窗口 三套变体</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --logo:url(__LOGO__);
+    --bg:#1c1c1e; --card:#2c2c2e; --card-hi:#3a3a3c; --sep:#38383a;
+    --fg:#f2f2f7; --fg2:#a1a1a6; --fg3:#78787d;
+    --accent:#0a84ff; --green:#30d158; --red:#ff453a; --orange:#ff9f0a;
+    --r:10px; --pad:16px;
+  }
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,"PingFang SC",sans-serif;
+    -webkit-font-smoothing:antialiased;background:#0d0d0f;color:var(--fg);
+    padding:16px;display:flex;flex-direction:column;gap:14px;align-items:flex-start;
+  }
+  /* ---- 变体切换（mockup 外壳，不属于 App UI）---- */
+  .tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .tabs button{
+    font:600 13px/1 inherit;color:var(--fg2);background:#242426;border:1px solid #333336;
+    padding:9px 14px;border-radius:8px;cursor:pointer;transition:.15s;
+  }
+  .tabs button:hover{background:#2c2c2f;color:var(--fg)}
+  .tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .tabs .note{font-size:11.5px;color:var(--fg3);margin-left:4px}
+  .stage{display:none}
+  .stage.on{display:block}
+  /* ---- 窗口外壳 ---- */
+  .win{width:620px;background:var(--bg);border:1px solid #2f2f32;border-radius:12px;
+       padding:18px 18px 14px;box-shadow:0 18px 50px rgba(0,0,0,.5)}
+  .avatar{background-image:var(--logo);background-size:cover;border-radius:50%;flex:none}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+  .dot.ok{background:var(--green);box-shadow:0 0 0 3px rgba(48,209,88,.16)}
+  .dot.off{background:var(--red);box-shadow:0 0 0 3px rgba(255,69,58,.14)}
+  .card{background:var(--card);border-radius:var(--r);padding:var(--pad)}
+  .row{display:flex;align-items:center;gap:12px;min-height:30px}
+  .grow{flex:1}
+  .lbl{font-size:13px;color:var(--fg)}
+  .hint{font-size:11.5px;color:var(--fg2);text-align:right}
+  .hint3{font-size:11.5px;color:var(--fg3)}
+  .sect{display:flex;align-items:baseline;gap:10px;margin:0 0 8px 2px}
+  .sect h2{font-size:14px;font-weight:650;letter-spacing:.2px}
+  .sect .sub{font-size:11.5px;color:var(--fg3)}
+  select{font:13px inherit;color:var(--fg);background:var(--card-hi);border:1px solid #48484a;
+         border-radius:6px;padding:5px 8px;appearance:none;-webkit-appearance:none;cursor:pointer}
+  select.wide{width:100%}
+  .btn{font:500 12.5px inherit;color:var(--fg);background:var(--card-hi);border:1px solid #48484a;
+       border-radius:6px;padding:5px 11px;cursor:pointer;transition:.15s;white-space:nowrap}
+  .btn:hover{background:#48484c}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn.primary:hover{background:#2b95ff}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--accent);padding:5px 6px}
+  .btn.ghost:hover{background:rgba(10,132,255,.12)}
+  .btn[disabled]{opacity:.4;cursor:default}
+  .sw{display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;user-select:none}
+  .sw i{width:34px;height:20px;border-radius:10px;background:#48484a;position:relative;transition:.18s;flex:none}
+  .sw i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+              background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .sw.on i{background:var(--green)}
+  .sw.on i:after{transform:translateX(14px)}
+  .pill{font-size:11px;font-weight:600;padding:3px 8px;border-radius:99px;white-space:nowrap}
+  .pill.ok{background:rgba(48,209,88,.16);color:#5ee07f}
+  .pill.warn{background:rgba(255,159,10,.16);color:#ffb340}
+  .pill.info{background:rgba(10,132,255,.16);color:#5eb0ff}
+  .foot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;
+        font-size:11px;color:var(--fg3)}
+  /* ============ A · 精致打磨 ============ */
+  #vA .head{display:flex;align-items:center;gap:14px;padding:2px 2px 4px}
+  #vA .avatar{width:44px;height:44px}
+  #vA h1{font-size:19px;font-weight:700;letter-spacing:.2px}
+  #vA .sub{font-size:11.5px;color:var(--fg3);margin-top:3px}
+  #vA .stat{text-align:right;font-size:11.5px;color:var(--fg2);line-height:1.7}
+  #vA .stat b{color:var(--fg);font-weight:600}
+  #vA .sect{border-left:3px solid var(--accent);padding-left:9px;margin-left:0}
+  #vA .stack{display:flex;flex-direction:column;gap:18px;margin-top:16px}
+  #vA .row+.row{border-top:1px solid var(--sep);margin-top:2px;padding-top:2px}
+  #vA .ctrl{width:190px;flex:none}
+  #vA .hint{width:170px;flex:none}
+  #vA .step{display:flex;align-items:center;gap:10px;padding:7px 0}
+  #vA .step .ck{width:18px;height:18px;border-radius:50%;background:rgba(48,209,88,.16);
+                color:#5ee07f;font-size:11px;display:flex;align-items:center;justify-content:center;flex:none}
+  #vA .step .ck.no{background:rgba(255,255,255,.07);color:var(--fg3)}
+  #vA .step .txt{flex:1}
+  #vA .step .txt b{font-size:13px;font-weight:600;display:block}
+  #vA .step .txt span{font-size:11.5px;color:var(--fg3)}
+  /* ============ B · 状态优先（简洁） ============ */
+  #vB .head{display:flex;align-items:center;gap:13px;padding:2px 2px 2px}
+  #vB .avatar{width:40px;height:40px}
+  #vB h1{font-size:17px;font-weight:650}
+  #vB .status{display:flex;align-items:center;gap:8px;margin-top:5px;font-size:12.5px;color:var(--fg2)}
+  #vB .status b{color:var(--fg);font-weight:600}
+  #vB .stack{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+  #vB .card{padding:14px 16px}
+  #vB .bar{display:flex;align-items:center;gap:10px}
+  #vB .bar .t{font-size:12.5px;font-weight:600;flex:1}
+  #vB .perm{display:flex;align-items:center;gap:9px;padding:9px 4px;font-size:12.5px;color:var(--fg2)}
+  #vB .perm .ck{width:16px;height:16px;border-radius:50%;background:rgba(48,209,88,.16);
+                color:#5ee07f;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none}
+  #vB .counters{display:none;gap:18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--sep)}
+  #vB .counters.show{display:flex}
+  #vB .counters div{font-size:11.5px;color:var(--fg3)}
+  #vB .counters b{display:block;font-size:15px;color:var(--fg);font-weight:600;margin-top:2px}
+  #vB .row+.row{margin-top:6px}
+  #vB .ctrl{width:186px;flex:none}
+  #vB .enh{background:rgba(10,132,255,.07);border-radius:8px;padding:7px 10px;margin-top:8px}
+  #vB .enh .row{min-height:24px}
+  #vB .swrow{display:flex;align-items:center;gap:22px}
+  #vB .foot{margin-top:12px}
+
+  /* ============ C · 紧凑分栏 ============ */
+  #vC .win{padding:14px 16px 12px}
+  #vC .top{display:flex;align-items:center;gap:10px;padding:0 2px 12px;border-bottom:1px solid var(--sep)}
+  #vC .avatar{width:28px;height:28px}
+  #vC .top h1{font-size:14.5px;font-weight:650}
+  #vC .top .status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg2)}
+  #vC .top .counters{margin-left:auto;font-size:11px;color:var(--fg3);display:flex;gap:12px}
+  #vC .top .counters b{color:var(--fg);font-weight:600}
+  #vC .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+  #vC .sect{margin-bottom:6px}
+  #vC .card{padding:12px 14px}
+  #vC .row{min-height:26px;gap:8px}
+  #vC .row+.row{margin-top:2px}
+  #vC .ctrl{width:132px;flex:none}
+  #vC select{padding:3px 6px;font-size:12.5px}
+  #vC .btn{padding:4px 9px;font-size:12px}
+  #vC .foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--sep)}
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <button data-v="A">A · 精致打磨</button>
+  <button class="on" data-v="B">B · 状态优先 · 简洁</button>
+  <button data-v="C">C · 紧凑分栏</button>
+  <span class="note">点标签切换 · 开关可点 · 内容为真实文案（深色=你当前模式）</span>
+</div>
+
+<!-- ============================ A ============================ -->
+<div class="stage" id="vA">
+<div class="win">
+  <div class="head">
+    <div class="avatar"></div>
+    <div class="grow">
+      <h1>Mipad DP Touch</h1>
+      <div class="sub">小米焦点触控笔 Pro · Mac 外接屏输入桥</div>
+    </div>
+    <div class="stat">
+      <span class="dot ok"></span> <b>已连接</b> 小米平板 9 Pro Max<br>
+      事件 <b>1,204</b> · 点击 <b>86</b> · 拖拽 <b>12</b> · 滚动 <b>340</b>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div>
+      <div class="sect"><h2>权限</h2><span class="sub">2 / 2 已完成</span>
+        <span class="grow"></span><button class="btn">重新检测</button></div>
+      <div class="card">
+        <div class="step"><span class="ck">✓</span><span class="txt"><b>辅助功能</b><span>允许合成点击与拖拽</span></span><span class="pill ok">已授权</span></div>
+        <div class="step"><span class="ck">✓</span><span class="txt"><b>输入监控</b><span>读取平板传过来的原始输入</span></span><span class="pill ok">已授权</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sect"><h2>笔的输入</h2><span class="grow"></span><button class="btn">恢复默认</button></div>
+      <div class="card">
+        <div class="row"><span class="lbl">轻点</span><span class="grow"></span>
+          <select class="ctrl"><option>左键单击</option></select><span class="hint">按下即点击</span></div>
+        <div class="row"><span class="lbl">快速滑动</span><span class="grow"></span>
+          <select class="ctrl"><option>滚动翻页</option></select><span class="hint">方向与速度见下</span></div>
+        <div class="row"><span class="lbl">停住再滑</span><span class="grow"></span>
+          <select class="ctrl"><option>拖拽 · 移动窗口</option></select><span class="hint">先停住 0.25 秒</span></div>
+        <div class="row"><span class="lbl">停住不动</span><span class="grow"></span>
+          <select class="ctrl"><option>右键菜单</option></select><span class="hint">停住 0.8 秒</span></div>
+        <div class="row"><span class="lbl">滚动方向</span><span class="grow"></span>
+          <select class="ctrl"><option>跟随系统</option></select><span class="hint"></span></div>
+        <div class="row"><span class="lbl">滚动速度</span><span class="grow"></span>
+          <select class="ctrl"><option>1.0x 标准</option></select><span class="hint"></span></div>
+        <div class="row"><span class="sw on" data-sw><i></i><span class="lbl">增强模式</span></span><span class="grow"></span>
+          <span class="hint">未检测到触摸屏接口 · 平板侧需 root 解锁</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sect"><h2>显示缩放</h2><span class="sub">只改平板那块屏</span></div>
+      <div class="card">
+        <div class="row"><select class="wide"><option>1704×1136 · 像素 1:1 最锐 · 120Hz</option></select>
+          <button class="btn">重新扫描</button></div>
+        <div class="row" style="margin-top:6px"><span class="hint3">当前 UI 1704×1136 · 帧缓冲 3408×2272 · 120Hz · HiDPI</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sect"><h2>运行</h2></div>
+      <div class="card">
+        <div class="row"><span class="sw on" data-sw><i></i><span class="lbl">启用笔桥接</span></span></div>
+        <div class="row"><span class="sw" data-sw><i></i><span class="lbl">登录时自动启动</span></span><span class="grow"></span><span class="hint">未开启</span></div>
+        <div class="row"><span class="sw" data-sw><i></i><span class="lbl">详细日志</span></span><span class="grow"></span>
+          <button class="btn">打开日志</button><button class="btn" style="margin-left:6px">诊断…</button></div>
+      </div>
+    </div>
+
+    <div class="card" style="display:flex;align-items:center;gap:10px">
+      <button class="btn">高级选项…</button><span class="grow"></span>
+      <span class="hint3">光标基准屏 · 未验证设备 · 判定时长</span>
+    </div>
+  </div>
+
+  <div class="foot"><span>Mipad DP Touch 1.2</span><span>MIT License</span></div>
+</div>
+</div>
+
+<!-- ============================ B（简洁版） ============================ -->
+<div class="stage on" id="vB">
+<div class="win">
+  <div class="head">
+    <div class="avatar"></div>
+    <div class="grow">
+      <h1>Mipad DP Touch</h1>
+      <div class="status"><span class="dot ok"></span> 已连接 <b>小米平板 9 Pro Max</b></div>
+    </div>
+    <button class="btn ghost" data-counters>详情 ▾</button>
+  </div>
+
+  <div class="stack">
+    <div class="card" style="padding:11px 16px">
+      <div class="bar">
+        <span class="ck" style="width:16px;height:16px;border-radius:50%;background:rgba(48,209,88,.16);color:#5ee07f;font-size:10px;display:flex;align-items:center;justify-content:center">✓</span>
+        <span class="t">权限已完成 · 2 / 2</span>
+      </div>
+      <div class="counters" id="bCounters">
+        <div>事件<b>1,204</b></div><div>点击<b>86</b></div><div>拖拽<b>12</b></div><div>滚动<b>340</b></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sect"><h2>笔的输入</h2><span class="grow"></span><button class="btn">恢复默认</button></div>
+      <div class="card">
+        <div class="row"><span class="lbl">轻点</span><span class="grow"></span><select class="ctrl"><option>左键单击</option></select></div>
+        <div class="row"><span class="lbl">快速滑动</span><span class="grow"></span><select class="ctrl"><option>滚动翻页</option></select></div>
+        <div class="row"><span class="lbl">停住再滑</span><span class="grow"></span><select class="ctrl"><option>拖拽 · 移动窗口</option></select></div>
+        <div class="row"><span class="lbl">停住不动</span><span class="grow"></span><select class="ctrl"><option>右键菜单</option></select></div>
+        <div class="enh">
+          <div class="row"><span class="sw on" data-sw><i></i><span class="lbl">增强模式 · 手指触控</span></span>
+            <span class="grow"></span><span class="pill warn">平板侧需解锁</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="t" style="font-size:12.5px;font-weight:600">显示缩放</span>
+        <span class="grow"></span><button class="btn">重新扫描</button></div>
+      <div class="row" style="margin-top:8px"><select class="wide"><option>1704×1136 · 像素 1:1 最锐 · 120Hz</option></select></div>
+    </div>
+
+    <div class="card">
+      <div class="swrow">
+        <span class="sw on" data-sw><i></i><span class="lbl">笔桥接</span></span>
+        <span class="sw" data-sw><i></i><span class="lbl">开机自启</span></span>
+        <span class="sw" data-sw><i></i><span class="lbl">详细日志</span></span>
+      </div>
+    </div>
+
+    <div class="card" style="display:flex;align-items:center;gap:10px;padding:11px 16px">
+      <button class="btn">高级选项…</button><span class="grow"></span>
+      <span class="hint3">光标基准屏 · 判定时长 · 诊断</span>
+    </div>
+  </div>
+
+  <div class="foot"><span>Mipad DP Touch 1.2</span><span>MIT License</span></div>
+</div>
+</div>
+
+<div class="stage" id="vC">
+<div class="win">
+  <div class="top">
+    <div class="avatar"></div>
+    <h1>Mipad DP Touch</h1>
+    <div class="status"><span class="dot ok"></span> 已连接 小米平板 9 Pro Max</div>
+    <div class="counters"><span>事件 <b>1204</b></span><span>点击 <b>86</b></span><span>拖拽 <b>12</b></span><span>滚动 <b>340</b></span></div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="sect"><h2>权限</h2><span class="sub">2 / 2</span><span class="grow"></span><button class="btn">重新检测</button></div>
+      <div class="card">
+        <div class="row"><span class="lbl">辅助功能</span><span class="grow"></span><span class="pill ok">✓</span></div>
+        <div class="row"><span class="lbl">输入监控</span><span class="grow"></span><span class="pill ok">✓</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="sect"><h2>显示缩放</h2><span class="grow"></span><button class="btn">重新扫描</button></div>
+      <div class="card">
+        <div class="row"><select class="wide"><option>1704×1136 · 1:1 最锐 · 120Hz</option></select></div>
+        <div class="row"><span class="hint3">帧缓冲 3408×2272 · HiDPI</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sect"><h2>笔的输入</h2><span class="grow"></span><button class="btn">恢复默认</button></div>
+      <div class="card">
+        <div class="row"><span class="lbl">轻点</span><span class="grow"></span><select class="ctrl"><option>左键单击</option></select></div>
+        <div class="row"><span class="lbl">快速滑动</span><span class="grow"></span><select class="ctrl"><option>滚动翻页</option></select></div>
+        <div class="row"><span class="lbl">停住再滑</span><span class="grow"></span><select class="ctrl"><option>拖拽 · 移动窗口</option></select></div>
+        <div class="row"><span class="lbl">停住不动</span><span class="grow"></span><select class="ctrl"><option>右键菜单</option></select></div>
+        <div class="row"><span class="lbl">滚动方向</span><span class="grow"></span><select class="ctrl"><option>跟随系统</option></select></div>
+        <div class="row"><span class="lbl">滚动速度</span><span class="grow"></span><select class="ctrl"><option>1.0x 标准</option></select></div>
+      </div>
+    </div>
+    <div>
+      <div class="sect"><h2>运行</h2></div>
+      <div class="card">
+        <div class="row"><span class="sw on" data-sw><i></i><span class="lbl">启用笔桥接</span></span></div>
+        <div class="row"><span class="sw" data-sw><i></i><span class="lbl">登录时自动启动</span></span></div>
+        <div class="row"><span class="sw" data-sw><i></i><span class="lbl">详细日志</span></span><span class="grow"></span>
+          <button class="btn">打开日志</button></div>
+        <div class="row" style="margin-top:4px"><button class="btn">诊断…</button><span class="grow"></span>
+          <span class="pill warn">增强模式：平板侧需解锁</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span><button class="btn">高级选项…</button></span>
+    <span class="hint3">光标基准屏 · 未验证设备 · 判定时长</span>
+    <span>Mipad DP Touch 1.2 · MIT</span>
+  </div>
+</div>
+</div>
+
+<script>
+  // 变体切换
+  document.querySelectorAll('.tabs button[data-v]').forEach(function (b) {
+    b.onclick = function () {
+      document.querySelectorAll('.tabs button[data-v]').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      document.querySelectorAll('.stage').forEach(function (s) { s.classList.remove('on'); });
+      document.getElementById('v' + b.dataset.v).classList.add('on');
+    };
+  });
+  // 开关可点（演示交互）
+  document.querySelectorAll('[data-sw]').forEach(function (s) {
+    s.onclick = function () { s.classList.toggle('on'); };
+  });
+  // B 的「详情」展开计数
+  var cbtn = document.querySelector('[data-counters]');
+  if (cbtn) cbtn.onclick = function () {
+    var c = document.getElementById('bCounters');
+    c.classList.toggle('show');
+    cbtn.textContent = c.classList.contains('show') ? '详情 ▴' : '详情 ▾';
+  };
+</script>
+</body>
+</html>
