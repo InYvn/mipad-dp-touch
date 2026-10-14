@@ -339,6 +339,14 @@ def next_target(value, infos=None, allow_unknown=False, cursor=None):
         i = ids.index(int(cur["id"]))
     except (TypeError, ValueError):
         i = -1          # 现在这块认不出来 -> 从第一块开始, 不卡死
+    # 配置里指定的那块屏已经掉线: resolve_target 会兜底到主屏/平板, 但"切换屏幕"在
+    # 语义上应该从顺序里的第一块重新起头 —— 否则用户按一下会直接跳过第一块。
+    try:
+        want = int(str(value).strip())
+        if want not in ids:
+            i = -1
+    except (TypeError, ValueError):
+        pass            # auto / tablet / 空值等非数字写法: 正常兜底逻辑
     nxt = seq[(i + 1) % len(seq)]
     return target_value_of(nxt, infos, allow_unknown), ""
 

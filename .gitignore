@@ -22,3 +22,9 @@ __pycache__/
 
 # 打包时自动生成
 AppIcon.icns
+
+# 平板侧模块打包产物（发 release 时上传，不进仓库）
+tablet/dist/
+
+# 截图导出的 PDF
+docs/window.png.pdf

@@ -15,7 +15,7 @@ APP_NAME="Mipad DP Touch"
 # bundle id 保持稳定 (改名字不改 id): TCC 的输入监控/辅助功能授权是按 id 匹配的,
 # 换了 id 用户就得重新授权一遍。
 BUNDLE_ID="io.github.inyvn.xiaomi-dptouch"
-VER="1.1"
+VER="1.2"
 ICON="AppIcon.icns"
 
 if [ ! -x "$VENV/bin/python" ]; then

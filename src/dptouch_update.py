@@ -84,9 +84,15 @@ def parse_sha256(text):
 
     正文里写的是 `SHA256  1f3a84d1…` 这种形式(Makefile/脚本都在用), 大小写、空格、
     反引号都容忍。抓不到就返回 None —— 调用方据此决定「没法校验」。
+
+    一个 release 里可能同时挂着平板侧模块 zip（正文里因此有多个校验值），
+    所以**优先取标注了 .dmg 的那一行**；都没标注就取第一个，保持旧行为。
     """
     if not text:
         return None
+    for m in re.finditer(r"SHA256[^\n]*?([0-9a-fA-F]{64})[^\n]*", text):
+        if ".dmg" in m.group(0).lower():
+            return m.group(1).lower()
     m = re.search(r"SHA256[^\n]*?([0-9a-fA-F]{64})", text)
     return m.group(1).lower() if m else None
 

@@ -46,7 +46,17 @@ SUPPORTED_VENDOR_IDS = (0x2717, 0x18D1)   # 小米身份 / Google 通用身份
 PRODUCT_ID = 0x2D05                       # Xiaomi Pad 9 Pro Max
 PEN_USAGE_PAGE = 0x0D                     # Digitizer
 PEN_USAGE = 0x02                          # Pen
+TOUCH_USAGE = 0x04                        # Touch Screen（平板侧解锁后 hid.usb1 变成它）
 PRODUCT_NAME = "Xiaomi Pad 9 Pro Max"
+
+# 「触摸+笔」二合一描述符（914B）里的 report ID 分工：
+#   1 = 10 根手指（每指: TipSwitch 0x42 / InRange 0x32 / ContactID 0x51 / X / Y）
+#   2 = 接触计数 (0x54 输入, 0x55 feature)
+#   3 = 笔（与纯笔接口逐字节相同 —— 所以笔的解析逻辑一个字都不用改）
+TOUCH_REPORT_ID = 1
+# 同一份 report 里 X/Y 是连着回调的(微秒级); 隔了半拍才到的另一轴是上一次 report 的残值。
+TOUCH_PAIR_STALE_S = 0.004
+PEN_REPORT_ID = 3
 
 # 兼容旧名（探针脚本在用）
 TABLET_VIDS = SUPPORTED_VENDOR_IDS
@@ -113,11 +123,82 @@ def _init_ctypes():
     io.IOHIDManagerClose.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
     io.IOHIDManagerUnscheduleFromRunLoop.restype = None
     io.IOHIDManagerUnscheduleFromRunLoop.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    # 元素枚举：用来找出「触摸+笔」接口里第一根手指的那几个元素（见 first_finger_cookies）
+    io.IOHIDDeviceCopyMatchingElements.restype = ctypes.c_void_p
+    io.IOHIDDeviceCopyMatchingElements.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32]
+    io.IOHIDElementGetCookie.restype = ctypes.c_uint32
+    io.IOHIDElementGetCookie.argtypes = [ctypes.c_void_p]
+    io.IOHIDElementGetReportID.restype = ctypes.c_uint32
+    io.IOHIDElementGetReportID.argtypes = [ctypes.c_void_p]
+    cf.CFArrayGetCount.restype = ctypes.c_long
+    cf.CFArrayGetCount.argtypes = [ctypes.c_void_p]
+    cf.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
+    cf.CFArrayGetValueAtIndex.argtypes = [ctypes.c_void_p, ctypes.c_long]
 
 
 
 # 导入即完成 ctypes 签名声明 —— 不依赖 Engine 实例化顺序
 _init_ctypes()
+
+
+def first_finger_cookies_from(rows):
+    """从元素表 [(cookie, report_id, page, usage)] 里挑出「第 1 根手指」的 cookie 集合。
+
+    实测（2026-10-14, 914B 描述符）元素在报告里的排列**不是**「一根手指一组」，
+    而是按用途分组：
+        cookie 22..41   第 1..10 指的 TipSwitch/InRange 对 (42,32,42,32,…)
+        cookie 42..45   笔的 TipSwitch/Barrel/Eraser/InRange
+        cookie 46..     第 1..10 指的 [ContactID, X, Y] 三元组
+    所以不能按「cookie 最小的 1/10」推 —— 那会取到第 1 指的 TipSwitch/InRange
+    加第 2 指的 TipSwitch/InRange，而第 1 指的 X/Y 反而被挡掉（表现为：手指点击
+    落在 (0,0)、光标不动）。
+    正确做法：第 1 指的 TipSwitch / InRange 各取第一个；ContactID 取第一个 0x51；
+    X / Y 取 cookie 紧跟在那个 ContactID 之后的两个。
+    """
+    touch = [r for r in rows if r[1] == TOUCH_REPORT_ID]
+    if not touch:
+        return set()
+    out = set()
+    for usage in (0x42, 0x32):                       # TipSwitch / InRange: 各取第一项
+        for ck, _rid, pg, u in touch:
+            if pg == 0x0D and u == usage:
+                out.add(ck)
+                break
+    ids = [r for r in touch if r[2] == 0x0D and r[3] == 0x51]
+    if ids:
+        cid = ids[0][0]
+        out.add(cid)
+        for usage in (0x30, 0x31):                   # X / Y: 紧跟首个 ContactID 之后
+            cand = [r for r in touch
+                    if r[2] == 0x01 and r[3] == usage and r[0] > cid]
+            if cand:
+                out.add(min(cand, key=lambda r: r[0])[0])
+    return out
+
+
+def first_finger_cookies(dev):
+    """「触摸+笔」接口里第一根手指占用的元素 cookie 集合（纯笔接口返回空集）。"""
+    try:
+        arr = H.iokit.IOHIDDeviceCopyMatchingElements(dev, None, 0)
+    except Exception:
+        return set()
+    if not arr:
+        return set()
+    rows = []
+    try:
+        n = H.cf.CFArrayGetCount(arr)
+        for i in range(n):
+            el = H.cf.CFArrayGetValueAtIndex(arr, i)
+            if not el:
+                continue
+            rows.append((H.iokit.IOHIDElementGetCookie(el),
+                         H.iokit.IOHIDElementGetReportID(el),
+                         H.iokit.IOHIDElementGetUsagePage(el),
+                         H.iokit.IOHIDElementGetUsage(el)))
+    finally:
+        H.cf.CFRelease(arr)
+    rows.sort()
+    return first_finger_cookies_from(rows)
 
 def _dict(pairs):
     """[(bytes_key, int_val)] -> CFDictionaryRef (调用方负责 CFRelease)"""
@@ -254,6 +335,10 @@ class Engine(object):
             "target_display": DP.TARGET_AUTO,   # 光标基准屏: auto | tablet | "<displayID>"
             "drag_pen": False,        # 拖拽位置源改用笔坐标
             "allow_unknown": False,   # 允许未验证设备
+            "input_mode": "auto",      # auto | pen | touch —— 认哪种 HID 接口（见 H.INPUT_MODES）
+                                       # 默认 auto = 0x02 笔 / 0x04 触摸+笔 两种都认:
+                                       # 没解锁的平板只给笔那一路, 行为与 1.1 一字不差;
+                                       # 解锁过的平板开箱即用（不用动任何开关）。
             "display_allow_unknown": False,     # 允许把未实测的屏当平板屏
             "hold_ms": 250,           # 「停住再滑」的判定时长
             "rc_hold_ms": 800,        # 「停住不动」的判定时长 (0 = 关)
@@ -277,6 +362,10 @@ class Engine(object):
         self._err_logged = set()      # 记过日志的异常, 免得每帧刷屏
         self.reset_counters()
         self._want_down = False
+        self._touch_cookies = set()   # 「触摸+笔」接口里第 1 根手指的元素 cookie
+        self._tsx = self._tsy = None  # 触摸坐标缓冲（固件顺序: 坐标先到, 按下标志最后到）
+        self._tx_t = self._ty_t = 0.0 # 两轴各自到达的时刻（判断是不是同一份 report, 见 _touch_stage）
+        self.touch_iface = False      # 当前插着的平板是否带「触摸屏」接口（= 平板侧解锁过）
         self.target = {}              # 光标基准屏 (笔的绝对坐标铺到哪块屏上)
         self._tgt_key = None
         self.b = None
@@ -399,14 +488,16 @@ class Engine(object):
         if "debug_log" in kw:
             self.debug = bool(kw["debug_log"])
         before = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
-                  self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")))
+                  self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")),
+                  self.cfg.get("input_mode", "auto"))
         self.cfg.update(kw)
         self._apply()
         after = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
-                 self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")))
+                 self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")),
+                 self.cfg.get("input_mode", "auto"))
         if before != after:
             self.b.reset_state()      # 绑定变了: 半按/划动中的残留不能带到下一笔
-        if after[1] != before[1] and self.mgr is not None:
+        if (after[1] != before[1] or after[3] != before[3]) and self.mgr is not None:
             return self.restart()      # 匹配条件变了, 必须重建 manager
         return 0
 
@@ -470,20 +561,24 @@ class Engine(object):
     def _match(self):
         """IOHIDManager 匹配表。
 
-        默认（严格）：VID 白名单 × ProductID × 笔接口 usage，三条件同时成立。
+        默认（严格）：VID 白名单 × ProductID × digitizer 接口 usage，三个条件同时成立。
           平板开 USB 调试后身份是 0x18D1，写死 0x2717 会一个也匹配不到；
           但只按 0x18D1 匹配又会撞上机器上别的 Android 设备 —— 所以一起上。
+        usage 认哪几个由 input_mode 决定（auto 模式下 0x02 笔 / 0x04 触摸+笔 都认；
+        没做平板侧解锁的用户只会出现 0x02，所以 auto 与他们原来的行为完全一致）。
         「允许未验证设备」时退化成 VID 白名单（给未验证机型 / 接口布局不同的机型留门）。
         """
         dicts = []
+        mode = self.cfg.get("input_mode", "auto")
         if self.cfg["allow_unknown"]:
             for v in SUPPORTED_VENDOR_IDS:
                 dicts.append(_dict([(b"VendorID", v)]))
         else:
             for v in SUPPORTED_VENDOR_IDS:
-                dicts.append(_dict([(b"VendorID", v), (b"ProductID", PRODUCT_ID),
-                                    (b"PrimaryUsagePage", PEN_USAGE_PAGE),
-                                    (b"PrimaryUsage", PEN_USAGE)]))
+                for usage in H.match_usages(mode):
+                    dicts.append(_dict([(b"VendorID", v), (b"ProductID", PRODUCT_ID),
+                                        (b"PrimaryUsagePage", PEN_USAGE_PAGE),
+                                        (b"PrimaryUsage", usage)]))
         arr = (ctypes.c_void_p * len(dicts))(*dicts)
         ret = H.cf.CFArrayCreate(None, arr, len(dicts), CF_AB())
         for d in dicts:
@@ -602,10 +697,19 @@ class Engine(object):
                         if not any(d[1] == vid and d[2] == pid for d in eng.devices):
                             eng.devices.append((name, vid, pid, known))
                     eng.log("设备接入: %s" % name)
+                    ck = first_finger_cookies(device)
+                    if ck:
+                        with eng._lk:
+                            eng._touch_cookies |= ck
+                            eng.touch_iface = True
+                        eng.log("触控接口已识别: 第 1 根手指 %d 个元素 (report ID %d): cookie %s"
+                                % (len(ck), TOUCH_REPORT_ID,
+                                   ",".join(str(c) for c in sorted(ck))))
                 else:
                     with eng._lk:
                         eng.devices = [d for d in eng.devices
                                        if not (d[1] == vid and d[2] == pid)]
+                        eng.touch_iface = False   # 平板整台拔掉: 触摸接口也一起没了
                     eng.log("设备移除: %s" % name)
             except Exception as e:
                 eng.last_error = "设备回调异常: %r" % (e,)
@@ -636,16 +740,98 @@ class Engine(object):
                   H.iokit.IOHIDElementGetUsage(el),
                   H.iokit.IOHIDValueGetIntegerValue(value),
                   H.iokit.IOHIDElementGetLogicalMin(el),
-                  H.iokit.IOHIDElementGetLogicalMax(el))
+                  H.iokit.IOHIDElementGetLogicalMax(el),
+                  H.iokit.IOHIDElementGetReportID(el),
+                  H.iokit.IOHIDElementGetCookie(el))
 
-    def feed(self, page, usage, v, lo, hi):
-        """一个 HID 元素的值变化。与 IOHID 解析解耦, 便于离线单测。"""
+    def feed(self, page, usage, v, lo, hi, rid=PEN_REPORT_ID, cookie=0):
+        """一个 HID 元素的值变化。与 IOHID 解析解耦, 便于离线单测。
+
+        rid/cookie 只在「触摸+笔」接口上有意义：纯笔接口全部是 report ID 3，
+        传默认值即可（单测里也只传前 5 个参数）。
+        """
         with self._lk:
-            self._feed_locked(page, usage, v, lo, hi)
+            self._feed_locked(page, usage, v, lo, hi, rid, cookie)
 
-    def _feed_locked(self, page, usage, v, lo, hi):
+    # ---- 触摸坐标缓冲 ----------------------------------------------------
+    # 实测（2026-10-14, 914B「触摸+笔」接口）固件的一笔事件顺序是:
+    #     按下: Y, X, InRange=1, TipSwitch=1
+    #     抬手: Y=0, X=0, InRange=0, TipSwitch=0
+    # 也就是【坐标先到、按下标志最后到】，抬手时还会先发一对 (0,0) 归零。
+    # 所以: 坐标先缓冲，Y/X 成对到齐才落位；按下时把缓冲落到光标上再按；
+    # 抬手时丢掉缓冲（否则光标会被 (0,0) 甩到左上角）。
+
+    def _touch_stage(self, axis, nrm, b):
+        now = time.time()
+        if axis == 0x30:
+            self._tsx, self._tx_t = nrm, now
+        else:
+            self._tsy, self._ty_t = nrm, now
+        if self._tsx is None or self._tsy is None:
+            return
+        # ★同一份 report 里 X/Y 是连着回调的(微秒级); 隔了半拍才到的另一轴是**上一次 report
+        #   的残值**。抬手时固件先发 Y=0, 若让它跟这种残值配对, 就会把 (残值X, 0) 落成一次
+        #   真移动 —— 手指一离开屏幕光标就"啪"地跳到最顶部, 紧接着 release() 补发的那段拖拽
+        #   也停在顶部 (2026-10-15 实测)。
+        #   所以: 新到的值是 0 而搭档是残值时, 丢掉残值、把 0 留在缓冲里等下一份 report 再判:
+        #     · 下一份是抬手标志 -> _touch_clear 把它丢掉（跳变消失）
+        #     · 下一份是坐标（手指真滑到屏幕边上）-> 补落位, 只晚一份 report, 看不出来
+        if nrm == 0.0 and abs(self._tx_t - self._ty_t) > TOUCH_PAIR_STALE_S:
+            if axis == 0x30:
+                self._tsy = None
+            else:
+                self._tsx = None
+            return
+        self._touch_flush(b)
+
+    def _touch_flush(self, b):
+        """把缓冲的触摸坐标落到光标上（只到齐一轴时, 另一轴沿用当前位置）。"""
+        if self._tsx is None and self._tsy is None:
+            return
+        x = b.x if self._tsx is None else self._tsx
+        y = b.y if self._tsy is None else self._tsy
+        self._tsx = self._tsy = None
+        if x == 0.0 and y == 0.0:
+            return                        # 抬手归零的伪坐标
+        b.x, b.y = x, y
+        # ★必须显式 use_pen=True: post() 在「跟随光标」模式下 (takeover=False) 会把事件
+        #   发到 **当前光标位置** —— 那是"移动到原地", 光标永远不动（2026-10-14 实测:
+        #   手指点击通了但光标不跟手, 就是这里）。触摸和笔一样有绝对坐标, 直接用它。
+        b.post(H.MOVED, use_pen=True)
+        if self.debug:
+            b.dbg("触摸 -> 屏幕 (%.0f, %.0f)  [基准屏 %s  %.0fx%.0f @ %.0f,%.0f]"
+                  % (b.ox + x * b.w, b.oy + y * b.h, b.rect_label or "?",
+                     b.w, b.h, b.ox, b.oy), min_dt=0.25)
+        if b.down:
+            b.on_move()                   # 按下之后交给手势判定（轻点/滑动/拖拽）
+
+    def _touch_clear(self):
+        self._tsx = self._tsy = None
+
+    def _feed_locked(self, page, usage, v, lo, hi, rid=PEN_REPORT_ID, cookie=0):
         b = self.b
+        # 这串事件是不是触摸屏那一路 —— post()/press() 靠它决定坐标从哪来（见 hid_bridge.post）
+        b.src_touch = (rid == TOUCH_REPORT_ID)
         if page == 0x0D and usage == 0x42:                 # TipSwitch
+            if rid == TOUCH_REPORT_ID:
+                if self._touch_cookies and cookie and cookie not in self._touch_cookies:
+                    return                                      # 不是第 1 根手指 -> 忽略
+                self.seen["ev"] += 1
+                self.seen["tip"] += 1
+                if v:
+                    self._touch_flush(b)   # 坐标已在缓冲里 -> 先把光标带过去再按
+                    self._want_down = True
+                    if self.debug:
+                        b.dbg("触摸: 按下 (定点 %.0f,%.0f)"
+                              % (b.ox + b.x * b.w, b.oy + b.y * b.h))
+                else:
+                    self._touch_clear()    # 抬手: 丢掉缓冲(固件刚发的那对 0,0 不算数)
+                    self._want_down = False
+                    if self.debug:
+                        b.dbg("触摸: 抬起")
+                self._sync()
+                self.total["fwd"] = b.n
+                return
             self.seen["ev"] += 1
             self.seen["tip"] += 1
             self._want_down = bool(v)
@@ -658,31 +844,46 @@ class Engine(object):
                 self.pres_peak = v
             self._sync()
         elif page == 0x0D and usage == 0x32:               # InRange
+            if rid == TOUCH_REPORT_ID:
+                # 触摸侧松开以 TipSwitch 为准；InRange 只用来把缓冲里的坐标落位/清掉
+                if self._touch_cookies and cookie and cookie not in self._touch_cookies:
+                    return
+                if v:
+                    self._touch_flush(b)
+                else:
+                    self._touch_clear()
+                return
             if not v:
                 self._want_down = False
                 self.pres_cur = 0
                 self._sync()
         elif page == 0x01 and usage in (0x30, 0x31) and hi > lo and lo >= 0:
-            # 绝对坐标 (笔接口); 相对坐标的鼠标接口 lo < 0, 会被排除
+            # 绝对坐标 (笔/触摸接口); 相对坐标的鼠标接口 lo < 0, 会被排除
+            if rid == TOUCH_REPORT_ID and self._touch_cookies and cookie \
+                    and cookie not in self._touch_cookies:
+                return                                      # 不是第 1 根手指 -> 忽略
             self.seen["ev"] += 1
             self.seen["x" if usage == 0x30 else "y"] += 1
             nrm = float(v - lo) / (hi - lo)
-            if usage == 0x30:
-                b.x = nrm
+            if rid == TOUCH_REPORT_ID:
+                self._touch_stage(usage, nrm, b)   # 触摸: 先缓冲, 成对到齐才落位
             else:
-                b.y = nrm
-            if b.takeover and not b.down:
-                # 接管了绝对坐标: 笔就是鼠标, 悬停也得把光标挪过去
-                b.post(H.MOVED)
-            elif b.down:
-                # ★按下之后的移动一律交给手势判定 —— 快速滑动(滚动/划选), 停住再滑(拖拽),
-                #   全在 on_move 里按绑定表决定, 判定之前一个鼠标按键都不发。
-                #   这里曾经读过一个不存在的 b.scroll 属性: 笔一按下去就抛 AttributeError,
-                #   回调被 except 吞掉 -> 拖拽和滚动全部失效 (2026-09-18 定位)。
-                b.on_move()
-            if self.debug:
-                # 每 0.4 秒一条: 笔尖位置 vs 系统光标。光标没跟着笔走时一眼看出来。
-                b.dbg(self._dbg_hover_line(b), min_dt=0.4)
+                if usage == 0x30:
+                    b.x = nrm
+                else:
+                    b.y = nrm
+                if b.takeover and not b.down:
+                    # 接管了绝对坐标: 笔就是鼠标, 悬停也得把光标挪过去
+                    b.post(H.MOVED)
+                elif b.down:
+                    # ★按下之后的移动一律交给手势判定 —— 快速滑动(滚动/划选), 停住再滑(拖拽),
+                    #   全在 on_move 里按绑定表决定, 判定之前一个鼠标按键都不发。
+                    #   这里曾经读过一个不存在的 b.scroll 属性: 笔一按下去就抛 AttributeError,
+                    #   回调被 except 吞掉 -> 拖拽和滚动全部失效 (2026-09-18 定位)。
+                    b.on_move()
+                if self.debug:
+                    # 每 0.4 秒一条: 笔尖位置 vs 系统光标。光标没跟着笔走时一眼看出来。
+                    b.dbg(self._dbg_hover_line(b), min_dt=0.4)
         self.total["fwd"] = b.n
         self.total["scroll"] = b.ns
         self.total["drag"] = b.nd
@@ -715,6 +916,7 @@ class Engine(object):
             "ax": self.ax_trusted(),
             "devices": list(self.devices),
             "events": self.seen["ev"],
+            "touch_iface": self.touch_iface,
             "fwd": self.b.n if self.b else 0,
             "scroll": self.b.ns if self.b else 0,
             "click": self.b.nclk if self.b else 0,

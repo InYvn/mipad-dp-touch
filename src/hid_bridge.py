@@ -50,7 +50,33 @@ TABLET_VIDS = (0x2717, 0x18D1)   # 「主机看平板」的两个身份: 小米 
 APPLE_SVID = 0x05AC
 PEN_USAGE_PAGE = 0x0D            # Digitizer: 笔集合所在接口
 PEN_USAGE = 0x02                 # Pen
+TOUCH_USAGE = 0x04               # Touch Screen: 平板侧「Mac 触控解锁」后 hid.usb1 变成它
 RAW_LIMIT = 300
+
+# 输入模式 —— 一颗 Mac 连上来时，平板只会建一路 hid.usb1：要么纯笔(0x0D/0x02)，
+# 要么「触摸+笔」二合一(0x0D/0x04)。模式只决定 App 去认哪种接口，不动任何数据格式。
+#   auto   两种都认（默认；对没做平板侧解锁的用户，行为与 pen 完全一致）
+#   pen    只认笔接口（老行为）
+#   touch  只认触摸+笔接口
+INPUT_MODES = ("auto", "pen", "touch")
+INPUT_MODE_TITLES = (("auto", "自动（两种都认）"), ("pen", "仅笔（标准）"),
+                     ("touch", "触控+笔（已解锁）"))
+
+
+def input_mode_title(mode):
+    for v, t in INPUT_MODE_TITLES:
+        if v == mode:
+            return t
+    return INPUT_MODE_TITLES[0][1]
+
+
+def match_usages(mode):
+    """该模式下要匹配的 digitizer usage 列表。"""
+    if mode == "pen":
+        return (PEN_USAGE,)
+    if mode == "touch":
+        return (TOUCH_USAGE,)
+    return (PEN_USAGE, TOUCH_USAGE)
 
 cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
 iokit = ctypes.CDLL(ctypes.util.find_library("IOKit"))
@@ -141,8 +167,11 @@ def cfnum(v):
     return cf.CFNumberCreate(None, SINT32, ctypes.byref(i))
 
 
-def make_match():
-    """匹配表: VID 白名单 × ProductID × 笔接口 usage, 三条件同时成立。
+def make_match(mode="pen"):
+    """匹配表: VID 白名单 × ProductID × digitizer interface usage。
+
+    mode 决定 usage 认哪几个（见 INPUT_MODES）：pen=0x02(老行为) / touch=0x04 /
+    auto=两个都认。
 
     三个条件缺一不可：
       · 写死 0x2717 -> 平板开 USB 调试后身份变 0x18D1, 命中 0 个设备
@@ -155,12 +184,13 @@ def make_match():
     """
     dicts = []
     for vid in TABLET_VIDS:
-        items = [(b"VendorID", vid), (b"ProductID", PRODUCT),
-                 (b"PrimaryUsagePage", PEN_USAGE_PAGE), (b"PrimaryUsage", PEN_USAGE)]
-        n = len(items)
-        keys = (ctypes.c_void_p * n)(*[cfstr(k) for k, _v in items])
-        vals = (ctypes.c_void_p * n)(*[cfnum(v) for _k, v in items])
-        dicts.append(cf.CFDictionaryCreate(None, keys, vals, n, CF_KB(), CF_VB()))
+        for usage in match_usages(mode):
+            items = [(b"VendorID", vid), (b"ProductID", PRODUCT),
+                     (b"PrimaryUsagePage", PEN_USAGE_PAGE), (b"PrimaryUsage", usage)]
+            n = len(items)
+            keys = (ctypes.c_void_p * n)(*[cfstr(k) for k, _v in items])
+            vals = (ctypes.c_void_p * n)(*[cfnum(v) for _k, v in items])
+            dicts.append(cf.CFDictionaryCreate(None, keys, vals, n, CF_KB(), CF_VB()))
     a = (ctypes.c_void_p * len(dicts))(*dicts)
     arr = cf.CFArrayCreate(None, a, len(dicts), CF_AB())
     for d in dicts:
@@ -605,6 +635,7 @@ class Bridge(object):
         self.nrc = 0           # 右键次数
         self.last_drag = 0.0
         self.takeover = takeover
+        self.src_touch = False     # 当前这串事件来自触摸屏接口（见 post(): 必须显式带坐标）
         self.drag_pen = drag_pen
         self.scroll_flip = scroll_flip
         self.bind = dict(DEFAULT_BINDS)     # 手势 -> 动作 (表见文件顶部 BIND_GESTURES)
@@ -712,7 +743,9 @@ class Bridge(object):
         return (rx + (px - ax), ry + (py - ay))
 
     def post(self, kind, use_pen=None, at=None):
-        pen = self.takeover if use_pen is None else use_pen
+        # 触摸和"接管了绝对坐标的笔"一样: 光标是我们自己带过去的, 发事件必须显式带坐标 ——
+        # 「跟随光标」模式下若去读 CGEventGetLocation, 读到的可能是"瞬移"生效前的旧位置。
+        pen = (self.takeover or self.src_touch) if use_pen is None else use_pen
         if at is not None:                 # 显式给坐标 (拖拽走笔尖位移, 见 drag_pos)
             px, py = float(at[0]), float(at[1])
         elif pen:
@@ -875,17 +908,21 @@ class Bridge(object):
         self.dev_max = 0.0
         self.last_pen_y = None
         self.pend = 0.0
-        p = cg.CGEventGetLocation(cg.CGEventCreate(None))
-        self.tap_pos = (p.x, p.y)   # 落点取按下瞬间的光标, 免得抬手时的微小漂移把点击带偏
-        # 拖拽的两个基准 (见 drag_pos): 笔尖按下时的位置 + 这次拖拽的参考点。
-        # 接管了绝对坐标的屏上, 光标本来就跟着笔走 -> 参考点直接取笔尖; 否则取光标
-        # (和「轻点」的落点保持一致: 笔在这块屏上干活, 起点是你把光标停住的地方)。
         self.drag_pen0 = self.pen_screen()
-        self.drag_root = self.drag_pen0 if self.takeover else self.tap_pos
+        if self.src_touch:
+            # ★触摸: 光标是我们自己"瞬移"过去的, 而 CGEventGetLocation 在它生效前读到的
+            #   还是**旧位置** —— 于是点击落在旧位置、光标再弹回去（2026-10-14 实测现象）。
+            #   直接用手里的触摸坐标（就是刚落到的那点）。
+            self.tap_pos = self.drag_pen0
+        else:
+            p = cg.CGEventGetLocation(cg.CGEventCreate(None))
+            self.tap_pos = (p.x, p.y)   # 落点取按下瞬间的光标, 免得抬手时的微小漂移把点击带偏
+        self.drag_root = self.drag_pen0 if (self.takeover or self.src_touch) else self.tap_pos
         if self.debug:
-            qx, qy = self.pen_screen()
-            self.dbg("笔尖按下: 光标@%.0f,%.0f | 笔尖->屏 %.0f,%.0f | 差 %.0f,%.0f"
-                     % (p.x, p.y, qx, qy, p.x - qx, p.y - qy))
+            self.dbg("按下: 落点@%.0f,%.0f | 笔尖/手指->屏 %.0f,%.0f | 差 %.0f,%.0f"
+                     % (self.tap_pos[0], self.tap_pos[1],
+                        self.drag_pen0[0], self.drag_pen0[1],
+                        self.tap_pos[0] - self.drag_pen0[0], self.tap_pos[1] - self.drag_pen0[1]))
 
     def release(self):
         """笔尖离开屏幕 —— 抬手这一刻把「停住不动 / 轻点」也一起判掉"""

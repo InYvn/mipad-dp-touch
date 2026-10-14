@@ -47,7 +47,7 @@ import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "1.1"            # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "1.2"            # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
@@ -80,6 +80,10 @@ DEFAULTS = {
     # 显示缩放 (HiDPI): 允许管没实测验证过的屏 / 上一次切换前的档位 (一键退回用)
     "display_allow_unknown": False,
     "display_saved": None,
+    # 输入模式: auto(两种接口都认, 默认) | pen(只认笔接口, 老行为) | touch(只认触摸+笔接口)
+    #   「Mac 触控解锁」是在平板侧跑的脚本, 见仓库 tablet/mac-touch.sh —— 没跑过的用户
+    #   平板上只会出现笔接口, auto 与 pen 对他们完全等价。
+    "input_mode": "auto",
     # 首启引导: 权限不齐时自动打开设置窗口 —— 只做一次(开机自启每次登录都弹会烦)
     "onboarded": False,
     # 检查更新: 启动后静默查一次 + 之后每天一次。只有这一处会联网。
@@ -372,21 +376,62 @@ class DPApp(NSObject):
                 _p("=== 设置窗口: %s ===" % _tag)
                 self.win.refresh(_st_, force=True)
                 UI.dump_layout(self.win.win.contentView())
-                _probs = UI.check_layout(self.win.win.contentView())
+                _probs = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
                 _probs += UI.check_layout(self.win.adv.win.contentView(), UI.AW, UI.AH)
                 _p("布局检查: %s" % ("全部通过" if not _probs else "%d 处问题" % len(_probs)))
+                _p("  窗口高度: 布局算出 %g / 窗口实际 %s | 判定 done=%s running=%s"
+                   % (self.win._H, self.win.win.contentView().frame(),
+                      self.win._laid_perm_done,
+                      (self.win._last_st or {}).get("running")))
                 for _pr in _probs:
                     _p("  !! %s" % _pr)
                 _p("头部状态行: %r" % self.win.c["conn"].stringValue())
-                _p("计数行:     %r" % self.win.c["counters"].stringValue())
+                if "counters" in self.win.c:
+                    _p("计数行:     %r" % self.win.c["counters"].stringValue())
+                else:
+                    _p("计数行:     (默认收起, 点右上「详情」展开)")
                 _p("权限摘要:   %r" % self.win.c["perm_sum"].stringValue())
-                _p("步骤1 按钮: %r enabled=%s" % (self.win.c["p_ax_btn"].title(),
-                                                  bool(self.win.c["p_ax_btn"].isEnabled())))
-                _p("步骤2 按钮: %r enabled=%s" % (self.win.c["p_input_btn"].title(),
-                                                  bool(self.win.c["p_input_btn"].isEnabled())))
-                _p("重启提示:   %r visible=%s" % (self.win.c["hint"].stringValue(),
-                                                  bool(self.win.c["relaunch"].isHidden()
-                                                       is False)))
+                if "p_ax_btn" in self.win.c:      # 分步控件只在权限没齐时存在
+                    _p("步骤1 按钮: %r enabled=%s" % (self.win.c["p_ax_btn"].title(),
+                                                      bool(self.win.c["p_ax_btn"].isEnabled())))
+                    _p("步骤2 按钮: %r enabled=%s" % (self.win.c["p_input_btn"].title(),
+                                                      bool(self.win.c["p_input_btn"].isEnabled())))
+                    _p("重启提示:   %r visible=%s" % (self.win.c["hint"].stringValue(),
+                                                      bool(self.win.c.get("relaunch") is not None
+                                                           and not self.win.c["relaunch"].isHidden())))
+            # 「详情」展开后的排版也过一遍: 用户真会点它, 卡片会变高, 得确认不越界
+            _p("=== 「详情」展开后的排版 ===")
+            self.win._details = True
+            self.win._relayout()
+            self.win.refresh(_fake_st(True, True, 0, _dev), force=True)
+            _probs = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+            _p("  展开后布局检查: %s" % ("全部通过" if not _probs else "%d 处问题" % len(_probs)))
+            for _pr in _probs:
+                _p("  !! %s" % _pr)
+            _p("  计数行: %r" % (self.win.c["counters"].stringValue()
+                                 if "counters" in self.win.c else "(没有计数行!)"))
+            self.win._details = False
+            self.win._relayout()
+            _p("=== 增强模式开关（默认 auto = 两种数据格式都认）===")
+            self.win.page = "gestures"          # 开关在「手势映射」页
+            self.win._relayout(animate=False)
+            _keep_mode = self.cfg.get("input_mode")
+            for _m in ("auto", "pen"):
+                self.cfg["input_mode"] = _m
+                self.win.refresh(_fake_st(True, True, 0, _dev), force=True)
+                _hint = self.win.c.get("enhanced_hint")
+                _p("  input_mode=%-4s -> 开关=%s  说明=%r"
+                   % (_m, "开" if self.win.c["enhanced"].state() else "关",
+                      _hint.stringValue() if _hint is not None
+                      else self.win._enhanced_hint(self)))
+            self.cfg["input_mode"] = _keep_mode
+            # (下面几段都要读「手势映射」页的下拉, 保持在这一页)
+            _probs = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+            _p("  两种状态下布局检查: %s"
+               % ("全部通过" if not _probs else "%d 处问题" % len(_probs)))
+            for _pr in _probs:
+                _p("  !! %s" % _pr)
+
             _p("=== 按键绑定表 (唯一出处 hid_bridge.BIND_GESTURES) ===")
             for _g, _t, _opts, _d in HB.BIND_GESTURES:
                 _p("  %-6s 默认=%-8s 可绑: %s"
@@ -420,10 +465,8 @@ class DPApp(NSObject):
                 _p("  Bridge 实际生效: %s" % (self.engine.b.bind,))
                 _p("  滚动方向可用  : %s (没有手势绑滚动 -> 应为 False)"
                    % bool(self.win.c["nat"].isEnabled()))
-                _p("  行尾说明      : 快速滑动=%r 停住再滑=%r 停住不动=%r"
-                   % (self.win.c["bind_swipe_hint"].stringValue(),
-                      self.win.c["bind_hold_swipe_hint"].stringValue(),
-                      self.win.c["bind_hold_hint"].stringValue()))
+                _p("  滚动禁用提示  : %r (没有手势绑滚动时给悬停提示)"
+                   % (self.win.c["nat"].toolTip() or ""))
                 self.reset_binds()
                 self.win.refresh(force=True)
                 _ok = (HB.binds_from_cfg(self.cfg) == dict(HB.DEFAULT_BINDS)
@@ -550,12 +593,34 @@ class DPApp(NSObject):
                 if "（" in _t or "(" in _t:
                     _bad.append("%s=%s" % (_k, _t))
             _p("  " + ("；".join(sorted(_bad)) if _bad else "一处都没有"))
+            self.win.page = "overview"
+            self.win._relayout(animate=False)      # 收尾: 回到默认页
             if _sw == "exit" or _sw == "show" or _sw.startswith("shot"):
                 if _sw != "exit":
                     # 真把窗口显示出来一次 (证明"界面能弹出来"), 读到状态就立刻收起
                     self.win.show()
                     _p("显示自检: isVisible=%s frame=%s"
                        % (bool(self.win.win.isVisible()), self.win.win.frame()))
+                    # 出图用: 想拍「权限已完成」那一版就带上 DPTOUCH_SHOT_DONE=1。
+                    # 必须放在 show() 之后 —— show() 会按引擎真实状态刷一遍, 先喂会被它覆盖。
+                    if os.environ.get("DPTOUCH_SHOT_DONE"):
+                        try:
+                            _fake = _fake_st(True, True, 0, _dev)
+                            # 连引擎的状态一起钉住: 否则每次刷新的递归都会去问真实引擎
+                            # (自检里引擎没跑), 假状态刚喂进去就被顶回来。
+                            self.engine.status = lambda: dict(_fake)
+                            self.win._last_st = dict(_fake)     # _layout 的判定读的是这一份
+                            self.win.page = os.environ.get("DPTOUCH_SHOT_PAGE", "overview")
+                            self.win._relayout(animate=False)   # 出图要确定尺寸, 不走动画
+                            # show() 之前那次重排的动画可能还在跑, 收尾时会把我刚钉的尺寸
+                            # 覆盖回去 -> 等它跑完再钉一次, 出图才是确定的那一版。
+                            NSRunLoop.currentRunLoop().runUntilDate_(
+                                NSDate.dateWithTimeIntervalSinceNow_(0.4))
+                            self.win._relayout(animate=False)
+                            _p("出图状态: 已喂「权限就绪」(布局算出 %g, 窗口内容 %s)"
+                               % (self.win._H, self.win.win.contentView().frame()))
+                        except Exception as _e:
+                            _p("出图喂状态失败: %r" % (_e,))
                     if _sw.startswith("shot"):
                         # 把窗口内容离屏渲染成 PNG (给 README/文档配图用)。
                         # 走 AppKit 自己渲染, 所以要不了「屏幕录制」权限, 也不会
@@ -1074,6 +1139,9 @@ class DPApp(NSObject):
         self.mi_status = self._mk(m, "正在启动…")
         self.mi_grant = self._mk(m, "完成授权…", "actOpenWindow:")   # 权限不齐时才露面
         self.mi_enable = self._mk(m, "启用笔桥接", "actToggleEnable:", check=self.enabled)
+        # 增强模式 = 连触摸屏接口一起认（手指触控）。默认开: 没解锁的平板只给笔那一路,
+        # 行为与 1.1 相同; 关掉它 = 只认笔接口（排查用）。
+        self.mi_enhanced = self._mk(m, "增强模式（手指触控）", "actToggleEnhanced:")
         self.mi_counters = self._mk(m, "清零计数", "actClearCounters:")
         self._sep(m)
 
@@ -1111,6 +1179,11 @@ class DPApp(NSObject):
     def _reflect(self):
         """状态 -> 菜单。**只动菜单里真有的项** —— 设置项都在窗口里, 窗口自己刷。"""
         self.mi_enable.setState_(1 if self.enabled else 0)
+        try:
+            self.mi_enhanced.setState_(
+                1 if str(self.cfg.get("input_mode", "auto")) in ("auto", "touch") else 0)
+        except Exception:
+            pass
         st = self.engine.status()
         miss = [s["title"] for s in UI.perm_steps(
             bool(st["ax"]), bool(st["running"]) and st["rc"] == 0) if not s["ok"]]
@@ -1235,6 +1308,29 @@ class DPApp(NSObject):
                                      "actOpenDisplaySettings:"))
 
     # ---------------- 动作 ----------------
+
+    def actToggleEnhanced_(self, sender):
+        """增强模式: 开 = 连触摸屏接口一起认（手指触控）, 关 = 只认笔接口（1.1 行为）。
+
+        默认就是开的 —— 没解锁的平板只输出笔那一路, 开着和 1.1 行为一字不差;
+        解锁过的平板不用动任何开关就能用手指。关掉它主要是排查用（比如只想要笔）。
+        """
+        on = str(self.cfg.get("input_mode", "auto")) not in ("auto", "touch")
+        self.set_input_mode("auto" if on else "pen")
+        try:
+            self.mi_enhanced.setState_(1 if on else 0)
+        except Exception:
+            pass
+        try:
+            st = self.engine.status()
+            log("增强模式 -> %s（当前%s检测到触摸屏接口）"
+                % ("开" if on else "关", "" if st.get("touch_iface") else "未"))
+        except Exception:
+            log("增强模式 -> %s" % ("开" if on else "关"))
+        try:
+            self.win.refresh(force=True)
+        except Exception:
+            pass
 
     def actToggleEnable_(self, sender):
         self.enabled = not self.enabled
@@ -1542,6 +1638,18 @@ class DPApp(NSObject):
             return
         self._apply(rc_hold_ms=ms)
         log("「停住不动」判定 -> %s" % ("关" if not ms else "%.1f s" % (ms / 1000.0)))
+
+    @objc.python_method
+    def set_input_mode(self, mode):
+        """输入模式: auto | pen | touch（认哪种 HID 接口; 改完会重建管理器, 笔会断一下）"""
+        import hid_bridge as HB2
+        mode = str(mode or "")
+        if mode not in HB2.INPUT_MODES:
+            return
+        if mode == self.cfg.get("input_mode"):
+            return
+        self._apply(input_mode=mode)
+        log("输入模式 -> %s" % HB2.input_mode_title(mode))
 
     @objc.python_method
     def relaunch_cmd(self):

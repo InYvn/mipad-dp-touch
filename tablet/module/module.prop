@@ -1,0 +1,6 @@
+id=mipad_dp_touch
+name=Mipad DP Touch 触控解锁
+version=v1.0
+versionCode=10000
+author=InYvn
+description=小米平板 9 Pro Max 当 Mac 外接屏（DP-in）时，让平板把「触摸屏」接口也建给主机。配合 Mac 端 Mipad DP Touch 1.2+ 即可用手指点击 / 拖拽 / 滚动。
