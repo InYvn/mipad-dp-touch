@@ -25,7 +25,7 @@
 
 ## 安装
 
-1. 从 Releases 下载 **`Mipad-DP-Touch-1.1.dmg`**，双击打开。
+1. 从 Releases 下载 **`Mipad-DP-Touch-1.2.dmg`**，双击打开。
 2. 把里面的 **Mipad DP Touch** 拖到旁边的 **「应用程序」** —— 拖过去就装好了。
 3. 从「应用程序」里双击打开。
 
@@ -150,7 +150,7 @@ tccd: Failed to match existing code requirement for subject io.github.inyvn.xiao
 
 [高级选项…]   光标基准屏 · 未验证设备 · 判定时长 · 自动检查更新
 
-Mipad DP Touch Enhanced 1.1 · MIT License
+Mipad DP Touch Enhanced 1.2 · MIT License
 ```
 
 **更新**：有新版时菜单栏会提示，点「下载并安装」即可 —— 程序自己下载、按发版正文里的

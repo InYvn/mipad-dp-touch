@@ -82,6 +82,12 @@ def test_sha_and_notes():
     check("两个校验值 -> 挑 .dmg 那行",
           U.parse_sha256("SHA256  %s  Mipad-DP-Touch-1.2.dmg\nSHA256  %s  mipad-dp-touch-module-v1.0.zip"
                          % (HEX, "0" * 64)), HEX)
+    check("表格写法（表头是 SHA256、值在数据行）-> 取 .dmg 行",
+          U.parse_sha256("| 文件 | 说明 | SHA256 |\n| --- | --- | --- |\n| `X.dmg` | App | `%s` |\n| `mod.zip` | 模块 | `%s` |"
+                         % (HEX, "0" * 64)), HEX)
+    check("表格里模块在前也不误取",
+          U.parse_sha256("| 文件 | SHA256 |\n| `mod.zip` | `%s` |\n| `X.dmg` | `%s` |"
+                         % ("0" * 64, HEX)), HEX)
     check("模块行在前也不误取",
           U.parse_sha256("SHA256  %s  mipad-dp-touch-module-v1.0.zip\nSHA256  %s  Mipad-DP-Touch-1.2.dmg"
                          % ("0" * 64, HEX)), HEX)
