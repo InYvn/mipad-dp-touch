@@ -47,7 +47,7 @@ import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "1.2"            # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "1.2.1"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")

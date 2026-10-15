@@ -1,6 +1,6 @@
 <div align="center">
   <h1 align="center">
-    <img src="docs/logo.png?v=1.2" width="170" alt="Mipad DP Touch Enhanced"/>
+    <img src="docs/logo.png?v=1.2.1" width="170" alt="Mipad DP Touch Enhanced"/>
     <br/>
     Mipad DP Touch <img alt="Enhanced" src="https://img.shields.io/badge/-Enhanced-ff6900?style=flat-square">
   </h1>
@@ -30,7 +30,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/window.png?v=1.2" width="620" alt="Mipad DP Touch 设置窗口"/>
+  <img src="docs/window.png?v=1.2.1" width="620" alt="Mipad DP Touch 设置窗口"/>
   <br/>
   <sub>设置窗口</sub>
 </p>
