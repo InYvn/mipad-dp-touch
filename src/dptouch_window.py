@@ -1081,7 +1081,6 @@ class SettingsWindow(_Pane):
         if lg is not None:
             lg.setFrame_(self._r(19, y, 54, 54))
             v.addSubview_(lg)
-        y += 54 + 15
         # 品牌: 应用名在 logo 右侧（连接状态不再重复显示 —— 底部状态条已有）
         _lb = _label(self.name, self._r(19 + 54 + 12, y + 16, SIDEBAR_W - 85 - 14, 22),
                      size=14, bold=True)
