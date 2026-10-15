@@ -1075,13 +1075,23 @@ class DPApp(NSObject):
         #   手动启动(双击/菜单) -> 弹设置窗口, 用户就是想看界面;
         #   开机自启(登录项) -> 不弹, 每次登录都弹会烦死人。
         # 判定: 登录项由 launchd 拉起时会带 XPC_SERVICE_NAME(服务名); 手动启动时它是 "0"/空。
-        xpc = os.environ.get("XPC_SERVICE_NAME", "")
-        if xpc and xpc != "0":
-            log("开机自启拉起 -> 不弹设置窗口")
+        # 判定: 登录项在登录后几十秒内被拉起, 所以「开机时长 < 3 分钟」= 自启。
+        # (实测: XPC_SERVICE_NAME 每次启动都带 application.<bundle>.<pid>.<pid>, 不能用;
+        #  argv 为空, 也没有 -psn_ 之类可区分。)
+        try:
+            import subprocess as _sp
+            _bt = _sp.run(["/usr/sbin/sysctl", "-n", "kern.boottime"],
+                          capture_output=True, text=True, timeout=3).stdout
+            _up = time.time() - int(_bt.split("sec = ")[1].split(",")[0])
+        except Exception:
+            _up = -1.0
+        if 0 <= _up < 180:
+            log("开机自启拉起 (开机 %.0f 秒) -> 不弹设置窗口" % _up)
             return
         miss = [s["title"] for s in UI.perm_steps(self.engine.ax_trusted(), rc == 0)
                 if not s["ok"]]
-        log("手动启动 -> 打开设置窗口%s" % ("（还缺: %s）" % "、".join(miss) if miss else ""))
+        log("手动启动 (开机 %.0f 秒) -> 打开设置窗口%s"
+            % (_up, ("（还缺: %s）" % "、".join(miss)) if miss else ""))
         self.open_settings()
 
     # ---------------- 菜单 ----------------
