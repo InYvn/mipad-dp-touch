@@ -1075,12 +1075,15 @@ class DPApp(NSObject):
                 if not s["ok"]]
         if not miss:
             return
-        log("权限不齐 (%s) -> 打开设置窗口分步引导" % "、".join(miss))
-        if self.cfg.get("onboarded"):
-            log("(首启引导做过一次了, 不再自动弹窗; 菜单里有「完成授权…」)")
+        # ★按「启动方式」决定弹不弹, 而不是「只弹一次」:
+        #   手动启动(双击/菜单) -> 弹设置窗口, 用户就是想看界面;
+        #   开机自启(登录项) -> 不弹, 每次登录都弹会烦死人。
+        # 判定: 登录项由 launchd 拉起时会带 XPC_SERVICE_NAME(服务名); 手动启动时它是 "0"/空。
+        xpc = os.environ.get("XPC_SERVICE_NAME", "")
+        if xpc and xpc != "0":
+            log("权限不齐 (%s) -> 开机自启拉起, 不弹设置窗口" % "、".join(miss))
             return
-        self.cfg["onboarded"] = True
-        save_cfg(self.cfg)
+        log("权限不齐 (%s) -> 手动启动, 打开设置窗口分步引导" % "、".join(miss))
         self.open_settings()
 
     # ---------------- 菜单 ----------------
