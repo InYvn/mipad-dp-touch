@@ -416,8 +416,6 @@ class _DeviceArt(NSView):
             _hl.closePath()
             _hl.fill()
             NSGraphicsContext.restoreGraphicsState()
-            NSBezierPath.bezierPathWithOvalInRect_(
-                NSMakeRect(-1.5, th / 2.0 - bez - 4.5, 3.0, 3.0)).fill()
             # 屏幕上的涂鸦 (72×52 坐标 -> 左下角起, y 翻转)
             NSGraphicsContext.saveGraphicsState()
             sc = NSAffineTransform.transform()
