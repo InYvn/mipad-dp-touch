@@ -399,10 +399,7 @@ def options(did, panel=PANEL_NATIVE, tol=ASPECT_TOL, aspect_only=True):
     best = {}
     for m in modes(did):
         if not m["hidpi"]:
-            # 只放行「面板原生那一档 1x」—— 真正的 1 点 = 1 像素（界面会非常小）。
-            # 其它 1x 档会被平板二次放大 -> 糊, 不进列表。
-            if (m["w"], m["h"]) != (panel[0], panel[1]):
-                continue
+            continue
         if aspect_only and m["h"] and abs(m["w"] / float(m["h"]) -
                                           panel[0] / float(panel[1])) > tol:
             continue
@@ -417,8 +414,6 @@ def options(did, panel=PANEL_NATIVE, tol=ASPECT_TOL, aspect_only=True):
 
 def _annotate(m, panel=PANEL_NATIVE):
     m["native"] = (m["pw"], m["ph"]) == (panel[0], panel[1])
-    # 原生 1x: 逻辑尺寸就等于面板原生 -> 1 点 = 1 像素, 字最小
-    m["native_1x"] = ((not m.get("hidpi")) and (m["w"], m["h"]) == (panel[0], panel[1]))
     m["upscale"] = round(panel[0] / float(m["pw"]), 2) if m["pw"] else 0
     return m
 
@@ -426,8 +421,7 @@ def _annotate(m, panel=PANEL_NATIVE):
 def label(m, panel=PANEL_NATIVE):
     """菜单里显示的一行"""
     m = _annotate(dict(m), panel)
-    tag = ("原生分辨率 · 界面很小" if m["native_1x"] else
-           "像素 1:1 最锐" if m["native"] else "平板放大 %gx" % m["upscale"])
+    tag = "像素 1:1 最锐" if m["native"] else "平板放大 %gx" % m["upscale"]
     hz = "" if m["hz"] <= 0 else ", %gHz" % m["hz"]
     return "UI %d×%d  (%s%s)" % (m["w"], m["h"], tag, hz)
 
@@ -435,8 +429,7 @@ def label(m, panel=PANEL_NATIVE):
 def label_short(m, panel=PANEL_NATIVE):
     """窗口下拉里的一行: 不带括号(用户嫌括号多), 用 · 分隔"""
     m = _annotate(dict(m), panel)
-    tag = ("原生分辨率 · 界面很小" if m["native_1x"] else
-           "像素 1:1 最锐" if m["native"] else "平板放大 %gx" % m["upscale"])
+    tag = "像素 1:1 最锐" if m["native"] else "平板放大 %gx" % m["upscale"]
     hz = "" if m["hz"] <= 0 else " · %gHz" % m["hz"]
     return "%d×%d · %s%s" % (m["w"], m["h"], tag, hz)
 

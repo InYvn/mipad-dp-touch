@@ -1355,15 +1355,38 @@ class SettingsWindow(_Pane):
         v.addSubview_(self.c["enhanced"])
         v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
         y += ROWG + 16
-        return y
+        # 次要网格: 显示输出 + 快速运行选项
+        hw = (w - 40) / 2.0
+        v.addSubview_(_label("显示输出", self._r(x, y, 200, 16), size=11, bold=True,
+                             color=_color("secondaryLabelColor")))
+        v.addSubview_(_label("快速运行选项", self._r(x + hw + 40, y, 200, 16), size=11, bold=True,
+                             color=_color("secondaryLabelColor")))
+        y += 16 + 10
+        v.addSubview_(_line_view(self._r(x, y, hw, 1)))
+        v.addSubview_(_line_view(self._r(x + hw + 40, y, hw, 1)))
+        y += 12
+        self.c["disp"] = _popup(self._r(x, y, hw - 30, 26), ["正在扫描…"])
+        self.c["disp"].setTarget_(self)
+        self.c["disp"].setAction_("onDisp:")
+        v.addSubview_(self.c["disp"])
+        self.c["disp_hint"] = _label("", self._r(x, y + 30, hw, 16), size=11, dim=True)
+        v.addSubview_(self.c["disp_hint"])
+        for i, (key, title, act) in enumerate((("enable", "笔桥接", "onEnable:"),
+                                               ("autostart", "开机自启", "onAutostart:"),
+                                               ("debug", "详细日志", "onDebug:"))):
+            bx = x + hw + 40
+            by = y + i * 26
+            self.c[key] = _Switch.alloc().initWithFrame_(self._r(bx, by + 3, 36, 22))
+            self.c[key].setBordered_(False)
+            self.c[key].setTitle_("")
+            self.c[key].setTarget_(self)
+            self.c[key].setAction_(act)
+            v.addSubview_(self.c[key])
+            v.addSubview_(_label(title, self._r(bx + 46, by + 5, 160, 18), size=12))
+        return y + 26 * 3
 
     @objc.python_method
     def _page_display(self, v, x, w, y):
-        # 进这一页先同步一次档位缓存(31ms), 免得下拉停在「正在扫描…」等下一次 tick
-        try:
-            self.app._sync_display(force=True)
-        except Exception:
-            pass
         y = self._eyebrow(v, x, y, "DISPLAY SETTINGS / 02")
         y = self._page_head(v, x, w, y, "显示与缩放",
                             "选择屏幕输出模式，保持清晰度与触控坐标一致。",
@@ -1385,13 +1408,12 @@ class SettingsWindow(_Pane):
         v.addSubview_(_label("输出分辨率", self._r(x, y + 16, 200, 18), size=13, bold=True))
         v.addSubview_(_label("推荐保持像素 1:1 以获得最佳锐度", self._r(x, y + 36, 320, 15),
                              size=11, dim=True))
+        self.c["disp_btn"] = _button("重新扫描", self._r(x + w - 108, y + 16, 108, 26),
+                                     self, "onDispRescan:")
+        v.addSubview_(self.c["disp_btn"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60
-        self.c["disp"] = _popup(self._r(x, y + 10, min(380.0, w - 30), 26), ["正在扫描…"])
-        self.c["disp"].setTarget_(self)
-        self.c["disp"].setAction_("onDisp:")
-        v.addSubview_(self.c["disp"])
-        self.c["disp_hint"] = _label("", self._r(x, y + 44, w, 16), size=11, dim=True)
+        self.c["disp_hint"] = _label("", self._r(x, y + 10, w, 16), size=11, dim=True)
         v.addSubview_(self.c["disp_hint"])
         return y + 30
 
@@ -1898,6 +1920,138 @@ class SettingsWindow(_Pane):
         except Exception:
             return "已开启"
 
+    def onDetails_(self, sender):
+        """右上「详情」: 展开/收起计数行。会改卡片高度, 所以整页重排。"""
+        self._details = not self._details
+        self._relayout()
+
+    def onEnhanced_(self, sender):
+        """「增强模式」开关: 开 = 连触摸屏接口一起认（手指可用）, 关 = 只认笔（1.1 行为）。"""
+        self.app.actToggleEnhanced_(None)
+        self.refresh(force=True)
+
+    def onTarget_(self, sender):
+        """高级选项里的「光标基准屏」下拉 —— 值按下标回到 app._tgt_opts 里取。"""
+        if self._syncing:
+            return
+        opts = list(getattr(self.app, "_tgt_opts", []) or [])
+        i = max(0, int(sender.indexOfSelectedItem()))
+        if i < len(opts):
+            self.app.set_target(opts[i][0])
+        self.refresh_all()
+
+    def onDragPen_(self, sender):
+        self.app.actDragPen_(None)
+        self.refresh_all()
+
+    def onUnknown_(self, sender):
+        self.app.actUnknown_(None)
+        self.refresh_all()
+
+    def onBind_(self, sender):
+        """手势下拉: 第 tag 行 (BIND_ROWS 的顺序) 选了第 index 个动作。"""
+        if self._syncing:
+            return
+        i = max(0, int(sender.tag()))
+        if i >= len(BIND_ROWS):
+            return
+        g, _t, opts, _d = BIND_ROWS[i]
+        self.app.set_bind(g, opts[max(0, int(sender.indexOfSelectedItem()))])
+        self.refresh_all()
+
+    def onResetBinds_(self, sender):
+        self.app.reset_binds()
+        self.refresh_all()
+
+    def onAdvanced_(self, sender):
+        self.adv.show()
+        self.refresh_all()
+
+    def onHoldMs_(self, sender):
+        if self._syncing:
+            return
+        self.app.set_hold_ms(_HOLD_MS[max(0, sender.indexOfSelectedItem())])
+        self.refresh_all()
+
+    def onRcHold_(self, sender):
+        if self._syncing:
+            return
+        self.app.set_rc_hold(_RC_HOLD[max(0, sender.indexOfSelectedItem())])
+        self.refresh_all()
+
+    def onDispAllow_(self, sender):
+        self.app.actDispAllow_(None)
+        self.refresh_all()
+
+    def onUpdateAuto_(self, sender):
+        self.app.actUpdateAuto_(None)
+        self.refresh_all()
+
+    def onCheckUpdate_(self, sender):
+        """手动查一次新版本。查到/查不到/查不动都由 app 那边弹窗说明。"""
+        self.app.actCheckUpdate_(None)
+
+    def onDebug_(self, sender):
+        self.app.actDebugLog_(None)
+        self.refresh(force=True)
+
+    def onAutostart_(self, sender):
+        self.app.actAutostart_(None)
+        self.refresh(force=True)
+
+    def onNat_(self, sender):
+        if self._syncing:
+            return
+        self.app.set_natural(NAT_LABELS[max(0, sender.indexOfSelectedItem())][0])
+        self.refresh(force=True)
+
+    def onGain_(self, sender):
+        if self._syncing:
+            return
+        from dptouch_engine import GAINS
+        i = max(0, sender.indexOfSelectedItem())
+        self.app.set_gain(GAINS[min(i, len(GAINS) - 1)][0])
+        self.refresh(force=True)
+
+    def onDisp_(self, sender):
+        if self._syncing:
+            return
+        self.app.apply_display_index(max(0, sender.indexOfSelectedItem()))
+        self.refresh(force=True)
+
+    def onDispRescan_(self, sender):
+        self.app.actDisplayRescan_(None)
+        self.refresh(force=True)
+
+    def onLog_(self, sender):
+        self.app.actOpenLog_(None)
+
+    def onDiag_(self, sender):
+        self.app.actDiagnostics_(None)
+
+
+# ---------------------------------------------------------------- 高级选项
+
+class AdvancedWindow(_Pane):
+    """高级选项 —— 不常用的那几项都搬这儿, 主窗口只留常用开关。
+
+    为什么是独立小窗而不是折叠块: 主窗口的 frame 是手算的 (见模块头), 折叠会让整页
+    重排; 而且「高级」本来就该离常用开关远一点, 免得两边互相干扰。
+
+    状态不在这里另存一份: 控件全指向 SettingsWindow 的那几个动作, 读一律读 app.cfg。
+    """
+
+    def initWithOwner_(self, owner):
+        self = objc.super(AdvancedWindow, self).init()
+        if self is None:
+            return None
+        self.owner = owner
+        self.app = owner.app
+        self._W, self._H = AW, AH
+        self.c = {}
+        self._syncing = False
+        self._build()
+        return self
 
     @objc.python_method
     def _build(self):
@@ -1916,7 +2070,7 @@ class SettingsWindow(_Pane):
         self._card(v, y, h)
         for i, (key, _cfg, title, act) in enumerate(ADV_SWITCHES):
             self.c[key] = _button(title, self._r(cx, y + PAD + i * CB_H + 3, cw, 22),
-                                  self.app, act, switch=True)
+                                  self.owner, act, switch=True)
             v.addSubview_(self.c[key])
         ry = y + PAD + len(ADV_SWITCHES) * CB_H
         for key, _cfg, title, act in ADV_POPUPS:
@@ -1929,7 +2083,7 @@ class SettingsWindow(_Pane):
             else:
                 titles, wide = list(RC_TITLES), 130
             pop = _popup(self._r(cx + 104, ry + 1, wide, 26), titles)
-            pop.setTarget_(self.app)
+            pop.setTarget_(self.owner)
             pop.setAction_(act)
             v.addSubview_(pop)
             self.c[key] = pop
@@ -1938,11 +2092,11 @@ class SettingsWindow(_Pane):
             ry += ROW_H
         by = ry + 6            # ry 已经在 popups 循环里走到它们下面了, 别再乘一遍
         self.c["check_upd"] = _button("立即检查更新", self._r(cx, by, 128, 24),
-                                      self.app, "onCheckUpdate:")
+                                      self.owner, "onCheckUpdate:")
         v.addSubview_(self.c["check_upd"])
         # 「诊断…」从主窗口搬过来: 排查用的东西, 平时用不上
         self.c["diag_btn"] = _button("诊断…", self._r(cx + 136, by, 88, 24),
-                                     self.app, "onDiag:", small=True)
+                                     self.owner, "onDiag:", small=True)
         v.addSubview_(self.c["diag_btn"])
         self.c["hint"] = _label("改完立即生效", self._r(cx + 232, by + 5, cw - 232, 16),
                                 size=11, dim=True)
@@ -1958,13 +2112,13 @@ class SettingsWindow(_Pane):
             return False
         self.refresh(force=True)
         try:
-            self.app._activate()          # 菜单栏 App 的窗口要自己抢一次焦点, 否则下拉是灰的
+            self.owner._activate()          # 菜单栏 App 的窗口要自己抢一次焦点, 否则下拉是灰的
         except Exception:
             pass
         self.win.makeKeyAndOrderFront_(None)
         self.win.orderFrontRegardless()
         try:                                # 贴在主窗口右边; 主窗口不在屏幕上就居中
-            mf = self.app.win.frame()
+            mf = self.owner.win.frame()
             if mf.size.width > 1 and mf.size.height > 1:
                 self.win.setFrameOrigin_((mf.origin.x + mf.size.width + 12,
                                           mf.origin.y + mf.size.height - AH))

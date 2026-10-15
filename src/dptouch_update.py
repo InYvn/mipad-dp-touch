@@ -94,16 +94,7 @@ def parse_sha256(text):
         if ".dmg" in m.group(0).lower():
             return m.group(1).lower()
     m = re.search(r"SHA256[^\n]*?([0-9a-fA-F]{64})", text)
-    if m:
-        return m.group(1).lower()
-    # 兜底: 正文里根本没写 SHA256 字样(例如写成了 markdown 表格, 表头是 SHA256、
-    # 值在数据行) —— 那就找带 .dmg 的那一行里的 64 位串
-    for line in text.splitlines():
-        if ".dmg" in line.lower():
-            m = re.search(r"([0-9a-fA-F]{64})", line)
-            if m:
-                return m.group(1).lower()
-    return None
+    return m.group(1).lower() if m else None
 
 
 def pick_asset(rel):

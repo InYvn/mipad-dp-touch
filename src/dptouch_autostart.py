@@ -61,9 +61,8 @@ def is_frozen():
 
 
 def app_arguments():
-    """登录时要拉起的命令行。**末尾一定带 --login**。
+    """登录时要拉起的命令行。
 
-    App 靠它区分「登录自启」和「用户手动打开」: 前者不弹设置窗口, 后者弹。
     打包后 = bundle 里的可执行文件本身; 开发态 = 解释器 + 脚本路径 (只用于测试)。
     """
     if is_frozen():
@@ -71,11 +70,11 @@ def app_arguments():
             from Foundation import NSBundle
             exe = NSBundle.mainBundle().executablePath()
             if exe:
-                return [exe, "--login"]
+                return [exe]
         except Exception:
             pass
-        return [sys.executable, "--login"]
-    return [sys.executable, os.path.abspath(sys.argv[0]), "--login"]
+        return [sys.executable]
+    return [sys.executable, os.path.abspath(sys.argv[0])]
 
 
 def agent_plist_path(home=None):
