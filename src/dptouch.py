@@ -1071,19 +1071,17 @@ class DPApp(NSObject):
         if os.environ.get("DPTOUCH_NO_GUIDE"):
             log("已跳过权限引导 (DPTOUCH_NO_GUIDE)")
             return
-        miss = [s["title"] for s in UI.perm_steps(self.engine.ax_trusted(), rc == 0)
-                if not s["ok"]]
-        if not miss:
-            return
-        # ★按「启动方式」决定弹不弹, 而不是「只弹一次」:
+        # ★按「启动方式」决定弹不弹（与权限是否齐全无关）:
         #   手动启动(双击/菜单) -> 弹设置窗口, 用户就是想看界面;
         #   开机自启(登录项) -> 不弹, 每次登录都弹会烦死人。
         # 判定: 登录项由 launchd 拉起时会带 XPC_SERVICE_NAME(服务名); 手动启动时它是 "0"/空。
         xpc = os.environ.get("XPC_SERVICE_NAME", "")
         if xpc and xpc != "0":
-            log("权限不齐 (%s) -> 开机自启拉起, 不弹设置窗口" % "、".join(miss))
+            log("开机自启拉起 -> 不弹设置窗口")
             return
-        log("权限不齐 (%s) -> 手动启动, 打开设置窗口分步引导" % "、".join(miss))
+        miss = [s["title"] for s in UI.perm_steps(self.engine.ax_trusted(), rc == 0)
+                if not s["ok"]]
+        log("手动启动 -> 打开设置窗口%s" % ("（还缺: %s）" % "、".join(miss) if miss else ""))
         self.open_settings()
 
     # ---------------- 菜单 ----------------
