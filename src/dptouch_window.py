@@ -416,8 +416,6 @@ class _DeviceArt(NSView):
             _hl.closePath()
             _hl.fill()
             NSGraphicsContext.restoreGraphicsState()
-            # 前摄小点
-            rgba(0.58, 0.60, 0.63, 0.85 * alpha).set()                  # #9499a0 前摄点
             NSBezierPath.bezierPathWithOvalInRect_(
                 NSMakeRect(-1.5, th / 2.0 - bez - 4.5, 3.0, 3.0)).fill()
             # 屏幕上的涂鸦 (72×52 坐标 -> 左下角起, y 翻转)
@@ -1221,11 +1219,11 @@ class SettingsWindow(_Pane):
                                    bold=True, color=(_color("systemGreenColor") if done
                                                      else _color("systemOrangeColor")))
         v.addSubview_(self.c["perm_ok"])
-        self.c["perm_sum"] = _label("", self._r(x + 22, y, 400, 18), size=12)
+        self.c["perm_sum"] = _label("", self._r(x + 22, y, 400, 20), size=13)
         v.addSubview_(self.c["perm_sum"])
         y += 18 + 10
         v.addSubview_(_label("小米平板 9 Pro Max 作为触控输入设备接入这台 Mac。手势映射与显示配置"
-                             "都在左侧页面里。", self._r(x, y, w - 20, 40), size=12,
+                             "都在左侧页面里。", self._r(x, y, w - 20, 40), size=13,
                              color=_color("secondaryLabelColor")))
         y += 40 + 16
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
@@ -1235,7 +1233,7 @@ class SettingsWindow(_Pane):
             self._perm_block(v, x, y, w)
             y += PERM_H_FULL + 18
         # 当前手势配置
-        v.addSubview_(_label("当前手势配置", self._r(x, y, 300, 16), size=11, bold=True,
+        v.addSubview_(_label("当前手势配置", self._r(x, y, 300, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
         y += 16 + 10
         binds = HB.binds_from_cfg(self.app.cfg)
@@ -1244,17 +1242,17 @@ class SettingsWindow(_Pane):
             row = i // 2
             bx = x + col * (w / 2.0)
             by = y + row * 46
-            v.addSubview_(_label(title, self._r(bx, by, 120, 16), size=12, dim=True))
+            v.addSubview_(_label(title, self._r(bx, by, 120, 18), size=14, dim=True))
             self.c["sum_%s" % g] = _label(HB.action_title(g, binds.get(g)),
-                                          self._r(bx + 130, by, 200, 16), size=12, bold=True)
+                                          self._r(bx + 130, by, 200, 18), size=14, bold=True)
             v.addSubview_(self.c["sum_%s" % g])
         y += 3 * 46 + 6
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
         y += 18
         # 显示器 / 手指触控 两栏
-        v.addSubview_(_label("显示器", self._r(x, y, 200, 16), size=11, bold=True,
+        v.addSubview_(_label("显示器", self._r(x, y, 200, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
-        v.addSubview_(_label("手指触控", self._r(x + w / 2.0, y, 200, 16), size=11, bold=True,
+        v.addSubview_(_label("手指触控", self._r(x + w / 2.0, y, 200, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
         y += 16 + 8
         self.c["ov_disp"] = _label("", self._r(x, y, w / 2.0 - 30, 18), size=13, bold=True)
