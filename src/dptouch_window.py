@@ -143,7 +143,7 @@ from hid_bridge import RC_HOLD_MS_OPTS as _RC_HOLD   # 「停住不动」判定�
 # 不跟随系统强调色 (golden-gate: 品牌色可以显式 opt-out, 其余用语义色)。
 W, H = 980.0, 700.0                         # 主窗口内容尺寸(固定; 不设 Resizable)
 SIDEBAR_W = 220.0                           # 侧边栏宽
-TOPBAR_H = 46.0                             # 顶部工具行 (系统标题栏下面那一行)
+TOPBAR_H = 0.0                              # 顶部工具行已取消（名称/连接状态/图标都并进侧栏）
 STRIP_H = 38.0                              # 底部状态条
 NAV_H = 39.0                                # 侧栏导航项高度
 NAV_ICON = 17.0                             # 导航图标边长
@@ -1033,33 +1033,7 @@ class SettingsWindow(_Pane):
         done = self._perms_done()
         self._laid_perm_done = done
 
-        # ---- 顶部工具行: 左=应用名 + 连接状态; 右=三个图标按钮 ----
         y = 0.0
-        v.addSubview_(_label(self.name, self._r(M, y + 13, 320, 20), size=15, bold=True))
-        self.c["conn_dot"] = _label("●", self._r(M + 1, y + 35, 14, 16), size=11,
-                                    color=_color("tertiaryLabelColor"))
-        v.addSubview_(self.c["conn_dot"])
-        self.c["conn"] = _label("正在检测…", self._r(M + 17, y + 34, W - M - 200, 16), size=11,
-                                color=_color("secondaryLabelColor"))
-        v.addSubview_(self.c["conn"])
-        for i, (icon, tip, act) in enumerate((("moon", "切换浅色 / 深色外观", "onTheme:"),
-                                              ("arrow.clockwise", "重新检测设备", "onRecheck:"),
-                                              ("info.circle", "设备详情", "onDetails:"))):
-            btn = _IconButton.alloc().initWithFrame_(self._r(W - M - 32 - i * 36, y + 8, 32, 30))
-            btn.setBordered_(False)
-            btn.setTitle_("")
-            btn.setToolTip_(tip)
-            btn.setTarget_(self)
-            btn.setAction_(act)
-            ic = _icon(icon, 16.0)
-            if ic is not None:
-                ic.setFrame_(NSMakeRect(8, 7, 16, 16))
-                btn.addSubview_(ic)
-            v.addSubview_(btn)
-            self.c["tb_%s" % icon.replace(".", "_")] = btn
-        y += TOPBAR_H
-        v.addSubview_(_line_view(self._r(0, y, W, 1)))
-        y += 1
 
         # ---- 主体: 侧栏 + 内容区 ----
         body_h = H - TOPBAR_H - 1 - STRIP_H
@@ -1108,8 +1082,17 @@ class SettingsWindow(_Pane):
             lg.setFrame_(self._r(19, y, 54, 54))
             v.addSubview_(lg)
         y += 54 + 15
-        v.addSubview_(_label("工作区", self._r(23, y, 140, 13), size=10, dim=True))
-        y += 13 + 10
+        # 品牌: 应用名 + 连接状态（原先在顶栏, 顶栏取消后并进侧栏）
+        v.addSubview_(_label(self.name, self._r(19, y, SIDEBAR_W - 38, 20), size=15, bold=True))
+        y += 20
+        self.c["conn_dot"] = _label("●", self._r(20, y + 1, 14, 16), size=11,
+                                    color=_color("tertiaryLabelColor"))
+        v.addSubview_(self.c["conn_dot"])
+        self.c["conn"] = _label("正在检测…", self._r(36, y, SIDEBAR_W - 57, 16), size=11,
+                                color=_color("secondaryLabelColor"))
+        v.addSubview_(self.c["conn"])
+        y += 18 + 6
+        y += 4
         for key, icon, title in PAGES:
             sel = (key == self.page)
             btn = _NavButton.alloc().initWithFrame_(self._r(11, y, SIDEBAR_W - 22, NAV_H))
@@ -1133,9 +1116,9 @@ class SettingsWindow(_Pane):
             y += NAV_H + 2
 
         # ---- 设备区 (贴底): 名称 + 三行实时小项 ----
-        mini = 3 * 20.0
+        mini = 3 * 18.0
         art_h = 126.0                      # 设备图: 够放下旋转后的平板外接矩形 (自检会断言)
-        area = 16 + 6 + art_h + 6 + 18 + 4 + 16 + 12 + 1 + 13 + mini + 12
+        area = 16 + 6 + art_h + 6 + 18 + 4 + 16 + 12 + 1 + 13 + mini + 12 + 38  # +38: 给底部三图标腾位置
         dy = y0 + h - 30 - area
         v.addSubview_(_label("当前设备", self._r(21, dy, 86, 14), size=11, bold=True,
                              color=_color("secondaryLabelColor")))
@@ -1154,15 +1137,33 @@ class SettingsWindow(_Pane):
         dy += 18 + 4
         self.c["dev_meta"] = _label("", self._r(21, dy, SIDEBAR_W - 42, 16), size=11, dim=True)
         v.addSubview_(self.c["dev_meta"])
-        dy += 16 + 12
+        dy += 16 + 8
         v.addSubview_(_line_view(self._r(21, dy, SIDEBAR_W - 42, 1)))
         dy += 13
         for i, (lab, key) in enumerate((("显示连接", "mini_disp"), ("触控接口", "mini_touch"),
                                         ("输入事件", "mini_events"))):
-            v.addSubview_(_label(lab, self._r(21, dy + i * 20, 52, 16), size=11, dim=True))
-            self.c[key] = _label("", self._r(SIDEBAR_W - 21 - 120, dy + i * 20, 120, 16),
+            v.addSubview_(_label(lab, self._r(21, dy + i * 18, 52, 16), size=11, dim=True))
+            self.c[key] = _label("", self._r(SIDEBAR_W - 21 - 120, dy + i * 18, 120, 16),
                                  size=11, right=True)
             v.addSubview_(self.c[key])
+
+        # ---- 三个图标（原先在顶栏右侧, 顶栏取消后挪到侧栏底部）----
+        icy = y0 + h - 30 - 36
+        for i, (icon, tip, act) in enumerate((("moon", "切换浅色 / 深色外观", "onTheme:"),
+                                              ("arrow.clockwise", "重新检测设备", "onRecheck:"),
+                                              ("info.circle", "设备详情", "onDetails:"))):
+            btn = _IconButton.alloc().initWithFrame_(self._r(19 + i * 36, icy, 32, 30))
+            btn.setBordered_(False)
+            btn.setTitle_("")
+            btn.setToolTip_(tip)
+            btn.setTarget_(self)
+            btn.setAction_(act)
+            ic = _icon(icon, 16.0)
+            if ic is not None:
+                ic.setFrame_(NSMakeRect(8, 7, 16, 16))
+                btn.addSubview_(ic)
+            v.addSubview_(btn)
+            self.c["tb_%s" % icon.replace(".", "_")] = btn
 
         # ---- 侧栏底条 ----
         by = y0 + h - 30
