@@ -1082,16 +1082,10 @@ class SettingsWindow(_Pane):
             lg.setFrame_(self._r(19, y, 54, 54))
             v.addSubview_(lg)
         y += 54 + 15
-        # 品牌: 应用名 + 连接状态（原先在顶栏, 顶栏取消后并进侧栏）
-        v.addSubview_(_label(self.name, self._r(19, y, SIDEBAR_W - 38, 20), size=15, bold=True))
-        y += 20
-        self.c["conn_dot"] = _label("●", self._r(20, y + 1, 14, 16), size=11,
-                                    color=_color("tertiaryLabelColor"))
-        v.addSubview_(self.c["conn_dot"])
-        self.c["conn"] = _label("正在检测…", self._r(36, y, SIDEBAR_W - 57, 16), size=11,
-                                color=_color("secondaryLabelColor"))
-        v.addSubview_(self.c["conn"])
-        y += 18 + 6
+        # 品牌: 应用名在 logo 右侧（连接状态不再重复显示 —— 底部状态条已有）
+        v.addSubview_(_label(self.name, self._r(19 + 54 + 12, y + 16, SIDEBAR_W - 85 - 12, 22),
+                             size=15, bold=True))
+        y += 54 + 15
         y += 4
         for key, icon, title in PAGES:
             sel = (key == self.page)
@@ -1147,24 +1141,6 @@ class SettingsWindow(_Pane):
                                  size=11, right=True)
             v.addSubview_(self.c[key])
 
-        # ---- 三个图标（原先在顶栏右侧, 顶栏取消后挪到侧栏底部）----
-        icy = y0 + h - 30 - 36
-        for i, (icon, tip, act) in enumerate((("moon", "切换浅色 / 深色外观", "onTheme:"),
-                                              ("arrow.clockwise", "重新检测设备", "onRecheck:"),
-                                              ("info.circle", "设备详情", "onDetails:"))):
-            btn = _IconButton.alloc().initWithFrame_(self._r(19 + i * 36, icy, 32, 30))
-            btn.setBordered_(False)
-            btn.setTitle_("")
-            btn.setToolTip_(tip)
-            btn.setTarget_(self)
-            btn.setAction_(act)
-            ic = _icon(icon, 16.0)
-            if ic is not None:
-                ic.setFrame_(NSMakeRect(8, 7, 16, 16))
-                btn.addSubview_(ic)
-            v.addSubview_(btn)
-            self.c["tb_%s" % icon.replace(".", "_")] = btn
-
         # ---- 侧栏底条 ----
         by = y0 + h - 30
         v.addSubview_(_line_view(self._r(0, by, SIDEBAR_W, 1)))
@@ -1209,6 +1185,23 @@ class SettingsWindow(_Pane):
     @objc.python_method
     def _page_overview(self, v, x, w, y):
         y = self._eyebrow(v, x, y, "DEVICE OVERVIEW / 00")
+        # 右上角: 三个快捷按钮（🌙 外观 / ↻ 重新检测 / ⓘ 设备详情）
+        for i, (icon, tip, act) in enumerate((("moon", "切换浅色 / 深色外观", "onTheme:"),
+                                              ("arrow.clockwise", "重新检测设备", "onRecheck:"),
+                                              ("info.circle", "设备详情", "onDetails:"))):
+            btn = _IconButton.alloc().initWithFrame_(
+                self._r(x + w - 32 - i * 36, y - 30, 32, 30))
+            btn.setBordered_(False)
+            btn.setTitle_("")
+            btn.setToolTip_(tip)
+            btn.setTarget_(self)
+            btn.setAction_(act)
+            ic = _icon(icon, 16.0)
+            if ic is not None:
+                ic.setFrame_(NSMakeRect(8, 7, 16, 16))
+                btn.addSubview_(ic)
+            v.addSubview_(btn)
+            self.c["tb_%s" % icon.replace(".", "_")] = btn
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
         v.addSubview_(_label("连接完成，随时开始。" if done else "还差一步就能用。",
@@ -1667,13 +1660,13 @@ class SettingsWindow(_Pane):
         devs = get("devices") or []
         names = "、".join(d[0] for d in devs)
         if names:
-            self.c["conn"].setStringValue_("已连接 · %s" % names)
+            self.c.get("conn") and self.c["conn"].setStringValue_("已连接 · %s" % names)
             self.c["conn_dot"].setTextColor_(_color("systemGreenColor"))
         elif get("running"):
-            self.c["conn"].setStringValue_("已开启 · 等平板上线")
+            self.c.get("conn") and self.c["conn"].setStringValue_("已开启 · 等平板上线")
             self.c["conn_dot"].setTextColor_(_color("systemOrangeColor"))
         else:
-            self.c["conn"].setStringValue_("未运行")
+            self.c.get("conn") and self.c["conn"].setStringValue_("未运行")
             self.c["conn_dot"].setTextColor_(_color("systemRedColor"))
         self._pulse_dot(bool(names))        # 连上了才呼吸; 其它状态保持静止
         if "counters" in self.c:            # 计数行只在右上「详情」展开时存在
