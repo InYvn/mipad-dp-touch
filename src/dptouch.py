@@ -385,7 +385,8 @@ class DPApp(NSObject):
                       (self.win._last_st or {}).get("running")))
                 for _pr in _probs:
                     _p("  !! %s" % _pr)
-                _p("头部状态行: %r" % self.win.c["conn"].stringValue())
+                _p("头部状态行: %r" % (self.win.c["conn"].stringValue()
+                                     if "conn" in self.win.c else "(连接状态已并入底部状态条)"))
                 if "counters" in self.win.c:
                     _p("计数行:     %r" % self.win.c["counters"].stringValue())
                 else:

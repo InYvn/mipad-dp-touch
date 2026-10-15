@@ -1112,7 +1112,7 @@ class SettingsWindow(_Pane):
         # ---- 设备区 (贴底): 名称 + 三行实时小项 ----
         mini = 3 * 18.0
         art_h = 126.0                      # 设备图: 够放下旋转后的平板外接矩形 (自检会断言)
-        area = 16 + 6 + art_h + 6 + 18 + 4 + 16 + 12 + 1 + 13 + mini + 12 + 38  # +38: 给底部三图标腾位置
+        area = 16 + 6 + art_h + 6 + 18 + 4 + 16 + 12 + 1 + 13 + mini + 12
         dy = y0 + h - 30 - area
         v.addSubview_(_label("当前设备", self._r(21, dy, 86, 14), size=11, bold=True,
                              color=_color("secondaryLabelColor")))
@@ -1660,14 +1660,14 @@ class SettingsWindow(_Pane):
         devs = get("devices") or []
         names = "、".join(d[0] for d in devs)
         if names:
-            self.c.get("conn") and self.c["conn"].setStringValue_("已连接 · %s" % names)
-            self.c["conn_dot"].setTextColor_(_color("systemGreenColor"))
+            self.c.get("conn") and self.c.get("conn") and self.c["conn"].setStringValue_("已连接 · %s" % names)
+            self.c.get("conn_dot") and self.c.get("conn_dot") and self.c["conn_dot"].setTextColor_(_color("systemGreenColor"))
         elif get("running"):
-            self.c.get("conn") and self.c["conn"].setStringValue_("已开启 · 等平板上线")
-            self.c["conn_dot"].setTextColor_(_color("systemOrangeColor"))
+            self.c.get("conn") and self.c.get("conn") and self.c["conn"].setStringValue_("已开启 · 等平板上线")
+            self.c.get("conn_dot") and self.c.get("conn_dot") and self.c["conn_dot"].setTextColor_(_color("systemOrangeColor"))
         else:
-            self.c.get("conn") and self.c["conn"].setStringValue_("未运行")
-            self.c["conn_dot"].setTextColor_(_color("systemRedColor"))
+            self.c.get("conn") and self.c.get("conn") and self.c["conn"].setStringValue_("未运行")
+            self.c.get("conn_dot") and self.c.get("conn_dot") and self.c["conn_dot"].setTextColor_(_color("systemRedColor"))
         self._pulse_dot(bool(names))        # 连上了才呼吸; 其它状态保持静止
         if "counters" in self.c:            # 计数行只在右上「详情」展开时存在
             self.c["counters"].setStringValue_(
