@@ -267,6 +267,43 @@ def _dump_menu(menu, depth=0):
 # 菜单栏应用
 # --------------------------------------------------------------------------
 
+def launched_at_login():
+    """这次是不是「登录时自动启动」拉起来的。返回 (bool, 依据)。
+
+    三条判据, 任一成立即算登录启动:
+      1. 命令行带 --login —— LaunchAgent 那条路, plist 的 ProgramArguments 里我们自己加的
+      2. Apple Event 是 kAELaunchIsStartup —— 老式登录项 / 系统某些路径
+      3. 控制台登录时间距今不到 120 秒 —— SMAppService.mainApp 那条路没有参数可用, 只能按时间判
+    判不出来就当手动启动（用户要的行为是「点了就出现」，宁可多弹一次）。
+    """
+    if "--login" in sys.argv[1:]:
+        return True, "命令行带 --login"
+    try:
+        from AppKit import NSAppleEventManager
+        ev = NSAppleEventManager.sharedAppleEventManager().currentAppleEvent()
+        if ev is not None:
+            pd = ev.paramDescriptorForKeyword_(0x2D2D2D2D)      # keyAEPropData = '----'
+            if pd is not None and int(pd.enumCodeValue()) == 0x73747372:   # kAELaunchIsStartup = 'stsr'
+                return True, "Apple Event 说这是登录启动"
+    except Exception:
+        pass
+    try:
+        import datetime
+        out = subprocess.run(["who", "-s"], capture_output=True, text=True, timeout=5).stdout
+        now = datetime.datetime.now()
+        for line in (out or "").splitlines():
+            if " console " in line:
+                t = line.split(" console ", 1)[1].strip()
+                st = time.strptime(t, "%b %d %H:%M")
+                lt = now.replace(month=st.tm_mon, day=st.tm_mday, hour=st.tm_hour,
+                                 minute=st.tm_min, second=0, microsecond=0)
+                if 0 <= (now - lt).total_seconds() < 120:
+                    return True, "控制台登录不到 2 分钟"
+    except Exception:
+        pass
+    return False, ""
+
+
 class DPApp(NSObject):
 
     # ---------------- 生命周期 ----------------
@@ -385,7 +422,22 @@ class DPApp(NSObject):
                       (self.win._last_st or {}).get("running")))
                 for _pr in _probs:
                     _p("  !! %s" % _pr)
-                _p("头部状态行: %r" % self.win.c["conn"].stringValue())
+                # 提示条: 三个图标里「设备详情」只靠提示条给反馈 —— 必须真的可见
+                try:
+                    self.win.onDetails_(None)
+                except Exception as _e:
+                    _p("  !! onDetails_ 抛异常: %r" % (_e,))
+                _tv = self.win.c.get("toast")
+                if _tv is None:
+                    _p("  !! 提示条: 点了「设备详情」却没建出来（c 里 %d 个键，toast 在吗=%s）"
+                       % (len(self.win.c), "toast" in self.win.c))
+                    self.win.toast("自检")
+                    _tv = self.win.c.get("toast")
+                    _p("     直接调 toast(): %s" % ("建出来了" if _tv is not None else "还是没建出来"))
+                if _tv is not None:
+                    _p("  提示条: alpha=%.2f 可见=%s 尺寸=%s"
+                       % (_tv.alphaValue(), _tv.alphaValue() > 0.5, _tv.frame().size))
+                _p("状态条: %r" % self.win.c["strip"].stringValue())
                 if "counters" in self.win.c:
                     _p("计数行:     %r" % self.win.c["counters"].stringValue())
                 else:
@@ -1057,6 +1109,23 @@ class DPApp(NSObject):
         if rc == 0:
             self.engine.log("桥接已开启")
         self._first_run_guide(rc)
+        self._maybe_open_on_launch()
+
+
+    @objc.python_method
+    def _maybe_open_on_launch(self):
+        """手动打开 App -> 主动弹出设置窗口; 登录自启 -> 不弹。
+
+        用户明确要的: "我点它才出现"。登录自启那次弹窗会糊一脸, 尤其是开机后马上要用别的东西时。
+        """
+        if os.environ.get("DPTOUCH_NO_GUIDE") or os.environ.get("DPTOUCH_SELFTEST_WINDOW"):
+            return
+        at_login, why = launched_at_login()
+        if at_login:
+            log("本次是登录自启 (%s) -> 不自动打开设置窗口" % why)
+            return
+        log("手动启动 -> 打开设置窗口")
+        self.open_settings()
 
     @objc.python_method
     def _first_run_guide(self, rc):
@@ -1164,6 +1233,7 @@ class DPApp(NSObject):
 
         self._mk(m, "设置…", "actOpenWindow:", key=",")
         self._mk(m, "打开日志", "actOpenLog:")
+        self._mk(m, "无障碍键盘设置…", "actOpenKeyboardSettings:")
         # 更新只在菜单里占一行: 标题会随进度变成「正在下载更新 42%」
         self.mi_check = self._mk(m, "检查更新…", "actCheckUpdate:")
         self._sep(m)
@@ -1273,7 +1343,8 @@ class DPApp(NSObject):
         if getattr(self, "_menu_open", False) and not force:
             return            # 菜单正显示着: 不许改它 (见 tick_ 的说明)
         self._disp_tick += 1
-        if not force and (self._disp_tick - 1) % 10 != 0:
+        # 3 个 tick 一次(约 3 秒): 原来 10 秒 —— 插拔平板后要等太久才出现在档位表里
+        if not force and (self._disp_tick - 1) % 3 != 0:
             return
         for it in self.mi_disp:
             if it.menu() is self.mg_disp:        # 不在本菜单里就跳过: NSMenu 会抛异常
@@ -1943,6 +2014,21 @@ class DPApp(NSObject):
         a.addButtonWithTitle_("好")
         a.runModal()
 
+    def actOpenKeyboardSettings_(self, sender):
+        """跳到系统设置「无障碍 → 键盘」那一页（只跳转，不代用户点开关）。
+
+        用带锚点的老写法: 面板自己声明了 allowsXAppleSystemPreferencesURLScheme +
+        legacyBundleIdentifier=com.apple.preference.universalaccess，所以这条最稳。
+        （系统那套「无障碍键盘」的开关用程序改不了 —— 偏好域被保护、进程杀不动、
+          面板又是 NSPanel 不跟随隐藏；实测四轮，只剩「跳过去让用户自己点」这条正路。）
+        """
+        url = "x-apple.systempreferences:com.apple.preference.universalaccess?Keyboard"
+        try:
+            subprocess.call(["/usr/bin/open", url])
+            log("已跳转: 无障碍键盘设置")
+        except Exception as e:
+            log("跳转无障碍键盘设置失败: %r" % (e,))
+
     def actOpenLog_(self, sender):
         if not os.path.exists(LOG_PATH):
             log("(日志刚刚创建)")
@@ -1985,6 +2071,44 @@ class DPApp(NSObject):
 def main():
     fanout_output()
     AS.set_logger(log)
+    # 自检: 把系统设置「无障碍」页的 AX 树 dump 出来（用来设计「按名字查找」的路径）
+    if os.environ.get("DPTOUCH_AXTOGGLE"):
+        import time as _t2
+        try:
+            import dptouch_axkb as AXKB
+            log("AXTOGGLE: 开始 | 初始状态 %s" % (AXKB.state(),))
+            ok, msg = AXKB.toggle(verbose=lambda m: log("AXTOGGLE| " + m))
+            log("AXTOGGLE: 第一次 -> ok=%s %s" % (ok, msg))
+            _t2.sleep(2.0)
+            ok2, msg2 = AXKB.toggle(verbose=lambda m: log("AXTOGGLE| " + m))
+            log("AXTOGGLE: 第二次(还原) -> ok=%s %s" % (ok2, msg2))
+            log("AXTOGGLE: 结束状态 %s" % (AXKB.state(),))
+        except Exception:
+            import traceback
+            log("AXTOGGLE 崩了:\n" + traceback.format_exc())
+        return 0
+    if os.environ.get("DPTOUCH_AXDUMP"):
+        import time as _t
+        try:
+            import dptouch_axkb as AXKB
+            log("AXDUMP: 键盘状态 %s | AX 可用=%s" % (AXKB.state(), AXKB.AXUIElementCreateApplication is not None))
+            if os.environ.get("DPTOUCH_AXDUMP") == "nowait":
+                pid, err = AXKB.settings_pid(), ""      # 只看当前窗口，不动它
+                if pid is None:
+                    log("AXDUMP: 系统设置没在运行")
+            else:
+                pid, err = AXKB.open_pane()
+            if pid is None:
+                log("AXDUMP: 打开设置失败 %s" % err)
+            else:
+                _t.sleep(2.0)
+                log("AXDUMP: 设置 pid=%d" % pid)
+                for ln in AXKB.dump(pid):
+                    log("AXDUMP| " + ln)
+        except Exception:
+            import traceback
+            log("AXDUMP 崩了:\n" + traceback.format_exc())
+        return 0
     try:
         app = NSApplication.sharedApplication()
         app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
