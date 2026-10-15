@@ -1211,6 +1211,7 @@ class SettingsWindow(_Pane):
 
     @objc.python_method
     def _page_overview(self, v, x, w, y):
+        y = self._eyebrow(v, x, y, "DEVICE OVERVIEW / 00")
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
         v.addSubview_(_label("连接完成，随时开始。" if done else "还差一步就能用。",
@@ -1355,38 +1356,15 @@ class SettingsWindow(_Pane):
         v.addSubview_(self.c["enhanced"])
         v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
         y += ROWG + 16
-        # 次要网格: 显示输出 + 快速运行选项
-        hw = (w - 40) / 2.0
-        v.addSubview_(_label("显示输出", self._r(x, y, 200, 16), size=11, bold=True,
-                             color=_color("secondaryLabelColor")))
-        v.addSubview_(_label("快速运行选项", self._r(x + hw + 40, y, 200, 16), size=11, bold=True,
-                             color=_color("secondaryLabelColor")))
-        y += 16 + 10
-        v.addSubview_(_line_view(self._r(x, y, hw, 1)))
-        v.addSubview_(_line_view(self._r(x + hw + 40, y, hw, 1)))
-        y += 12
-        self.c["disp"] = _popup(self._r(x, y, hw - 30, 26), ["正在扫描…"])
-        self.c["disp"].setTarget_(self)
-        self.c["disp"].setAction_("onDisp:")
-        v.addSubview_(self.c["disp"])
-        self.c["disp_hint"] = _label("", self._r(x, y + 30, hw, 16), size=11, dim=True)
-        v.addSubview_(self.c["disp_hint"])
-        for i, (key, title, act) in enumerate((("enable", "笔桥接", "onEnable:"),
-                                               ("autostart", "开机自启", "onAutostart:"),
-                                               ("debug", "详细日志", "onDebug:"))):
-            bx = x + hw + 40
-            by = y + i * 26
-            self.c[key] = _Switch.alloc().initWithFrame_(self._r(bx, by + 3, 36, 22))
-            self.c[key].setBordered_(False)
-            self.c[key].setTitle_("")
-            self.c[key].setTarget_(self)
-            self.c[key].setAction_(act)
-            v.addSubview_(self.c[key])
-            v.addSubview_(_label(title, self._r(bx + 46, by + 5, 160, 18), size=12))
-        return y + 26 * 3
+        return y
 
     @objc.python_method
     def _page_display(self, v, x, w, y):
+        # 进这一页先同步一次档位缓存(31ms), 免得下拉停在「正在扫描…」等下一次 tick
+        try:
+            self.app._sync_display(force=True)
+        except Exception:
+            pass
         y = self._eyebrow(v, x, y, "DISPLAY SETTINGS / 02")
         y = self._page_head(v, x, w, y, "显示与缩放",
                             "选择屏幕输出模式，保持清晰度与触控坐标一致。",
@@ -1413,6 +1391,10 @@ class SettingsWindow(_Pane):
         v.addSubview_(self.c["disp_btn"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60
+        self.c["disp"] = _popup(self._r(x, y + 10, min(380.0, w - 30), 26), ["正在扫描…"])
+        self.c["disp"].setTarget_(self)
+        self.c["disp"].setAction_("onDisp:")
+        v.addSubview_(self.c["disp"])
         self.c["disp_hint"] = _label("", self._r(x, y + 10, w, 16), size=11, dim=True)
         v.addSubview_(self.c["disp_hint"])
         return y + 30

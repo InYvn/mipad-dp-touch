@@ -1164,6 +1164,7 @@ class DPApp(NSObject):
 
         self._mk(m, "设置…", "actOpenWindow:", key=",")
         self._mk(m, "打开日志", "actOpenLog:")
+        self._mk(m, "无障碍键盘设置…", "actOpenKeyboardSettings:")
         # 更新只在菜单里占一行: 标题会随进度变成「正在下载更新 42%」
         self.mi_check = self._mk(m, "检查更新…", "actCheckUpdate:")
         self._sep(m)
@@ -1942,6 +1943,19 @@ class DPApp(NSObject):
         a.setInformativeText_(body)
         a.addButtonWithTitle_("好")
         a.runModal()
+
+    def actOpenKeyboardSettings_(self, sender):
+        """跳到系统设置「无障碍 → 键盘」那一页（只跳转，不代用户点开关）。
+
+        系统那套「无障碍键盘」的开关用程序改不了（偏好域被保护、进程杀不动、
+        面板是 NSPanel 不跟随隐藏）—— 实测四轮，只剩「跳过去让用户自己点」这条正路。
+        """
+        url = "x-apple.systempreferences:com.apple.preference.universalaccess?Keyboard"
+        try:
+            subprocess.call(["/usr/bin/open", url])
+            log("已跳转: 无障碍键盘设置")
+        except Exception as e:
+            log("跳转无障碍键盘设置失败: %r" % (e,))
 
     def actOpenLog_(self, sender):
         if not os.path.exists(LOG_PATH):
