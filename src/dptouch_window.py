@@ -1083,8 +1083,12 @@ class SettingsWindow(_Pane):
             v.addSubview_(lg)
         y += 54 + 15
         # 品牌: 应用名在 logo 右侧（连接状态不再重复显示 —— 底部状态条已有）
-        v.addSubview_(_label(self.name, self._r(19 + 54 + 12, y + 16, SIDEBAR_W - 85 - 12, 22),
-                             size=15, bold=True))
+        _lb = _label(self.name, self._r(19 + 54 + 12, y + 16, SIDEBAR_W - 85 - 14, 22),
+                     size=14, bold=True)
+        from AppKit import NSLineBreakByTruncatingTail
+        _lb.setUsesSingleLineMode_(True)                     # ★标题不分两行
+        _lb.setLineBreakMode_(NSLineBreakByTruncatingTail)   # 放不下就省略号, 绝不换行
+        v.addSubview_(_lb)
         y += 54 + 15
         y += 4
         for key, icon, title in PAGES:
