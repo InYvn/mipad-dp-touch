@@ -396,23 +396,20 @@
     <p class="lead">Mac 运行 <b>macOS 27</b>；系统原生触控使用 <b>macOS 27.3 及以上</b>。本页界面与功能说明对应 2.0.0-beta，提供 2.0.0-beta 测试版下载，同时保留稳定版 1.2.1。</p>
     <ol class="steps">
       <li>
-        <h3>下载安装包</h3>
-        <p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg"><code>Mipad-DP-Touch-2.0.0-beta.dmg</code></a>（测试版 2.0.0-beta）。</p>
+        <h3>安装 App</h3>
+        <p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg">2.0.0-beta 的 DMG</a>，打开后把 App 拖到「应用程序」，双击打开。</p>
+        <p><b>首次打开被系统拦下（ad-hoc 签名，不是文件坏了）</b><br>推荐：打开「系统设置 → 隐私与安全性 → 安全性」，点被拦那条的「仍要打开」，再确认一次。</p>
+        <p>按 App 的分步引导完成辅助功能与输入监控授权，两项都 ✓ 后点「立即重启」。</p>
       </li>
       <li>
-        <h3>拖进「应用程序」并打开</h3>
-        <p>打开 DMG，把 App 拖到「应用程序」，双击打开。装好约占 25 MB；想卸载，退出 App、删掉即可。</p>
+        <h3>安装模块（需要 root）</h3>
+        <p>已有旧 v1.0 模块可继续沿用，无需更新。首次安装下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip">平板模块 v1.0 ZIP</a>，保存到平板，在 KernelSU / Magisk 管理器 → 模块 → 从存储安装中选择 ZIP。安装后使用热重启模块完成热重启，再重新连接 USB-C 或进入 DP-in。</p>
       </li>
       <li>
-        <h3>按提示分两步授权</h3>
-        <p>① 辅助功能 → ② 输入监控。两项都 ✓ 后点「立即重启」。<br>然后用笔点一下图标 —— 能点开就成了。分步图文见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/INSTALL.md">INSTALL.md</a>。</p>
+        <h3>开启触控调节（需要 macOS 27.3+）</h3>
+        <p>打开「系统设置 → 无障碍 → 触控 → 触控调节 → 设置」，完成引导并保持触控调节开启。安装、打开 App 与完成系统设置的顺序不限。App 的「触控与位置」保持「自动 · 推荐」。</p>
       </li>
     </ol>
-    <div class="unblock">
-      <h4>⚠️ 首次打开被系统拦下（ad-hoc 签名，不是文件坏了）</h4>
-      <p style="font-size:14px;color:var(--muted);margin-bottom:10px"><b style="color:var(--ink)">推荐</b>：打开「系统设置 → 隐私与安全性 → 安全性」，点被拦那条的「仍要打开」，再确认一次。或终端一行：</p>
-      <pre><span class="p">$</span> xattr -dr com.apple.quarantine "/Applications/Mipad DP Touch.app"</pre>
-    </div>
   </div>
 </section>
 
