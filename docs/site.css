@@ -57,3 +57,31 @@ footer{padding:36px 0 44px;color:var(--faint)}footer p{font-size:12px}.flinks a{
 
 /* Release marker: 2.0.0-beta-release2 */
 .hero h1 .badge{font-size:12px;line-height:1.2;padding:5px 10px;vertical-align:middle}
+
+/* Site motion: quiet surfaces, native navigation, no perpetual effects. */
+.shot img{height:auto}
+body{background-image:radial-gradient(720px 340px at 50% 0,rgba(255,105,0,.045),transparent 72%);background-repeat:no-repeat}
+nav .links a{position:relative;transition:color .2s ease,background-color .2s ease}
+nav .links a::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .24s cubic-bezier(.22,1,.36,1);pointer-events:none}
+nav .links a.now{box-shadow:none}
+nav .links a.now::after,nav .links a:focus-visible::after,nav .links a.is-following::after{transform:scaleX(1)}
+.btn,.feature,.compare .col,.tut,details,.shot img{transition:transform .28s cubic-bezier(.22,1,.36,1),border-color .24s ease,background-color .24s ease,box-shadow .28s ease}
+.btn:active{transform:translateY(1px) scale(.985)}
+details summary{transition:color .2s ease,background-color .2s ease}
+details summary::after{transition:transform .24s ease,color .24s ease}
+details[open]{border-color:var(--border-hi)}
+details[open] summary{color:var(--accent-hi)}
+.feature:focus-within{border-color:var(--accent-hi)}
+@media(hover:hover) and (pointer:fine){
+  nav .links a:hover::after{transform:scaleX(1)}
+  .feature:hover,.compare .col:hover{transform:translateY(-3px);border-color:#62432e;box-shadow:0 12px 28px #0002}
+  .btn:hover{transform:translateY(-2px);box-shadow:0 6px 18px #0003}
+  .shot img:hover{transform:translateY(-3px);box-shadow:0 24px 56px #0006;border-color:#65503f}
+  details summary:hover{background-color:#ffffff03;color:var(--ink)}
+}
+@media(hover:none){.btn:hover,.feature:hover,.tut:hover{transform:none;box-shadow:none}}
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto!important}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .btn:hover,.btn:active,.feature:hover,.compare .col:hover,.shot img:hover,.tut:hover{transform:none!important}
+}
