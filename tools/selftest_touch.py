@@ -91,6 +91,9 @@ def main():
           [HB.PEN_USAGE, HB.TOUCH_USAGE])
 
     eng = E.Engine()
+    # These are compatibility-bridge tests, not the OS-dependent auto policy.
+    eng.touch_iface = True
+    eng.update(touch_mode="legacy", legacy_touch_ack=True)
     check("引擎默认 input_mode = auto（两种数据格式都认）",
           eng.cfg.get("input_mode"), "auto")
     for mode, want_n in (("pen", 2), ("touch", 2), ("auto", 4)):

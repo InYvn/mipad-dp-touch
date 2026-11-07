@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="icon" href="favicon.ico?v=1.2.1" sizes="any">
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.1">
+<link rel="icon" href="favicon.ico?v=2.0.0-beta-release2" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.0.0-beta-release2">
 <meta name="theme-color" content="#0b0d10">
-<title>Mipad DP Touch Enhanced — 让小米焦点触控笔 Pro 在 Mac 上真正可用</title>
+<title>Mipad DP Touch Enhanced — 让小米平板成为 Mac 的触控外接屏</title>
 <meta name="description" content="小米平板 9 Pro Max 通过 DP-in 当 Mac 外接屏时，让小米焦点触控笔 Pro 能点击、拖拽、翻页；装上平板侧模块后手指触控同样可用。">
 <style>
   :root {
@@ -188,9 +188,9 @@
   /* status */
   .status-card {
     border: 1px solid var(--border); border-radius: var(--radius);
-    background: var(--bg-raised); overflow: hidden;
+    background: var(--bg-raised); overflow-x: auto;
   }
-  table.status { width: 100%; border-collapse: collapse; font-size: 15px; }
+  table.status { min-width: 880px; width: 100%; border-collapse: collapse; font-size: 15px; }
   table.status th, table.status td { padding: 12px 18px; text-align: left; border-bottom: 1px solid var(--border); }
   table.status tr:last-child td { border-bottom: none; }
   table.status th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: .06em; }
@@ -257,15 +257,28 @@
     html { scroll-behavior: auto; }
     * { transition: none !important; }
   }
+  section[id] { scroll-margin-top: 120px; }
+  code { overflow-wrap: anywhere; }
+  .flinks { flex-wrap: wrap; }
+  .brand .badge { margin-left: 0; padding: 3px 8px; border-radius: 999px; font-size: 10.5px; background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(255,105,0,.3); white-space: nowrap; }
+  nav .links a.now { color: var(--accent); }
+  @media (max-width: 900px) {
+    nav .wrap { height: auto; min-height: 58px; flex-wrap: wrap; gap: 10px; padding-top: 12px; padding-bottom: 12px; }
+    nav .links { display: flex; width: 100%; justify-content: space-between; gap: 10px; font-size: 13px; }
+    nav .links a.gh { padding: 0; background: none; border: none; }
+  }
+  @media (max-width: 480px) { nav .brand { font-size: 14px; gap: 6px; } h2 { flex-wrap: wrap; } }
 </style>
+<link rel="stylesheet" href="site.css?v=2.0.0-beta-release2">
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到正文</a>
 
-<nav>
+<nav aria-label="主导航">
   <div class="wrap">
-    <a class="brand" href="#"><img src="logo.png?v=1.2.1" alt="Mipad DP Touch Enhanced logo">Mipad DP Touch <span class="badge">Enhanced</span></a>
+    <a class="brand" href="index.html"><img src="logo.png?v=2.0.0-beta-release2" alt="Mipad DP Touch Enhanced logo">Mipad DP Touch <span class="badge">Enhanced</span></a>
     <div class="links">
-      <a href="index.html">首页</a>
+      <a class="now" aria-current="page" href="index.html">首页</a>
       <a href="tutorial.html">操作教程</a>
       <a href="settings.html">配置说明</a>
       <a href="faq.html">疑难解答</a>
@@ -276,28 +289,24 @@
 
 <header>
   <div class="wrap">
-    <img class="logo" src="logo.png?v=1.2.1" alt="Mipad DP Touch Enhanced">
+    <img class="logo" src="logo.png?v=2.0.0-beta-release2" alt="Mipad DP Touch Enhanced">
     <h1>Mipad DP Touch <span class="badge">Enhanced</span></h1>
-    <p class="tagline">
-      让 <b>小米平板 9 Pro Max</b> 当 Mac 外接屏（DP-in）时，小米焦点触控笔 Pro 真正可用 —— <b>手指也能直接点</b>。
-      不只是移动光标：能<b>点击</b>、能<b>拖拽</b>、能<b>翻页</b>；平板侧装上模块后，手指同样能点、能拖。
-      <span class="en">Make the Xiaomi Focus Pen Pro actually usable on macOS when a Xiaomi Pad serves as an external DP-in display — finger touch works too, with a tablet-side module.</span>
-    </p>
+    <p class="subtitle">小米平板 9 Pro Max，变身 Mac 原生触控屏。</p>
+    <p class="tagline">通过 USB-C DP-in 连接，接入 macOS 27.3 系统原生触控。轻点、拖拽、滚动、右键与多指手势，直接在屏幕上完成。搭配小米焦点触控笔 Pro，笔尖上的点击、滚动与拖拽也一并就位。</p>
     <div class="platforms">
       <span class="pill accent">macOS 27</span>
-      <span class="pill">Python 3.12</span>
       <span class="pill">菜单栏应用</span>
-      <span class="pill">DMG · 约 13.5 MB</span>
-      <span class="pill">MIT License</span>
+      <span class="pill">2.0.0-beta 已发布</span>
     </div>
     <div class="cta">
-      <a class="btn btn-primary" href="https://github.com/InYvn/mipad-dp-touch/releases">下载 Mipad-DP-Touch-1.2.dmg</a>
-      <a class="btn btn-ghost" href="https://github.com/InYvn/mipad-dp-touch">查看源码</a>
+      <a class="btn btn-primary" href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg">下载测试版 2.0.0-beta</a>
+      <a class="btn" href="https://github.com/InYvn/mipad-dp-touch/releases/tag/v1.2.1">稳定版 1.2.1</a>
+      <a class="btn btn-ghost" href="#quickstart">开始使用 <span aria-hidden="true">↓</span></a>
     </div>
   </div>
 </header>
 
-<main>
+<main id="main-content">
 
 <section id="problem">
   <div class="wrap">
@@ -306,11 +315,11 @@
     <p class="lead">平板接到 Mac 雷雳口就能当第二块屏（DP-in）。但接上之后，笔的表现取决于你装没装这个工具：</p>
     <div class="compare">
       <div class="col before">
-        <div class="label">✕ macOS 原生</div>
+        <div class="label">无 App、无模块</div>
         <ul>
           <li>笔<b style="color:var(--ink)">能移动光标</b>，却点不动</li>
           <li>点图标、点按钮毫无反应</li>
-          <li>窗口拖不动，文字也划不了选</li>
+          <li>手指触控无效果</li>
         </ul>
       </div>
       <div class="col after">
@@ -323,53 +332,49 @@
         </ul>
       </div>
     </div>
-    <div class="rootcause">
-      <b>原因不在线材、不在平板</b>：笔的触控走一条独立的 USB 接口。macOS 认得这个设备、能用笔的坐标移动光标，却<b>不把「笔尖按下」当成鼠标左键</b> —— Windows 接上免驱即用，Linux 原生支持，只有 macOS 缺这层翻译。本工具补的就是这一层。
-    </div>
-    <p class="note">手指触控需要平板侧解锁 —— 装上模块（<code>tablet/</code>）后触摸屏接口就会出现，手指可直接点击、拖拽；没刷模块时行为与之前完全一致。</p>
+    <div class="rootcause"><b>显示与输入，各司其职。</b>DP-in 显示画面由平板硬件与系统提供，不依赖 App 或模块。App 提供笔手势映射与显示设置；平板模块提供手指触摸接口。</div>
+    <p class="note">手指触控需要平板侧解锁 —— 装上模块（<code>tablet/</code>）后触摸屏接口就会出现，手指可直接点击、拖拽；旧 v1.0 模块可继续沿用。</p>
   </div>
 </section>
 
 <div class="cta-row"><a href="tutorial.html" class="cta-strip"><b>四手势动画演示</b> — 轻点 · 翻页 · 拖拽 · 右键 →</a></div>
 
+<section class="showcase" id="preview">
+  <div class="wrap showcase-grid">
+    <div><div class="kicker">界面预览</div><h2>状态，一目了然。<br>设置，各就其位。</h2><p class="lead">设备概览、触控与位置、手势映射、显示设置、运行与诊断。五页设置，把日常所需清晰展开。</p><a href="settings.html">浏览配置说明 <span aria-hidden="true">→</span></a></div>
+    <figure class="shot">
+      <img src="assets/settings-overview.png?v=2.0.0-beta-release2" alt="Mipad DP Touch 设置窗口截图">
+      <figcaption>2.0.0-beta 界面预览 · 设备概览 · <a href="settings.html">查看五页设置</a></figcaption>
+    </figure>
+  </div>
+</section>
+
 <section id="features">
   <div class="wrap">
     <div class="kicker">功能</div>
     <h2>菜单栏常驻，随手可用</h2>
-    <p class="lead">配置存在你自己的 <code>~/Library/Application Support/MipadDPTouch/config.json</code>；菜单栏和设置窗口是同一份状态的两个表面，不会「菜单里勾着、窗口里没勾」。</p>
+    <p class="lead">从笔尖操作到显示缩放，常用功能就在手边。菜单栏与设置窗口共享状态，配置自动保存。</p>
     <div class="features">
       <div class="feature"><h3><span class="ic">🔍</span>一键放大还不糊</h3><p>原生分辨率字太小？切到 1704×1136（120Hz，像素 1:1 最清晰），只改平板那块屏，随时换回原档。</p></div>
       <div class="feature"><h3><span class="ic">🚀</span>开机自启</h3><p>一个开关，登录后自动就绪；在「系统设置 → 通用 → 登录项」里可见、随时能关。</p></div>
       <div class="feature"><h3><span class="ic">🎚</span>手感可调</h3><p>四类手势（轻点 / 快速滑动 / 停住再滑 / 停住不动）各能绑一个动作，滚动方向速度与判定时长都能调，也能一键恢复默认。</p></div>
       <div class="feature"><h3><span class="ic">🔐</span>分步授权引导</h3><p>① 辅助功能 ② 输入监控，上一步没完成下一步是灰的；TCC 生效要点「立即重启」。</p></div>
       <div class="feature"><h3><span class="ic">🖥</span>多屏下笔也能换屏</h3><p>笔是绝对坐标设备，天然只能在一块屏上动。菜单里选「光标基准屏」即可把笔铺到平板或任意一块在线屏上；默认「跟随光标」保持原有手感。也可以把这个动作绑到某一类手势上（例如「停住不动」），笔上按一下换到下一块屏。</p></div>
-      <div class="feature"><h3><span class="ic">👆</span>手指触控（增强模式）</h3><p>手指也能直接点、拖 —— 平板侧装上模块后，触摸屏接口就会出现；Mac 端默认就认，不用改任何设置。没装模块时行为与之前完全一致。</p></div>
+      <div class="feature"><h3><span class="ic">👆</span>系统原生触控</h3><p>App + 模块在 macOS 27.3 及以上自动选择原生触控，手指输入与多点手势由系统处理，已验证设备自动应用位置修正。</p></div>
     </div>
-    <figure class="shot">
-      <img src="window.png?v=1.2.1-2" alt="Mipad DP Touch 设置窗口截图">
-      <figcaption>设置窗口</figcaption>
-    </figure>
+
   </div>
 </section>
 
 <section id="touch">
   <div class="wrap">
     <div class="kicker">手指触控</div>
-    <h2>手指也能直接点、拖</h2>
-    <p class="lead">平板在 DP-in 下认出 Mac 后，默认只把「笔」这一路交给主机，手指的触摸数据根本不发出来。平板侧装上模块，官方固件就会按「非 Mac 主机」建出「触摸屏 + 笔」二合一接口 —— 手指的点击、拖拽直接可用。</p>
+    <h2>手指交给系统，笔继续顺手</h2>
+    <p class="lead">App 默认按系统版本与触摸接口自动选择运行方式：macOS 27.2 及以下使用模拟鼠标，27.3 及以上优先系统原生触控。</p>
     <ol class="steps">
-      <li>
-        <h3>装模块</h3>
-        <p>从 <a href="https://github.com/InYvn/mipad-dp-touch/releases">Releases</a> 下载 <code>mipad-dp-touch-module-v1.0.zip</code>（和 Mac 端 App 放在同一个 release 里），传到平板后装进 KernelSU / Magisk 管理器（模块页 → 从本地安装）。</p>
-      </li>
-      <li>
-        <h3>让模块生效</h3>
-        <p>用临时 root 时，在提权工具里点一次<b>重载模块</b>（音量+ 键），模块立即生效，<b>不用真的重启</b> —— 重启会让临时 root 失效，得重新提权一遍。</p>
-      </li>
-      <li>
-        <h3>确认就绪</h3>
-        <p>Mac 端设置窗口 →「手势映射」→ 增强模式（默认就开着）会显示触摸屏是否就绪；接上平板，手指直接点、拖即可。</p>
-      </li>
+      <li><h3>沿用平板模块</h3><p>旧 <code>mipad-dp-touch-module-v1.0.zip</code> 无需更新。首次安装下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip">平板模块 v1.0</a>，在 KernelSU / Magisk 管理器的模块页安装，安装需要平板 root 权限。临时 root 操作见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/tablet/README.md">平板侧说明</a>。</p></li>
+      <li><h3>完成系统触控引导</h3><p>macOS 27.3 及以上，前往「系统设置 → 无障碍 → 触控 → 触控调节 → 设置」，完成引导并保持触控调节开启。安装、打开 App 与完成系统设置的顺序不限。</p></li>
+      <li><h3>保持自动选择</h3><p>「触控与位置」保持「自动 · 推荐」。在「设备概览」查看实际运行方式；原生模式下，已验证设备自动应用位置修正，在「触控与位置」查看状态，退出 App 后恢复。</p></li>
     </ol>
   </div>
 </section>
@@ -378,21 +383,9 @@
   <div class="wrap">
     <div class="kicker">现状</div>
     <h2>能力一览</h2>
-    <p class="lead">功能边界如实列出，带前提条件的写明前提。</p>
-    <div class="status-card">
-      <table class="status">
-        <tr><th>能力</th><th>状态</th></tr>
-        <tr><td>设备识别</td><td class="yes">✓</td></tr>
-        <tr><td><b>笔点击桥接</b></td><td class="yes">✓</td></tr>
-        <tr><td><b>笔拖拽</b>（拖窗口、划选文字、拖滑块）</td><td class="yes">✓</td></tr>
-        <tr><td><b>翻页滚动</b>（一个鼠标键都不发，绝不误选文字）</td><td class="yes">✓</td></tr>
-        <tr><td><b>停住再划 = 拖拽</b></td><td class="yes">✓</td></tr>
-        <tr><td><b>停住不动 = 右键菜单</b></td><td class="yes">✓</td></tr>
-        <tr><td><b>显示缩放</b></td><td class="yes">✓</td></tr>
-        <tr><td>开机自启</td><td class="yes">✓</td></tr>
-        <tr><td>手指触控</td><td class="yes">✓ <small>刷入模块支持（需平板侧 root）</small></td></tr>
-      </table>
-    </div>
+    <p class="lead">按 macOS 27、App 默认「自动 · 推荐」列出。位置修正适用于已验证设备；显示设置无需模块。</p>
+    <p class="note" style="margin:0 0 14px">四种配置 · 可横向滚动查看完整对照 →</p>
+    <div class="status-card" tabindex="0" role="region" aria-label="四种配置功能对照，可横向滚动"><table class="status"><tr><th scope="col">用户配置</th><th>DP-in 显示画面</th><th>笔操作</th><th>手指点击与拖拽</th><th>系统原生多点手势</th><th>自动触控位置修正</th><th>App 显示设置</th></tr><tr><td>无 App、无模块</td><td class="yes">✓</td><td>仅移动光标，无法点击</td><td>—</td><td>—</td><td>—</td><td>—</td></tr><tr><td>仅 App、无模块</td><td class="yes">✓</td><td class="yes">✓ 点击 / 滚动 / 拖拽 / 右键</td><td>—</td><td>—</td><td>—</td><td class="yes">✓</td></tr><tr><td>App + 模块，macOS 27.2 及以下</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓ 模拟鼠标</td><td>—</td><td>—</td><td class="yes">✓</td></tr><tr><td>App + 模块，macOS 27.3 及以上</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓ 系统原生</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr></table></div><p class="note">无 App、无模块时，笔仅能移动光标，手指触控无效果。仅安装 App 即可使用笔映射和显示设置；手指触控需安装平板模块。</p>
   </div>
 </section>
 
@@ -400,11 +393,11 @@
   <div class="wrap">
     <div class="kicker">快速开始</div>
     <h2>三步装好</h2>
-    <p class="lead">系统要求 <b>macOS 27</b>（在 macOS 27.0 + Mac mini M4 实测；更老的系统未验证，报问题时请带上系统版本）。</p>
+    <p class="lead">Mac 运行 <b>macOS 27</b>；系统原生触控使用 <b>macOS 27.3 及以上</b>。本页界面与功能说明对应 2.0.0-beta，提供 2.0.0-beta 测试版下载，同时保留稳定版 1.2.1。</p>
     <ol class="steps">
       <li>
         <h3>下载安装包</h3>
-        <p>在 <a href="https://github.com/InYvn/mipad-dp-touch/releases">Releases</a> 里下载 <code>Mipad-DP-Touch-1.2.dmg</code>（约 13.5 MB）。</p>
+        <p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg"><code>Mipad-DP-Touch-2.0.0-beta.dmg</code></a>（测试版 2.0.0-beta）。</p>
       </li>
       <li>
         <h3>拖进「应用程序」并打开</h3>
@@ -437,7 +430,7 @@
       <a href="#quickstart">快速开始</a>
       <a href="https://github.com/InYvn/mipad-dp-touch">GitHub ↗</a>
     </div>
-    <p>Mipad DP Touch Enhanced · 让小米平板当 Mac 副屏时，笔真正可用 · 遵循 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/LICENSE">MIT License</a></p>
+    <p>Mipad DP Touch Enhanced · 遵循 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/LICENSE">MIT License</a></p>
   </div>
 </footer>
 

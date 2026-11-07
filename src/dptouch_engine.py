@@ -200,6 +200,50 @@ def first_finger_cookies(dev):
     rows.sort()
     return first_finger_cookies_from(rows)
 
+def finger_cookie_map_from(rows):
+    """每根手指的 cookie: tip / inr / cid / x / y（触摸接口，report ID 1）。"""
+    touch = [r for r in rows if r[1] == TOUCH_REPORT_ID]
+    tips = [r[0] for r in touch if r[2] == 0x0D and r[3] == 0x42]
+    inrs = [r[0] for r in touch if r[2] == 0x0D and r[3] == 0x32]
+    cids = [r[0] for r in touch if r[2] == 0x0D and r[3] == 0x51]
+    xs = [r[0] for r in touch if r[2] == 0x01 and r[3] == 0x30]
+    ys = [r[0] for r in touch if r[2] == 0x01 and r[3] == 0x31]
+    out = []
+    for i, cid in enumerate(cids):
+        if i >= len(tips) or i >= len(inrs):
+            break
+        x = min([c for c in xs if c > cid], default=None)
+        y = min([c for c in ys if c > cid], default=None)
+        if x is None or y is None:
+            break
+        out.append({"tip": tips[i], "inr": inrs[i], "cid": cid, "x": x, "y": y})
+    return out
+
+
+def finger_cookie_map(dev):
+    """触摸接口的全部手指 cookie 表 (纯笔接口返回 [])。"""
+    try:
+        arr = H.iokit.IOHIDDeviceCopyMatchingElements(dev, None, 0)
+    except Exception:
+        return []
+    if not arr:
+        return []
+    rows = []
+    try:
+        n = H.cf.CFArrayGetCount(arr)
+        for i in range(n):
+            el = H.cf.CFArrayGetValueAtIndex(arr, i)
+            if el:
+                rows.append((H.iokit.IOHIDElementGetCookie(el),
+                             H.iokit.IOHIDElementGetReportID(el),
+                             H.iokit.IOHIDElementGetUsagePage(el),
+                             H.iokit.IOHIDElementGetUsage(el)))
+    finally:
+        H.cf.CFRelease(arr)
+    rows.sort()
+    return finger_cookie_map_from(rows)
+
+
 def _dict(pairs):
     """[(bytes_key, int_val)] -> CFDictionaryRef (调用方负责 CFRelease)"""
     n = len(pairs)
@@ -340,6 +384,10 @@ class Engine(object):
                                        # 没解锁的平板只给笔那一路, 行为与 1.1 一字不差;
                                        # 解锁过的平板开箱即用（不用动任何开关）。
             "display_allow_unknown": False,     # 允许把未实测的屏当平板屏
+            "touch_mode": "auto",
+            "legacy_touch_ack": False,
+            "native_touch": False,               # effective compatibility mirror, never preference
+                                                 # (macOS 27.3+ 系统直接处理手指, 桥接只服务笔)
             "hold_ms": 250,           # 「停住再滑」的判定时长
             "rc_hold_ms": 800,        # 「停住不动」的判定时长 (0 = 关)
         }
@@ -363,9 +411,30 @@ class Engine(object):
         self.reset_counters()
         self._want_down = False
         self._touch_cookies = set()   # 「触摸+笔」接口里第 1 根手指的元素 cookie
+        self._finger_map = []         # 全部触点的 cookie 表 (双指滚动用)
+        self._cookie2finger = {}      # cookie -> (手指序号, 类型)
+        self._fstate = []             # 每根手指: down / x / y
+        self._multi = False           # 是否正在双指手势
+        self._two_prev = None         # 双指质心 (归一化)
+        self._two_pend = [0.0, 0.0]   # 待发送的滚动量 (px)
+        self._two_t = 0.0
+        self._latch_until = 0.0     # 双指结束后短暂吞掉单指事件
+        self._pinch_prev = None      # 上一帧两指距离 (px)
+        self._pinch_pend = 0.0       # 待发送的缩放量 (滚轮 px)
+        self._pinch_active = False   # 是否已发出 began
+        self._pinch_acc = 0.0        # 起手累计, 超过阈值才认定为捏合
+        self._pinch_native_ok = True # 原生 magnify 是否可用
+        self._pinch_fb = 0.0         # 回退档位的累计
+        self._pinch_last_pt = (0.0, 0.0)
+        self._pinch_n = 0
+        self._pinch_dist_s = None     # 平滑后的两指距离
+        self._pinch_anchor = (0.0, 0.0)  # 捏合锚点 (开始时的质心)
+        self._pinch_t = 0.0          # 上一次触发缩放的时刻
         self._tsx = self._tsy = None  # 触摸坐标缓冲（固件顺序: 坐标先到, 按下标志最后到）
         self._tx_t = self._ty_t = 0.0 # 两轴各自到达的时刻（判断是不是同一份 report, 见 _touch_stage）
         self.touch_iface = False      # 当前插着的平板是否带「触摸屏」接口（= 平板侧解锁过）
+        self._touch_devices = set()
+        self._mode = self._resolve_mode()
         self.target = {}              # 光标基准屏 (笔的绝对坐标铺到哪块屏上)
         self._tgt_key = None
         self.b = None
@@ -374,6 +443,7 @@ class Engine(object):
         self.rc = 0
         self.running = False
         self.devices = []             # [(名字, vid, pid, 是否已验证)]
+        self._device_records = {}     # per IOHIDDeviceRef, not shared VID/PID
         self.last_error = ""
         self.started_at = 0.0
 
@@ -484,19 +554,48 @@ class Engine(object):
         with self._lk:
             return self._update_locked(kw)
 
+    def _resolve_mode(self):
+        from dptouch_mode import resolve
+        return resolve(self.cfg.get("touch_mode", "auto"), self.touch_iface,
+                       legacy_ack=self.cfg.get("legacy_touch_ack", False))
+
     def _update_locked(self, kw):
+        before_mode = self._mode["selected_mode"]
         if "debug_log" in kw:
             self.debug = bool(kw["debug_log"])
         before = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
                   self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")),
-                  self.cfg.get("input_mode", "auto"))
+                  self.cfg.get("input_mode", "auto"),
+                  self._mode["native_touch"])
         self.cfg.update(kw)
+        self._mode = self._resolve_mode()
+        self.cfg["native_touch"] = self._mode["native_touch"]
         self._apply()
         after = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
                  self.cfg["allow_unknown"], bool(self.cfg.get("drag_pen")),
-                 self.cfg.get("input_mode", "auto"))
-        if before != after:
-            self.b.reset_state()      # 绑定变了: 半按/划动中的残留不能带到下一笔
+                 self.cfg.get("input_mode", "auto"),
+                 self._mode["native_touch"])
+        if self._mode["selected_mode"] != before_mode and self.b.src_touch:
+            # End only synthetic gestures already begun, before clearing state.
+            # This is not a new click or a native touch-up.
+            if self.b.src_touch and self.b.dragging:
+                self.b.post(H.LUP)
+            if self._pinch_active and self._pinch_native_ok:
+                self.b.pinch_native(0.0, 4, *self._pinch_last_pt)
+            self._fstate = [{"down": False, "x": None, "y": None} for _ in self._fstate]
+            self._touch_clear()
+            self._multi = False
+            self._two_prev = None
+            self._two_pend = [0.0, 0.0]
+            self._latch_until = 0.0
+            self._pinch_prev = None
+            self._pinch_acc = self._pinch_pend = self._pinch_fb = 0.0
+            self._pinch_dist_s = None
+            self._pinch_active = False
+            self._want_down = False
+            self.b.reset_state()
+        if before[:4] != after[:4] or (before != after and self.b.src_touch):
+            self.b.reset_state()      # 绑定变了: 残留不能带到下一笔
         if (after[1] != before[1] or after[3] != before[3]) and self.mgr is not None:
             return self.restart()      # 匹配条件变了, 必须重建 manager
         return 0
@@ -657,9 +756,17 @@ class Engine(object):
         if th is not None and th.is_alive():
             th.join(3.0)
         with self._lk:
+            self.devices = []
+            self._device_records.clear()
+            self._touch_devices.clear()
+            self.touch_iface = False
+            self._touch_cookies.clear()
+            self._cookie2finger.clear()
+            self._finger_map = []
+            self._fstate = []
+            self._update_locked({})
             if self.b is not None:
                 self.b.reset_state()
-            self.devices = []
 
     def restart(self):
         self.stop()
@@ -694,22 +801,44 @@ class Engine(object):
                 known = is_tablet(vid, pid, raw)
                 if added:
                     with eng._lk:
-                        if not any(d[1] == vid and d[2] == pid for d in eng.devices):
-                            eng.devices.append((name, vid, pid, known))
+                        eng._device_records[int(device)] = (name, vid, pid, known)
+                        eng.devices = list(dict.fromkeys(eng._device_records.values()))
                     eng.log("设备接入: %s" % name)
                     ck = first_finger_cookies(device)
                     if ck:
                         with eng._lk:
                             eng._touch_cookies |= ck
                             eng.touch_iface = True
+                            eng._touch_devices.add(int(device))
+                            eng._update_locked({})
                         eng.log("触控接口已识别: 第 1 根手指 %d 个元素 (report ID %d): cookie %s"
                                 % (len(ck), TOUCH_REPORT_ID,
                                    ",".join(str(c) for c in sorted(ck))))
+                    fm = finger_cookie_map(device)
+                    if fm:
+                        c2f = {}
+                        for i, f in enumerate(fm):
+                            for kind in ("tip", "inr", "cid", "x", "y"):
+                                if f.get(kind):
+                                    c2f[f[kind]] = (i, kind)
+                        with eng._lk:
+                            eng._finger_map = fm
+                            eng._cookie2finger = c2f
+                            eng._fstate = [{"down": False, "x": None, "y": None}
+                                           for _ in fm]
+                        eng.log("触控接口: 解析到 %d 个触点槽" % len(fm))
                 else:
                     with eng._lk:
-                        eng.devices = [d for d in eng.devices
-                                       if not (d[1] == vid and d[2] == pid)]
-                        eng.touch_iface = False   # 平板整台拔掉: 触摸接口也一起没了
+                        eng._device_records.pop(int(device), None)
+                        eng.devices = list(dict.fromkeys(eng._device_records.values()))
+                        eng._touch_devices.discard(int(device))
+                        eng.touch_iface = bool(eng._touch_devices)
+                        if not eng.touch_iface:
+                            eng._touch_cookies.clear()
+                            eng._cookie2finger.clear()
+                            eng._finger_map = []
+                            eng._fstate = []
+                        eng._update_locked({})
                     eng.log("设备移除: %s" % name)
             except Exception as e:
                 eng.last_error = "设备回调异常: %r" % (e,)
@@ -808,12 +937,178 @@ class Engine(object):
     def _touch_clear(self):
         self._tsx = self._tsy = None
 
+    def _route_finger(self, b, cookie, kind, value):
+        """双指路由: 第 2 根及以后、或双指进行中 -> 这里处理并返回 True。"""
+        hit = self._cookie2finger.get(cookie) if self._cookie2finger else None
+        if not hit:
+            return False
+        i, k = hit
+        st = self._fstate[i]
+        # 自愈: 新的单指按下且没有其他手指按着 -> 强制退出双指态
+        # (否则 _multi 卡住时 _sync() 一直提前返回, 点击会整体失效)
+        if self._multi and kind == "tip" and value and not any(
+                s["down"] for j, s in enumerate(self._fstate) if j != i):
+            self._multi = False
+            self._two_prev = None
+        if i == 0 and not self._multi:
+            # 单指: 仍同步状态 —— 否则下一次双指时 active 只有第 2 根手指,
+            # 永远凑不满两个, 双指起不来 (2026-10-29 实测: 只有第一轮生效)
+            if kind == "tip":
+                st["down"] = bool(value)
+            elif kind == "inr":
+                if not value:
+                    st["down"] = False
+            else:
+                st[kind] = float(value)
+            if time.time() < self._latch_until:
+                return True           # 双指刚结束: 吞掉余下的单指事件
+            return False              # 单指: 保持原有逻辑
+        # 第 2 根手指先到: 用单指路径已经落到光标上的坐标回填第 1 指
+        if i > 0 and b.down and self._fstate[0]["x"] is None:
+            self._fstate[0]["x"] = b.x
+            self._fstate[0]["y"] = b.y
+            self._fstate[0]["down"] = True
+        if kind == "tip":
+            st["down"] = bool(value)
+            if not value and self._multi:
+                self._two_prev = None   # 手指数变了, 下次重新取基准
+        elif kind == "inr":
+            if not value:
+                st["down"] = False
+        else:
+            if float(value) == 0.0:
+                return True           # 抬手前固件先发 0, 不是真坐标
+            st[k] = float(value)
+        active = [j for j, s in enumerate(self._fstate)
+                  if s["down"] and s["x"] is not None and s["y"] is not None]
+        if len(active) >= 2:
+            if not self._multi:
+                self._multi = True
+                b.down = False
+                b.dragging = False
+                self._want_down = False   # 否则下一次 _sync() 会把单指按下重新激活
+                self._touch_clear()
+                self._two_prev = None
+                self._two_pend = [0.0, 0.0]
+                self._two_t = 0.0
+                self._pinch_prev = None
+                self._pinch_dist_s = None
+                self._pinch_pend = 0.0
+                self._pinch_active = False
+                self._pinch_acc = 0.0
+                self._pinch_native_ok = True
+                self._pinch_fb = 0.0
+                self._pinch_n = 0
+                if self._fstate[0]["x"] is None:
+                    self._fstate[0]["x"] = b.x
+                    self._fstate[0]["y"] = b.y
+                    self._fstate[0]["down"] = True
+                self.log("双指手势开始 (触点 %d)" % len(active))
+            self._two_apply(b, active)
+        elif not active and self._multi:
+            self._multi = False
+            self._two_prev = None
+            self._pinch_prev = None
+            self._pinch_dist_s = None
+            self._pinch_pend = 0.0
+            self._latch_until = time.time() + 0.12
+            if self._pinch_active:
+                self._pinch_active = False
+                if self._pinch_native_ok:
+                    x, y = self._pinch_last_pt
+                    b.pinch_native(0.0, 4, x, y)
+                self._pinch_acc = 0.0
+                self._pinch_fb = 0.0
+            self.log("双指手势结束")
+        return True
+
+    def _two_apply(self, b, active):
+        """两指: 质心 -> 滚动; 距离 -> 原生 magnify（捏合期间不再滚动）。"""
+        cx = sum(self._fstate[j]["x"] for j in active) / len(active)
+        cy = sum(self._fstate[j]["y"] for j in active) / len(active)
+        now = time.time()
+
+        # --- 距离 -> 缩放（先算，决定这一帧是捏合还是滚动）---
+        if len(active) >= 2:
+            i0, i1 = active[0], active[1]
+            dxp = (self._fstate[i1]["x"] - self._fstate[i0]["x"]) * b.w
+            dyp = (self._fstate[i1]["y"] - self._fstate[i0]["y"]) * b.h
+            dist = (dxp * dxp + dyp * dyp) ** 0.5
+            self._pinch_dist_s = dist
+            if self._pinch_prev is None or self._pinch_prev <= 1.0:
+                self._pinch_prev = self._pinch_dist_s
+            else:
+                delta = (self._pinch_dist_s / self._pinch_prev) - 1.0
+                self._pinch_prev = self._pinch_dist_s
+                if not self._pinch_active:
+                    self._pinch_acc += delta
+                    if abs(self._pinch_acc) >= 0.015:
+                        self._pinch_active = True
+                        # 锚点固定在捏合开始的质心 —— 期间不再移动, 否则画面会跟着漂
+                        self._pinch_anchor = (b.ox + cx * b.w, b.oy + cy * b.h)
+                        ax, ay = self._pinch_anchor
+                        self.log("捏合开始 (锚点 %.0f,%.0f)" % (ax, ay))
+                        if not b.pinch_native(0.0, 1, ax, ay):
+                            self._pinch_native_ok = False
+                            self.log("原生 magnify 创建失败 -> 回退档位")
+                if self._pinch_active and now - self._pinch_t >= 0.008:
+                    self._pinch_t = now
+                    ax, ay = self._pinch_anchor
+                    if self._pinch_native_ok:
+                        if not b.pinch_native(delta * 3.0, 2, ax, ay):
+                            self._pinch_native_ok = False
+                        else:
+                            self._pinch_n += 1
+                            if self._pinch_n % 10 == 1:
+                                self.log("捏合 changed %d 次 (本次 delta %+.3f)"
+                                         % (self._pinch_n, delta))
+                    if not self._pinch_native_ok:
+                        self._pinch_fb += delta
+                        if abs(self._pinch_fb) >= 0.10:
+                            b.zoom_step(1 if self._pinch_fb > 0 else -1)
+                            self._pinch_fb = 0.0
+
+        # --- 质心 -> 滚动（捏合期间不发, 否则边滚边缩会抖）---
+        if self._pinch_active:
+            self._two_prev = (cx, cy)
+            self._two_pend = [0.0, 0.0]
+            return
+        if self._two_prev is None:
+            self._two_prev = (cx, cy)
+            return
+        dx = (cx - self._two_prev[0]) * b.w
+        dy = (cy - self._two_prev[1]) * b.h
+        self._two_prev = (cx, cy)
+        self._two_pend[0] += dx
+        self._two_pend[1] += dy
+        if now - self._two_t < 0.011:
+            return
+        self._two_t = now
+        px, py = self._two_pend
+        if abs(px) < 0.5 and abs(py) < 0.5:
+            return
+        self._two_pend = [0.0, 0.0]
+        b.scroll_px(px, py)
+
     def _feed_locked(self, page, usage, v, lo, hi, rid=PEN_REPORT_ID, cookie=0):
+        # A report is positive interface evidence too. Resolve BEFORE even its
+        # first coordinate, never wait for the UI timer or synthesize then switch.
+        if rid == TOUCH_REPORT_ID and not self.touch_iface:
+            self.touch_iface = True
+            self._update_locked({})
         b = self.b
+        # ★原生触控模式: 触摸接口 (report ID 1) 的一切手指事件 —— 点击/滚动/捏合 ——
+        #   都由 macOS 系统直接处理, 桥接只计数、绝不合成, 否则与系统双发。
+        #   笔接口 (report ID 3) 不受影响, 照常走下面的完整路径。
+        if rid == TOUCH_REPORT_ID and self._mode["native_touch"]:
+            self.seen["ev"] += 1
+            return
         # 这串事件是不是触摸屏那一路 —— post()/press() 靠它决定坐标从哪来（见 hid_bridge.post）
         b.src_touch = (rid == TOUCH_REPORT_ID)
         if page == 0x0D and usage == 0x42:                 # TipSwitch
             if rid == TOUCH_REPORT_ID:
+                if self._route_finger(b, cookie, "tip", v):
+                    return
                 if self._touch_cookies and cookie and cookie not in self._touch_cookies:
                     return                                      # 不是第 1 根手指 -> 忽略
                 self.seen["ev"] += 1
@@ -846,6 +1141,8 @@ class Engine(object):
         elif page == 0x0D and usage == 0x32:               # InRange
             if rid == TOUCH_REPORT_ID:
                 # 触摸侧松开以 TipSwitch 为准；InRange 只用来把缓冲里的坐标落位/清掉
+                if self._route_finger(b, cookie, "inr", v):
+                    return
                 if self._touch_cookies and cookie and cookie not in self._touch_cookies:
                     return
                 if v:
@@ -859,12 +1156,16 @@ class Engine(object):
                 self._sync()
         elif page == 0x01 and usage in (0x30, 0x31) and hi > lo and lo >= 0:
             # 绝对坐标 (笔/触摸接口); 相对坐标的鼠标接口 lo < 0, 会被排除
+            nrm0 = float(v - lo) / (hi - lo)
+            if rid == TOUCH_REPORT_ID and self._route_finger(
+                    b, cookie, "x" if usage == 0x30 else "y", nrm0):
+                return
             if rid == TOUCH_REPORT_ID and self._touch_cookies and cookie \
                     and cookie not in self._touch_cookies:
                 return                                      # 不是第 1 根手指 -> 忽略
             self.seen["ev"] += 1
             self.seen["x" if usage == 0x30 else "y"] += 1
-            nrm = float(v - lo) / (hi - lo)
+            nrm = nrm0
             if rid == TOUCH_REPORT_ID:
                 self._touch_stage(usage, nrm, b)   # 触摸: 先缓冲, 成对到齐才落位
             else:
@@ -891,6 +1192,8 @@ class Engine(object):
 
     def _sync(self):
         """TipSwitch / 压力 / InRange 变化后统一处理按下与抬起"""
+        if self._multi:
+            return                    # 双指手势期间不产生单指按下/抬起
         b = self.b
         want = getattr(self, "_want_down", False)
         if want == b.down:
@@ -927,6 +1230,7 @@ class Engine(object):
             "binds": H.binds_from_cfg(self.cfg),
             "target": self.target.get("label", ""),     # 光标基准屏
             "target_takeover": bool(self.target.get("takeover")),
+            **self._mode,
             "flip": bool(self.b.scroll_flip) if self.b else False,
             "error": self.last_error,
         }

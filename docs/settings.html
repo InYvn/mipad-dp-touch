@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="icon" href="favicon.ico?v=1.2.1" sizes="any">
-<link rel="apple-touch-icon" href="apple-touch-icon.png?v=1.2.1">
+<link rel="icon" href="favicon.ico?v=2.0.0-beta-release2" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png?v=2.0.0-beta-release2">
 <meta name="theme-color" content="#0b0d10">
 <title>配置说明 — Mipad DP Touch Enhanced</title>
 <meta name="description" content="Mipad DP Touch Enhanced 各配置项的作用：按键绑定（轻点 / 快速滑动 / 停住再滑 / 停住不动）、滚动方向与速度、显示缩放、运行与日志、高级选项。">
@@ -81,17 +81,31 @@
 
   footer { padding: 40px 0 60px; border-top: 1px solid var(--border); text-align: center; font-size: 13.5px; color: #6b7280; }
   footer a { color: var(--muted); border-bottom: 1px dotted var(--muted); }
+  section[id] { scroll-margin-top: 120px; }
+  code { overflow-wrap: anywhere; }
+  .flinks { flex-wrap: wrap; }
+  .brand .badge { margin-left: 0; padding: 3px 8px; border-radius: 999px; font-size: 10.5px; background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(255,105,0,.3); white-space: nowrap; }
+  nav .links a.now { color: var(--accent); }
+  @media (max-width: 900px) {
+    nav .wrap { height: auto; min-height: 58px; flex-wrap: wrap; gap: 10px; padding-top: 12px; padding-bottom: 12px; }
+    nav .links { display: flex; width: 100%; justify-content: space-between; gap: 10px; font-size: 13px; }
+    nav .links a.gh { padding: 0; background: none; border: none; }
+  }
+  @media (max-width: 480px) { nav .brand { font-size: 14px; gap: 6px; } h2 { flex-wrap: wrap; } }
+ .shot { margin: 24px 0 0; } .shot img { display:block; width:100%; border:1px solid var(--border); border-radius:16px; } .shot figcaption { margin-top:10px; text-align:center; color:var(--muted); font-size:13px; } .desc { min-width:0; overflow-x:auto; }
 </style>
+<link rel="stylesheet" href="site.css?v=2.0.0-beta-release2">
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到正文</a>
 
-<nav>
+<nav aria-label="主导航">
   <div class="wrap">
-    <a class="brand" href="index.html"><img src="logo.png?v=1.2.1" alt="Mipad DP Touch Enhanced logo">Mipad DP Touch <span class="badge">Enhanced</span> · 配置说明</a>
+    <a class="brand" href="index.html"><img src="logo.png?v=2.0.0-beta-release2" alt="Mipad DP Touch Enhanced logo">Mipad DP Touch <span class="badge">Enhanced</span></a>
     <div class="links">
       <a href="index.html">首页</a>
       <a href="tutorial.html">操作教程</a>
-      <a class="now" href="settings.html">配置说明</a>
+      <a class="now" aria-current="page" href="settings.html">配置说明</a>
       <a href="faq.html">疑难解答</a>
       <a class="gh" href="https://github.com/InYvn/mipad-dp-touch">GitHub ↗</a>
     </div>
@@ -102,22 +116,23 @@
   <div class="wrap">
     <div class="kicker">配置说明</div>
     <h1>每个设置项是干什么的</h1>
-    <p class="lead">窗口是**侧栏 + 四页**：左侧常驻（设备概览 / 手势映射 / 显示与缩放 / 运行与诊断），右侧显示当前页。全部设置自动保存在 <code>~/Library/Application Support/MipadDPTouch/config.json</code>，下次启动恢复；菜单栏和设置窗口是同一份状态的两个表面，改哪边都一样。</p>
+    <p class="lead">2.0.0-beta 设置窗口分为五页：设备概览 / 触控与位置 / 手势映射 / 显示设置 / 运行与诊断。侧栏采用系统玻璃材质，⌘1–5 切页；菜单栏与窗口共用配置，自动保存在 <code>~/Library/Application Support/MipadDPTouch/config.json</code>。</p>
   </div>
 </header>
 
-<main class="wrap">
+<main class="wrap" id="main-content">
 
 <section id="status-zone">
-  <h2>状态 <span class="where">顶部一行 + 侧栏设备区</span></h2>
+  <h2>状态 <span class="where">设备概览</span></h2>
   <div class="item">
     <div class="name">连接状态<small>LIVE</small></div>
     <div class="desc"><p>当前设备状态：如实显示「运行中」「未运行」「等平板上线」，不粉饰。</p></div>
   </div>
   <div class="item">
     <div class="name">事件计数<small>COUNTERS</small></div>
-    <div class="desc"><p>侧栏设备区的 <span class="mark">输入事件</span> 实时计数，菜单栏「清零计数」可归零。笔到底有没有反应，看这里最快。</p></div>
+    <div class="desc"><p>设备概览的 <span class="mark">输入事件</span> 实时计数，菜单栏「清零计数」可归零。笔到底有没有反应，看这里最快。</p></div>
   </div>
+<figure class="shot"><img loading="lazy" src="assets/settings-overview.png?v=2.0.0-beta-release2" alt="2.0.0-beta 设备概览页"><figcaption>设备概览</figcaption></figure>
 </section>
 
 <section id="permissions">
@@ -127,7 +142,7 @@
     <div class="desc">
       <p>macOS 不允许程序自己给自己授权，所以必须你在系统设置里点两下。App 不会把两个弹窗糊你脸上 —— 上一步没完成，下一步是灰的，<span class="mark">每秒对一次权限状态</span>，完成第 ① 步第 ② 步自己亮起来。</p>
       <div class="opts"><span class="opt rec">① 辅助功能</span><span class="opt rec">② 输入监控</span></div>
-      <p style="margin-top:10px">① <b>辅助功能</b>：允许合成点击与拖拽 —— <span class="hi">不开，笔能移光标但点了没反应</span>。macOS 27 里它改名「设备控制和数据访问」，`隐私与安全性` 两个位置都找一下，哪个有开哪个。</p>
+      <p style="margin-top:10px">① <b>辅助功能</b>：允许合成点击与拖拽 —— <span class="hi">不开，笔能移光标但点了没反应</span>。按 App 的入口前往系统设置，允许该 App 的辅助功能权限。</p>
       <p>② <b>输入监控</b>：读取平板笔的原始数据 —— <span class="hi">不开，收不到任何笔事件</span>。</p>
     </div>
   </div>
@@ -140,16 +155,22 @@
   </div>
 </section>
 
+<section id="touch"><h2>触控与位置 <span class="where">触控方式与自动位置修正</span></h2>
+<div class="item"><div class="name">自动 · 推荐<small>TOUCH MODE</small></div><div class="desc"><p>用原生分段控件选择「自动 · 推荐」「原生触控」「兼容模拟」。默认按系统版本与触摸接口选路：macOS 27.2 及以下模拟鼠标，27.3 及以上优先系统原生；笔继续使用 App 映射。</p></div></div>
+<div class="item"><div class="name">系统触控设置<small>SYSTEM TOUCH</small></div><div class="desc"><p>macOS 27.3 及以上，前往「系统设置 → 无障碍 → 触控 → 触控调节 → 设置」，完成引导并保持触控调节开启。安装、打开 App 与完成系统设置的顺序不限。旧 v1.0 平板模块可继续沿用。</p></div></div>
+<div class="item"><div class="name">自动位置修正<small>POSITION</small></div><div class="desc"><p>App + 模块的原生模式下，已验证设备默认自动应用位置修正（B），本页显示实际修正状态。退出 App 后恢复。</p></div></div>
+<figure class="shot"><img loading="lazy" src="assets/settings-touch.png?v=2.0.0-beta-release2" alt="2.0.0-beta 触控与位置页"><figcaption>触控与位置</figcaption></figure></section>
+
 <section id="pen-input">
-  <h2>手势映射 <span class="where">手感主战场</span></h2>
+  <h2>手势映射 <span class="where">原生模式下为笔手势映射</span></h2>
   <div class="item">
     <div class="name">增强模式<small>ENHANCED</small></div>
-    <div class="desc"><p>手指触控的开关，默认开（自动识别两种数据格式）。平板侧刷入模块后触摸屏接口才会出现，右侧会写明当前状态；没装模块时打开也不影响笔 —— 行为与之前完全一致。</p></div>
+    <div class="desc"><p>匹配平板触摸接口，默认开启。原生模式下手指由系统处理，本页动作、滚动方向和速度继续用于笔。</p></div>
   </div>
   <div class="item">
     <div class="name">按键绑定<small>BINDINGS</small></div>
     <div class="desc">
-      <p>一支笔能做的事按<b>形态</b>分成四类手势，每一类都能绑一个动作。<b>默认就是一直以来的手感</b>，所以升级过来不用改；改坏了点右上角「恢复默认」。</p>
+      <p>点当前动作，打开轻量分组菜单更换绑定。一支笔按<b>形态</b>分成四类手势，每一类可绑定一个动作。<b>默认就是一直以来的手感</b>，所以升级过来不用改；改坏了点右上角「恢复默认」。</p>
       <table>
         <tr><th>手势</th><th>怎么算</th><th>默认动作</th></tr>
         <tr><td class="rec"><b>轻点</b></td><td>笔尖点一下就走</td><td>左键单击</td></tr>
@@ -160,21 +181,22 @@
       <p style="margin-top:10px">可绑的动作：<b>关</b> / 左键单击 / 右键菜单 / 中键单击 / 双击 / 滚动翻页 / 拖拽 / 空格键 / 返回 / <b>切换屏幕</b>。同一个「拖拽」在两个手势下叫法不同 —— 绑在<b>快速滑动</b>上叫<b>「拖拽 · 选中文字」</b>（起手就划，快进快出划选一段），绑在<b>停住再滑</b>上叫<b>「拖拽 · 移动窗口」</b>（先按住在挪）。每一类手势只列出它<b>真的做得到</b>的那些（轻点没有位移，就绑不了滚动和拖拽）。</p>
       <p><b>想每一笔都是拖拽？</b>把「快速滑动」的动作改成<b>「拖拽 · 选中文字」</b> —— 这就是老版本的「滑动选择」模式，现在不需要单独的开关了。</p>
       <p><b>为什么划动不会误选文字？</b>因为「滚动翻页」全程<b>一个鼠标按键都不发</b> —— 不是「划完再取消选择」，而是压根没有「按住」这个状态。</p>
-      <p><b>切换屏幕</b> = 把<a href="#advanced">光标基准屏</a>换到<b>下一块</b>在线屏：顺序按桌面排列从左到右、到头绕回第一块，循环。<b>只换笔的落点</b>，不改任何一块屏的分辨率 / 排列 / 镜像；只接了一块屏时按了不动作（日志会写一句）。接了两块以上屏、又不想每次都去点菜单栏时，把它绑到一类手势上（例如「停住不动」）就行了。</p>
+      <p><b>切换屏幕</b> = 把<a href="#display">光标基准屏</a>换到<b>下一块</b>在线屏：顺序按桌面排列从左到右、到头绕回第一块，循环。<b>只换笔的落点</b>，不改任何一块屏的分辨率 / 排列 / 镜像；只接了一块屏时按了不动作（日志会写一句）。接了两块以上屏、又不想每次都去点菜单栏时，把它绑到一类手势上（例如「停住不动」）就行了。</p>
       <p>组合起来就是一套自己的手感，例如：轻点 = 双击、停住不动 = 空格键（翻 PPT）、快速滑动 = 拖拽；多屏时「停住不动 = 切换屏幕」也很顺手。改完立即生效，不用重启。</p>
     </div>
   </div>
   <div class="item">
     <div class="name">滚动方向<small>SCROLL DIR</small></div>
     <div class="desc">
-      <p>默认<span class="mark">跟随系统</span> —— 跟你 Mac「系统设置 → 鼠标/触控板 → 自然滚动」走的设置，你不需要理解原理。觉得方向反了，选「始终自然」或「始终传统」覆盖即可。</p>
+      <p>通过原生分段控件切换，默认<span class="mark">跟随系统</span> —— 跟你 Mac「系统设置 → 鼠标/触控板 → 自然滚动」走的设置，你不需要理解原理。觉得方向反了，选「始终自然」或「始终传统」覆盖即可。</p>
       <div class="opts"><span class="opt rec">跟随系统（默认）</span><span class="opt">始终自然</span><span class="opt">始终传统</span></div>
     </div>
   </div>
   <div class="item">
     <div class="name">滚动速度<small>SCROLL SPEED</small></div>
-    <div class="desc"><p>划动翻页的速度档位，太快或太慢都在这里调。</p></div>
+    <div class="desc"><p>拖动滑条选择滚动速度，显示具体倍率与默认标记；点恢复默认可回到默认速度。</p></div>
   </div>
+<figure class="shot"><img loading="lazy" src="assets/settings-gestures.png?v=2.0.0-beta-release2" alt="2.0.0-beta 笔手势映射页"><figcaption>笔手势映射</figcaption></figure>
 </section>
 
 <section id="bridge">
@@ -186,7 +208,7 @@
 </section>
 
 <section id="display">
-  <h2>显示与缩放 <span class="where">只改平板那块屏</span></h2>
+  <h2>显示设置 <span class="where">分辨率与笔目标屏</span></h2>
   <div class="item">
     <div class="name">为什么会有这个功能<small>WHY</small></div>
     <div class="desc">
@@ -200,16 +222,15 @@
       </table>
     </div>
   </div>
+
   <div class="item">
-    <div class="name">多屏安全的设计<small>SAFETY</small></div>
-    <div class="desc">
-      <p>先用 EDID（厂商 <code>25001</code> / 型号 <code>4</code>）+ 屏幕名认出平板，认不出就把整组变灰、什么都不做；多个屏都像平板 → 拒绝（宁可不动也不猜）。<span class="mark">Mac 自带屏永不改</span>——改坏了自己那块屏就没法点菜单自救。提交时只改目标屏的<b>模式</b>，不碰其他屏的分辨率、排列、镜像。</p>
-    </div>
+    <div class="name">更改分辨率<small>DISPLAY MODES</small></div>
+    <div class="desc"><p>主页面显示当前逻辑分辨率、HiDPI 与刷新率摘要。点「更改…」打开独立模式面板，选择档位后点「应用」才切换；笔坐标基准随之更新。显示设置无需平板模块。</p></div>
+  </div>  <div class="item">
+    <div class="name">光标基准屏<small>TARGET SCREEN</small></div>
+    <div class="desc"><p>点击真实在线屏幕排列图，选择笔的光标基准屏；保留「自动」与列表选择入口。也可用菜单栏切换，或把「切换屏幕」绑定到笔手势。这里只改变笔的目标屏。</p></div>
   </div>
-  <div class="item">
-    <div class="name">切换立即生效<small>RESYNC</small></div>
-    <div class="desc"><p>切档自动重建坐标基准（<code>engine.resync_display()</code>），笔的落点立刻对齐新尺寸，<b>不用重启 App</b>。档位持久生效，重启后仍是这一档。想回 1x 3408×2272 原生档要用「打开「显示器」设置…」在系统设置里选。</p></div>
-  </div>
+<figure class="shot"><img loading="lazy" src="assets/settings-display.png?v=2.0.0-beta-release2" alt="2.0.0-beta 显示设置页"><figcaption>显示设置</figcaption></figure>
 </section>
 
 <section id="advanced">
@@ -218,31 +239,23 @@
     <div class="name">为什么要单独一个小窗<small>WHY</small></div>
     <div class="desc"><p>主窗口只留常用开关，不常用的都收进「高级选项…」—— 界面不至于一屏全是开关，也不至于把排查用的开关藏得找不到。状态与主窗口同一份，改完立即生效。</p></div>
   </div>
-  <div class="item">
-    <div class="name">光标基准屏<small>TARGET SCREEN</small></div>
-    <div class="desc"><p>笔是<b>绝对坐标</b>设备：它报的是「笔尖在平板上的位置」，App 再把这个位置换算成<b>某一块屏</b>上的点 —— 换算到哪块屏就是这里选的。<b>跟随光标</b>（默认）不移动光标，光标在哪块屏笔就在那块屏上生效；选<b>平板那块屏</b>或<b>任意一块在线屏</b>时笔接管光标，一比一铺到那块屏上。</p><p>这就是让笔跨到别的屏上的办法：菜单里换一块屏即可，改完立即生效。指定的屏被拔掉时自动退回「跟随光标」（日志里有说明）。<b>只改换算，不碰任何屏幕的设置、排列、镜像</b>。</p></div>
-  </div>
+
   <div class="item">
     <div class="name">拖拽位置跟随笔尖<small>DRAG SOURCE</small></div>
     <div class="desc"><p>拖拽时拿什么当落点。<b>关</b>（默认）= 以按下那一刻的光标为起点、跟着笔尖的位移走 —— 和「轻点」的落点一致；<b>开</b> = 直接用笔尖在平板上的绝对位置，笔到哪就拖到哪。只在「拖拽的起点总是不对」时才需要开。</p></div>
   </div>
-  <div class="item">
-    <div class="name">允许未验证的小米设备<small>WHITELIST+</small></div>
-    <div class="desc">
-      <p>给未来机型的<b>兜底开关</b>。默认只匹配已实测设备（小米平板 9 Pro Max，VID <code>0x2717</code> / <code>0x18D1</code> / PID <code>0x2D05</code> + 笔接口 usage），避免误碰小米其它产品。如果你的小米平板也是 DP-in 且笔能移光标，打开它试试；能用欢迎提 issue 把型号加进白名单（<code>src/dptouch_engine.py</code> 的 <code>KNOWN_DEVICES</code>）。</p>
-    </div>
-  </div>
+
   <div class="item">
     <div class="name">允许管理未实测的显示器<small>ALLOW+</small></div>
     <div class="desc"><p>多屏时「显示缩放」整组变灰说明没认出平板那块屏 —— 勾上这个才允许操作 EDID/名字不匹配的屏。这是防误触碰发的，确认列出来的是平板再开。</p></div>
   </div>
   <div class="item">
     <div class="name">自动检查更新<small>UPDATE</small></div>
-    <div class="desc"><p>整个程序只有这一项会让它联网：启动后静默查一次 GitHub 上的最新版本，之后每天一次；查到了就弹窗告诉你有新版。关掉它就完全不联网。</p><p>更新流程是：下载 → 按发版正文里的 <code>SHA256</code> 校验 → 退出程序 → 替换 App（旧版先备份，任何一步失败都回滚）→ 重新打开。设置和日志都在你自己的 <code>~/Library/</code> 下，更新不动它们。<b>只有查更新这一步会联网</b>（<code>api.github.com</code> 查版本、<code>github.com</code> 取安装包）。</p></div>
+    <div class="desc"><p>整个程序只有这一项会让它联网：启动后静默查一次 GitHub 上的最新版本，之后每天一次；查到了就弹窗告诉你有新版。关掉它就完全不联网。</p><p>更新流程是：下载 → 按发版正文里的 <code>SHA256</code> 校验 → 退出程序 → 替换 App（旧版先备份，任何一步失败都回滚）→ 重新打开。设置和日志都在你自己的 <code>~/Library/</code> 下，更新不动它们。<b>检查版本与下载安装包时会联网</b>（<code>api.github.com</code> 查版本、<code>github.com</code> 取安装包）。</p></div>
   </div>
   <div class="item">
     <div class="name">立即检查更新<small>CHECK NOW</small></div>
-    <div class="desc"><p>手动查一次。有新版本会给出更新说明和「下载并安装」；没有就告诉你已是最新；连不上 GitHub 会说清原因（这台机器上 <code>github.com</code> 有时不通，换网络再试）。</p></div>
+    <div class="desc"><p>手动查一次。有新版本会给出更新说明和「下载并安装」；没有则提示已是最新。</p></div>
   </div>
   <div class="item">
     <div class="name">停住再滑 / 停住不动的判定时长<small>THRESHOLDS</small></div>
@@ -260,19 +273,20 @@
   </div>
   <div class="item">
     <div class="name">详细日志<small>VERBOSE</small></div>
-    <div class="desc"><p>排查用。开了之后日志会列出笔的坐标和系统光标的差值：<b>差得明显</b> = 光标没跟上笔；<b>差值为 0 却点不动</b> = 事件发出去了、系统没认。日志在 <code>~/Library/Logs/MipadDPTouch.log</code>，只含笔事件计数，不含坐标历史和输入内容（App 不联网）。</p></div>
+    <div class="desc"><p>排查用。开了之后日志会列出笔的坐标和系统光标的差值：<b>差得明显</b> = 光标没跟上笔；<b>差值为 0 却点不动</b> = 事件发出去了、系统没认。日志在 <code>~/Library/Logs/MipadDPTouch.log</code>，用于查看输入与运行状态。</p></div>
   </div>
   <div class="item">
     <div class="name">诊断…<small>SELFTEST</small></div>
     <div class="desc"><p>跑一遍自检，把结果写进日志。「什么都不对」时先点它。也支持无头自检，命令见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/INSTALL.md">INSTALL.md</a>。</p></div>
   </div>
+<figure class="shot"><img loading="lazy" src="assets/settings-runtime.png?v=2.0.0-beta-release2" alt="2.0.0-beta 运行与诊断页"><figcaption>运行与诊断</figcaption></figure>
 </section>
 
 <section>
   <h2>隐私与卸载</h2>
   <div class="why">
     <span class="tag">PRIVACY</span>
-    <p>不联网，没有任何网络代码。只要两项最低权限：输入监控（读笔）+ 辅助功能（发鼠标事件）。卸载 = 菜单退出 → 删 App → 删 <code>~/Library/Application Support/MipadDPTouch/</code>，没有残留服务。</p>
+    <p>笔桥接使用两项权限：输入监控（读笔）+ 辅助功能（发鼠标事件）。卸载 = 菜单退出 → 删 App → 删 <code>~/Library/Application Support/MipadDPTouch/</code>，平板模块在 KernelSU / Magisk 管理器中卸载。</p>
   </div>
 </section>
 

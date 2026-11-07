@@ -454,6 +454,12 @@ cg.CGEventSetFlags.restype = None
 cg.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
 cg.CGEventSetIntegerValueField.restype = None
 cg.CGEventSetIntegerValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int64]
+cg.CGEventSetType.restype = None
+cg.CGEventSetType.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+cg.CGEventSetLocation.restype = None
+cg.CGEventSetLocation.argtypes = [ctypes.c_void_p, CGPoint]
+cg.CGEventSetDoubleValueField.restype = None
+cg.CGEventSetDoubleValueField.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_double]
 # 事件字段号: kCGMouseEventClickState(1) 让「双击」真的是双击 (应用看 clickCount),
 # kCGMouseEventButtonNumber(3) 让中键事件带对按键号。
 CLICK_STATE_FIELD = 1
@@ -785,6 +791,41 @@ class Bridge(object):
             cg.CGEventPost(0, ev)
         self.n += 2
 
+    def pinch_native(self, delta, phase, x, y):
+        """原生 magnify 事件: CGEvent type 29 + 未公开字段 55/110/113/132。
+
+        phase 用 IOHIDEventPhaseBits: 1=began 2=changed 4=ended 8=cancelled。
+        返回 False 表示创建失败（调用方回退到 ⌘±）。
+        """
+        try:
+            ev = cg.CGEventCreate(None)
+            if not ev:
+                return False
+            cg.CGEventSetType(ev, 29)
+            cg.CGEventSetLocation(ev, CGPoint(x, y))
+            cg.CGEventSetIntegerValueField(ev, 55, 29)    # kCGSEventTypeField
+            cg.CGEventSetIntegerValueField(ev, 110, 8)    # kCGEventGestureHIDType = Zoom
+            cg.CGEventSetDoubleValueField(ev, 113, float(delta))  # ZoomValue
+            cg.CGEventSetIntegerValueField(ev, 132, int(phase))   # kCGEventGesturePhase
+            cg.CGEventPost(0, ev)
+            cf.CFRelease(ev)
+            self.n += 1
+            return True
+        except Exception:
+            return False
+
+    def zoom_step(self, direction):
+        """捏合 -> ⌘+ / ⌘-（交给前台 App 的等效缩放）"""
+        code = 24 if direction > 0 else 27      # '=' / '-'
+        flags = 1 << 20                         # Command
+        if direction > 0:
+            flags |= 1 << 17                    # Shift => ⌘+
+        for down in (True, False):
+            ev = cg.CGEventCreateKeyboardEvent(None, code, down)
+            cg.CGEventSetFlags(ev, flags)
+            cg.CGEventPost(0, ev)
+        self.n += 2
+
     def drag(self):
         """按下状态下的移动 —— 必须发 LeftMouseDragged, 否则拖拽手势全部失效"""
         now = time.time()
@@ -1097,6 +1138,23 @@ class Bridge(object):
         self.ns += 1
         if self.ns <= 3 or self.ns % 100 == 0:
             self.say("滚轮 %d 次 (本次 %+d px)" % (self.ns, d))
+
+
+    def scroll_px(self, dx, dy):
+        """双指滚动: 像素级两轴 (dy>0 = 手指向下)。沿用 scroll_flip 与 gain。"""
+        dx = dx * self.gain
+        dy = dy * self.gain
+        if self.scroll_flip:
+            dx, dy = -dx, -dy
+        d, h = int(round(dy)), int(round(dx))
+        if not d and not h:
+            return
+        ev = cg.CGEventCreateScrollWheelEvent(None, SCROLL_UNIT_PIXEL, 2, d, h)
+        cg.CGEventPost(0, ev)
+        self.n += 1
+        self.ns += 1
+        if self.ns <= 3 or self.ns % 100 == 0:
+            self.say("双指滚动 %d 次 (本次 %+d,%+d px)" % (self.ns, d, h))
 
 
 def cmd_bridge(seconds):

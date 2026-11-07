@@ -41,16 +41,23 @@ from Foundation import (NSObject, NSTimer, NSRunLoop, NSDate, NSMakeRect,
 
 import dptouch_autostart as AS
 import dptouch_display as DP
+import dptouch_edid as EDID
 import dptouch_engine as E
 import dptouch_update as UPD
 import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "1.2.1"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "2.0.0-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
+if os.environ.get("DPTOUCH_SELFTEST_WINDOW"):
+    import tempfile
+    CFG_DIR = os.environ.get("DPTOUCH_TEST_DIR") or tempfile.mkdtemp(prefix="dptouch-window-", dir=os.environ.get("TMPDIR"))
+    os.makedirs(CFG_DIR, exist_ok=True)
+    CFG_PATH = os.path.join(CFG_DIR, "config.json")
+    LOG_PATH = os.path.join(CFG_DIR, "selftest.log")
 
 # 改名前 (Xiaomi DP Touch) 的路径 —— 首次启动自动搬一次, 免得老用户的设置/日志丢
 LEGACY_CFG_PATH = os.path.expanduser("~/Library/Application Support/XiaomiDPTouch/config.json")
@@ -84,6 +91,14 @@ DEFAULTS = {
     #   「Mac 触控解锁」是在平板侧跑的脚本, 见仓库 tablet/mac-touch.sh —— 没跑过的用户
     #   平板上只会出现笔接口, auto 与 pen 对他们完全等价。
     "input_mode": "auto",
+    # Persisted policy only. Engine resolves OS + live touch_iface before routing.
+    # OS preference does not verify system touch gestures/capability, and inactivity
+    # never triggers an automatic legacy fallback.
+    "touch_mode": "auto",
+    "legacy_touch_ack": False,
+    # 位置校正 (EDID 物理尺寸 override, 只对小米平板屏): 修正系统看到的物理尺寸,
+    #   消除原生触控落点偏移。由 src/dptouch_edid.py 的控制器 + 原生助手管理。
+    "edid_correct": True,  # strict verified factory profile only; persisted manual False wins
     # 首启引导: 权限不齐时自动打开设置窗口 —— 只做一次(开机自启每次登录都弹会烦)
     "onboarded": False,
     # 检查更新: 启动后静默查一次 + 之后每天一次。只有这一处会联网。
@@ -113,8 +128,22 @@ DISPLAY_PREFS_URLS = [
 # 配置持久化
 # --------------------------------------------------------------------------
 
+def macos_at_least(major, minor):
+    """系统版本 >= (major, minor)? macOS 27.3+ 默认原生触控, 老系统保留桥接模拟。"""
+    try:
+        import platform
+        v = (platform.mac_ver()[0] or "").split(".")
+        a = (int(v[0]) if v and v[0].isdigit() else 0,
+             int(v[1]) if len(v) > 1 and v[1].isdigit() else 0)
+        return (a[0], a[1]) >= (major, minor)
+    except Exception:
+        return False
+
+
 def _migrate_legacy_paths():
     """改名前 (Xiaomi DP Touch) 的配置与日志搬一次; 新路径已有则什么都不做。"""
+    if os.environ.get("DPTOUCH_SELFTEST_WINDOW"):
+        return
     try:
         if not os.path.exists(CFG_PATH) and os.path.exists(LEGACY_CFG_PATH):
             os.makedirs(CFG_DIR, exist_ok=True)
@@ -159,6 +188,11 @@ def load_cfg():
             log("老配置迁移: takeover %r -> 光标基准屏 %r"
                 % (raw.get("takeover"), cfg["target_display"]))
         cfg["target_display"] = _clean_target(cfg.get("target_display"))
+    from dptouch_mode import migrate
+    cfg["touch_mode"] = migrate(raw)
+    cfg.pop("native_touch", None)
+    if "native_touch" in raw and "touch_mode" not in raw:
+        log("触控模式迁移: 旧布尔值无手动来源标记，不能区分手动与版本默认 -> 自动；如需手动模式请重新选择")
     return cfg
 
 
@@ -281,6 +315,10 @@ class DPApp(NSObject):
         #   这些每次启动都被引擎自己的默认值悄悄盖掉: 设置窗口里显示 0.6 秒, 背后实际跑 0.8 秒。
         self.engine.update(**dict(self.cfg))
         self.enabled = bool(self.cfg.get("enabled", True))
+        # 位置校正控制器 (EDID 几何 B): 状态/备份/日志落 CFG_DIR; 助手路径不写死。
+        # 只有 app 启用 + 原生触控 + 校正开关三者同时为真才会管理 override。
+        self.edid = EDID.EDIDController(state_dir=CFG_DIR, log=log,
+                                        helper=EDID.find_helper())
         self._build_status_item()
         self._build_menu()
         # 设置窗口: 菜单栏应用也有一个看得见的主界面(状态 / 分步权限引导 / 全部选项)
@@ -369,7 +407,118 @@ class DPApp(NSObject):
                         "rclick": 2, "down": 0, "binds": HB.binds_from_cfg(self.cfg),
                         "flip": False, "error": ""}
 
+            # Final injection boundaries for the WHOLE isolated hook, including
+            # shared pen click/fire paths. No self-test may click the desktop.
+            from unittest.mock import patch as _ui_patch
+            from contextlib import ExitStack
+            self._ui_injection_guards = ExitStack()
+            for _boundary in ("CGEventPost", "CGEventPostToPid", "CGWarpMouseCursorPosition",
+                              "CGEventSetIntegerValueField", "CGEventCreateMouseEvent"):
+                if hasattr(HB.cg, _boundary):
+                    self._ui_injection_guards.enter_context(_ui_patch.object(HB.cg, _boundary, return_value=None))
+            from dptouch_ui_selftest import verify_native_controls
+            verify_native_controls(self, _p)
             _dev = (("小米平板 9 Pro Max", 0x18D1, 0x2D05, True),)
+            _ui_cfg = dict(self.cfg)
+            _ui_enabled = self.enabled
+            _ui_status = self.engine.status
+            try:
+                for _mode in ("native", "legacy", "pen_only"):
+                    for _policy in ("auto", "native", "legacy"):
+                        for _inactive in (None, "paused", "disconnected", "permission", "stopped", "input"):
+                            _snapshot = dict(_fake_st(True, True, 0, _dev), selected_mode=_mode,
+                                             touch_mode=_policy, touch_iface=_mode != "pen_only")
+                            self.enabled = _inactive != "paused"
+                            if _inactive == "disconnected": _snapshot["devices"] = []
+                            if _inactive == "permission": _snapshot["ax"] = False
+                            if _inactive == "stopped": _snapshot["running"] = False
+                            if _inactive == "input": _snapshot["rc"] = -1
+                            self.engine.status = lambda: dict(_snapshot)
+                            self.win.page = "overview"
+                            self.win._last_st = dict(_snapshot)
+                            self.win._relayout(animate=False)
+                            assert self.win.c["ov_mode"].stringValue() == UI.input_mode_text(_snapshot, self.enabled)[0]
+                            assert self.win.c["ov_mode_detail"].stringValue() == UI.input_mode_text(_snapshot, self.enabled)[1]
+                            assert not UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                            self.win.page = "gestures"
+                            self.win._relayout(animate=False)
+                            assert self.win.c["mapping_title"].stringValue() == ("手势映射" if _mode == "legacy" else "笔手势映射")
+                            if _mode == "native":
+                                assert self.win.c["mapping_scope"].stringValue() == "手指手势由系统处理，以下设置仅影响笔"
+                            assert all(self.win.c["bind_" + g].isEnabled() for g in HB.DEFAULT_BINDS)
+                            assert self.win.c["nat"].isEnabled() == ("scroll" in HB.binds_from_cfg(self.cfg).values())
+                            assert self.win.c["gain"].isEnabled() == self.win.c["nat"].isEnabled()
+                            # Interface selection also controls pen-bearing HID
+                            # matching; it is NOT a native finger gesture editor.
+                            assert self.win.c["enhanced"].isEnabled()
+                            _visual_layout = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                            assert not _visual_layout, _visual_layout
+                            assert self.cfg == _ui_cfg, "rendering clobbered config"
+                # Real AppKit dispatch, not a direct Python action call.
+                _snapshot.update(selected_mode="native", touch_mode="auto", ax=True, running=True, rc=0, devices=list(_dev))
+                self.enabled = True
+                self.win.refresh(force=True)
+                def _preview_pixels(_view):
+                    _rect = _view.bounds()
+                    _rep = _view.bitmapImageRepForCachingDisplayInRect_(_rect)
+                    _view.cacheDisplayInRect_toBitmapImageRep_(_rect, _rep)
+                    return bytes(_rep.TIFFRepresentation())
+                assert not any(k.startswith(("gesture_preview_", "result_")) for k in self.win.c)
+                _ctrl = self.win.c["bind_tap"]
+                _ctrl.selectItemAtIndex_(list(HB.gesture_actions("tap")).index("double"))
+                assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                assert HB.binds_from_cfg(self.cfg)["tap"] == "double"
+                assert self.engine.b.bind["tap"] == "double"
+                assert HB.binds_from_cfg(load_cfg())["tap"] == "double"
+                assert self.win.c["bind_tap"].titleOfSelectedItem() == HB.action_title("tap", "double")
+                # Read-only previews must follow real native action dispatch.
+                for _natural in ("on", "off", "system"):
+                    _ctrl = self.win.c["nat"]
+                    _ctrl.selectItemAtIndex_([k for k, _ in UI.NAT_LABELS].index(_natural))
+                    assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                    _expected = _natural == "on" or (_natural == "system" and self.win._sys_natural())
+                    assert self.win.c["scroll_preview"].data[0] == _expected
+                for _g, _title, _options, _note in UI.BIND_ROWS:
+                    for _i, _action in enumerate(_options):
+                        _ctrl = self.win.c["bind_" + _g]
+                        _ctrl.selectItemAtIndex_(_i)
+                        assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                        assert HB.binds_from_cfg(self.cfg)[_g] == _action
+                        assert _ctrl.titleOfSelectedItem() == HB.action_title(_g, _action)
+                        assert not any(k.startswith(("gesture_preview_", "result_")) for k in self.win.c)
+                self.reset_binds()
+                from dptouch_engine import GAINS as _visual_gains
+                for _i, (_gain, _label) in enumerate(_visual_gains):
+                    _ctrl = self.win.c["gain"]
+                    _ctrl.selectItemAtIndex_(_i)
+                    assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                    assert self.win.c["scroll_preview"].data[1] == float(_gain)
+                self.set_bind("tap", "double")
+                for _key, _values in (("hold_ms", UI._HOLD_MS), ("rc_hold", UI._RC_HOLD)):
+                    for _i, _ms in enumerate(_values):
+                        _ctrl = self.win.adv.c[_key]
+                        _ctrl.selectItemAtIndex_(_i)
+                        assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                        assert self.win.adv.c["time_" + _key].data[0] == _ms
+                        assert not UI.check_layout(self.win.adv.win.contentView(), UI.AW, UI.AH)
+                _p("可视反馈 AppKit 派发: 手势图示/结果文本已移除，映射选择器保留；三种滚动方向、全部时长档位与数值时间线通过")
+                _pen = E.Engine(log=lambda _: None)
+                _pen.touch_iface = True
+                _pen.update(touch_mode="native", bind_tap="double")
+                with _ui_patch.object(HB.cg, "CGEventCreateMouseEvent", return_value=None) as _pen_events:
+                    for _value in (1, 0):
+                        _pen.feed(13, 0x42, _value, 0, 1, rid=3)
+                    assert [c.args[1] for c in _pen_events.call_args_list] == [1, 2, 1, 2]
+                _p("模式概览/映射作用域: 54 状态布局、原生保留笔编辑、兼容恢复、AppKit 保存、刷新零配置改写 通过")
+            finally:
+                self.engine.status = _ui_status
+                self.enabled = _ui_enabled
+                self.cfg = _ui_cfg
+                self.engine.update(**self.cfg)
+                save_cfg(self.cfg)
+                self.win.page = "overview"
+                self.win._last_st = None
+                self.win._relayout(animate=False)
             for _tag, _st_ in (("权限不齐", _fake_st(False, False, -536870174)),
                                ("只缺输入监控", _fake_st(True, False, -536870174)),
                                ("权限就绪", _fake_st(True, True, 0, _dev))):
@@ -577,8 +726,8 @@ class DPApp(NSObject):
             _p("  第一次(权限不齐) -> 动作 %s" % (_first or ["无"]))
             _p("  第二次(同一会话) -> 动作 %s" % (_second or ["无"]))
             _p("  权限已齐         -> 动作 %s" % (_third or ["无"]))
-            _p("  自检: %s" % ("通过" if (_first == ["窗口"] and not _second
-                                         and not _third) else "不通过"))
+            _p("  自检: %s" % ("通过" if (_first == ["窗口"] and _second == ["窗口"]
+                                         and _third == ["窗口"]) else "不通过"))
             _p("=== 重启命令 (「立即重启」会跑的那条) ===")
             _p("  %s" % (self.relaunch_cmd() or "(空)"))
             _p("=== 界面文案里的括号 (用户嫌多) ===")
@@ -594,10 +743,230 @@ class DPApp(NSObject):
                 if "（" in _t or "(" in _t:
                     _bad.append("%s=%s" % (_k, _t))
             _p("  " + ("；".join(sorted(_bad)) if _bad else "一处都没有"))
+            assert [p[0] for p in UI.PAGES] == ["overview", "touch", "gestures", "display", "runtime"]
+            for _reduced in (False, True):
+                with _ui_patch.object(UI, "_reduce_transparency", return_value=_reduced):
+                    self.win.refresh(force=True)
+                    assert self.win._nav_reduced == _reduced
+                    _kind = self.win._nav_material
+                    assert _kind == ("visual-effect-accessibility" if _reduced else
+                                      "liquid-glass" if UI._public_glass_class() else "visual-effect-legacy")
+                    assert not UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                    _nav = self.win.c["nav_display"]
+                    assert self.win.win.isOpaque(), "native titlebar requires opaque window backing"
+                    assert self.win.win.backgroundColor().alphaComponent() == 1
+                    assert not self.win.win.titlebarAppearsTransparent()
+                    UI.audit_native_titlebar(self.win.win, _p)
+                    _host = _nav.superview()
+                    assert not _host.isOpaque()
+                    if _kind == "liquid-glass":
+                        _glass = _host.superview()
+                        while _glass is not None and not _glass.respondsToSelector_("contentView"):
+                            _glass = _glass.superview()
+                        assert _glass is not None
+                        assert _glass.contentView() is _host
+                        assert _glass.frame().size.height == UI.H
+                        assert _host.layer().backgroundColor() is not None
+                        assert UI.NSColor.colorWithCGColor_(_host.layer().backgroundColor()).alphaComponent() == 0
+                        assert all(_glass.respondsToSelector_(s) for s in ("setContentView:", "setCornerRadius:", "setStyle:", "setTintColor:"))
+                        _p("玻璃合成层级: opaque NSWindow / standard titlebar → full-height NSGlassEffectView → transparent contentView → native navigation; style=%s tint=%s" % (_glass.style(), _glass.tintColor()))
+                    assert _nav.superview() is not self.win.win.contentView(), "glass controls must be hosted, not siblings"
+                    _frame = _nav.frame()
+                    try:
+                        _nav.setFrameOrigin_((-20, _frame.origin.y))
+                        assert any("越界" in p for p in UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)), "material-host audit did not catch overflow"
+                    finally:
+                        _nav.setFrame_(_frame)
+                    assert NSApplication.sharedApplication().sendAction_to_from_(_nav.action(), _nav.target(), _nav)
+                    assert self.win.page == "display"
+                    _p("导航材质 reduced=%s: %s · 宿主层级/越界反证/AppKit 导航通过" % (_reduced, _kind))
+            with _ui_patch.object(UI, "_public_glass_class", return_value=None), \
+                 _ui_patch.object(UI, "_reduce_transparency", return_value=False):
+                _fallback, _kind, _ = UI._navigation_material(NSMakeRect(0, 0, 220, 600))
+                assert _kind == "visual-effect-legacy"
+                _p("导航材质 unavailable-class: %s" % _kind)
+            self.win.refresh(force=True)
+            _p("=== 五页布局审计 (固定窗口 980x700, 新控件不得撑大) ===")
+            for _pg in ("overview", "touch", "gestures", "display", "runtime"):
+                self.win.page = _pg
+                self.win._relayout(animate=False)
+                self.win.refresh(_fake_st(True, True, 0, _dev), force=True)
+                _probs = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                _h_ok = abs(self.win._H - UI.H) < 1
+                _p("  %-9s: %s | 窗口高度 %g (固定 %g)%s"
+                   % (_pg, "通过" if not _probs and _h_ok else "%d 处问题" % len(_probs),
+                      self.win._H, UI.H, "" if _h_ok else " !! 窗口被撑大了"))
+                for _pr in _probs[:6]:
+                    _p("      !! %s" % _pr)
+                assert not _probs and _h_ok, (_pg, _probs, self.win._H)
+                def _visible_texts(_view):
+                    if _view.isHidden(): return []
+                    _texts = []
+                    if isinstance(_view, UI.NSTextField): _texts.append(str(_view.stringValue()))
+                    if isinstance(_view, UI.NSButton) and not isinstance(_view, UI.NSPopUpButton): _texts.append(str(_view.title()))
+                    for _child in _view.subviews(): _texts.extend(_visible_texts(_child))
+                    return _texts
+                _visible = _visible_texts(self.win.win.contentView())
+                assert sum(_text.count("MIT") for _text in _visible) == 1, (_pg, _visible)
+                if _pg == "gestures":
+                    assert not any(k.startswith(("gesture_preview_", "result_")) for k in self.win.c)
+                    assert not any(t.startswith("结果 →") or t in ("left", "scroll", "drag", "right") for t in _visible)
+                    assert all("bind_" + g in self.win.c for g, *_ in UI.BIND_ROWS)
+                    assert "scroll_preview" in self.win.c
+                assert self.win.c["ver"].stringValue() == "v" + APP_VERSION
+                assert len([k for k in self.win.c if k.startswith("nav_")]) == 5
+                for _i, (_key, _, _title) in enumerate(UI.PAGES, 1):
+                    _nav = self.win.c["nav_" + _key]
+                    assert _nav.keyEquivalent() == str(_i)
+                    assert _nav.keyEquivalentModifierMask() == 1 << 20
+                    assert NSApplication.sharedApplication().sendAction_to_from_(_nav.action(), _nav.target(), _nav)
+                    assert self.win.page == _key
+                    assert not UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                    _size = self.win.win.contentView().frame().size
+                    assert abs(_size.width - 980) < 1 and abs(_size.height - 700) < 1
+                self.win.page = _pg
+                self.win._relayout(animate=False)
+                if _pg == "display":
+                    from unittest.mock import patch as _test_patch
+                    assert all(k in self.win.c for k in ("disp", "disp_dev", "disp_hint", "target"))
+                    assert "touch_mode" not in self.win.c
+                    _target = self.win.c["target"]
+                    _target.selectItemAtIndex_(0)
+                    with _test_patch.object(type(self), "set_target") as _set_target:
+                        assert NSApplication.sharedApplication().sendAction_to_from_(_target.action(), _target.target(), _target)
+                        _set_target.assert_called_once_with(self._tgt_opts[0][0])
+                    _visual_cfg = dict(self.cfg)
+                    _screens = [dict(id=701, name="离线测试屏 A", main=True, builtin=True,
+                                     bounds=(0, 0, 1920, 1080), logical=(1920, 1080), match=""),
+                                dict(id=702, name="离线测试屏 B", main=False, builtin=False,
+                                     bounds=(1920, 0, 1280, 800), logical=(1280, 800), match="")]
+                    with _test_patch.object(DP, "displays", return_value=_screens), \
+                         _test_patch.object(self.edid, "tick"), _test_patch.object(self.edid, "reconfigure"), \
+                         _test_patch.object(self.edid, "set_desired"):
+                        for _did in (701, 702):
+                            self.win.refresh(force=True)
+                            _choices = list(self.target_choices())
+                            _target = self.win.c["target"]
+                            _target.selectItemAtIndex_([str(k) for k, _ in _choices].index(str(_did)))
+                            assert NSApplication.sharedApplication().sendAction_to_from_(_target.action(), _target.target(), _target)
+                            assert self.win.c["monitor_preview"].data[1] == _did
+                            assert self.engine.target["id"] == _did
+                        # Disconnection removes the missing monitor, and shows the
+                        # engine's real fallback rather than an invented online target.
+                        _screens.pop()
+                        self.engine._sync_target()
+                        self.win.refresh(force=True)
+                        assert self.win.c["monitor_preview"].data[1] == 701
+                        assert len(self.win.c["monitor_preview"].data[0]) == 1
+                        assert "不在线" in self.win.c["target_note"].stringValue()
+                        _screens.clear()
+                        self.engine._sync_target()
+                        self.win.refresh(force=True)
+                        assert self.win.c["monitor_preview"].data == ([], None)
+                    self.cfg = _visual_cfg
+                    self.engine.update(**self.cfg)
+                    save_cfg(self.cfg)
+                    _p("    显示可视反馈: AppKit 目标切换 A/B、高亮实际解析屏、断开回退及零屏通过 · 离线 fixture")
+                if _pg == "runtime":
+                    _was_debug = bool(self.cfg["debug_log"])
+                    _ctrl = self.win.c["debug"]
+                    for _on in (not _was_debug, _was_debug):
+                        _ctrl.setState_(int(_on))
+                        assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                        assert self.win.c["state_debug"].data[0] == _on
+                    _p("    常规可视反馈: AppKit 日志开关状态徽标变化通过 · 自启仅查询未注册")
+                if _pg == "touch":
+                    assert "disp" not in self.win.c and "target" not in self.win.c
+                # 显示页控件必须存在，而且使用 AppKit 真正派发动作。
+                if _pg == "touch":
+                    for _k in ("touch_mode", "touch_actual", "touch_reason", "edid_correct", "edid_status",
+                               "disp_settings_btn"):
+                        _p("    显示页控件 %-18s: %s" % (_k, "在" if _k in self.win.c else "缺失!"))
+                        assert _k in self.win.c, _k
+                        _control = self.win.c[_k]
+                        if hasattr(_control, "action") and _control.action():
+                            assert _control.target().respondsToSelector_(_control.action()), _k
+                    from unittest.mock import patch as _test_patch
+                    from AppKit import NSSegmentedControl
+                    assert isinstance(self.win.c["touch_mode"], NSSegmentedControl)
+                    assert self.win.c["touch_mode"].segmentCount() == 3
+                    for _state in ("applied", "disabled", "checking", "unsupported", "ambiguous", "failed"):
+                        with _test_patch.object(type(self), "edid_status", return_value={"state": _state, "helper_ok": True}):
+                            self.win.refresh(force=True)
+                            assert self.win.c["edid_status"].stringValue()
+                            assert not UI.check_layout(self.win.win.contentView(), UI.W, self.win._H), _state
+                    _p("    原生三选一、光标目标 AppKit 派发、校正六状态布局: 通过")
+                    _probe = E.Engine(log=lambda _: None)
+                    with _test_patch("platform.mac_ver", return_value=("27.3", (), "")), \
+                         _test_patch.object(HB.cg, "CGEventCreateMouseEvent", return_value=None) as _posts, \
+                         _test_patch.object(HB.cg, "CGEventPost"), _test_patch.object(HB.cg, "CGEventSetIntegerValueField"), \
+                         _test_patch.object(_probe.b, "scroll_px"), _test_patch.object(_probe.b, "pinch_native"):
+                        for _ in range(2):
+                            for _page, _usage, _value in ((1, 0x31, 400), (1, 0x30, 600), (13, 0x42, 1), (13, 0x42, 0)):
+                                _probe.feed(_page, _usage, _value, 0, 1000, rid=1)
+                        assert _probe.status()["selected_mode"] == "native" and not _posts.called
+                        for _value in (1, 0):
+                            _probe.feed(13, 0x42, _value, 0, 1, rid=3)
+                        assert {1, 2}.issubset({_call.args[1] for _call in _posts.call_args_list})
+                        _p("    冻结/源码真实 Engine.feed: 首帧前自动原生、两轮手指零合成、笔 down/up 保留")
+                    # Real AppKit target/action -> policy -> Engine -> persisted JSON.
+                    # EDID calls are intercepted: never alter the live display.
+                    _policy_cfg = dict(self.cfg)
+                    _policy_engine_cfg = dict(self.engine.cfg)
+                    _policy_iface = self.engine.touch_iface
+                    with _test_patch.object(self.edid, "tick"), _test_patch.object(self.edid, "reconfigure"), \
+                         _test_patch.object(self.edid, "set_desired") as _desired:
+                        for _version in ("27.2", "27.3"):
+                            for _iface in (False, True):
+                                for _index, _policy in enumerate(("auto", "native", "legacy")):
+                                    self.engine.touch_iface = _iface
+                                    self.engine.update()
+                                    with _test_patch("platform.mac_ver", return_value=(_version, (), "")), \
+                                         _test_patch.object(type(self.win), "_confirm_legacy_touch", return_value=True):
+                                        _ctrl = self.win.c["touch_mode"]
+                                        _ctrl.selectItemAtIndex_(_index)
+                                        assert NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                                        assert self.cfg["touch_mode"] == _policy
+                                        assert load_cfg()["touch_mode"] == _policy
+                                        _ms = self.engine.status()
+                                        from dptouch_mode import resolve as _resolve_policy
+                                        assert _ms["selected_mode"] == _resolve_policy(_policy, _iface, _version, True)["selected_mode"]
+                                        assert _desired.call_args.args[1] == bool(_iface and _ms["native_touch"])
+                                        self.win.refresh(force=True)
+                                        assert self.win.c["route_preview"].data[0] == _ms["selected_mode"]
+                                        assert not UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                                        _p("    策略 AppKit: OS=%s touch=%s policy=%s actual=%s reason=%s" % (_version, _iface, _policy, _ms["selected_mode"], self.win.c["touch_reason"].stringValue()))
+                        with _test_patch("platform.mac_ver", return_value=("27.3", (), "")), \
+                             _test_patch.object(type(self.win), "_confirm_legacy_touch", return_value=False):
+                            self.set_touch_mode("auto")
+                            _ctrl = self.win.c["touch_mode"]
+                            _ctrl.selectItemAtIndex_(2)
+                            NSApplication.sharedApplication().sendAction_to_from_(_ctrl.action(), _ctrl.target(), _ctrl)
+                            assert self.cfg["touch_mode"] == "auto" and _ctrl.indexOfSelectedItem() == 0
+                            _p("    高级兼容模拟取消确认: 保持自动，未绕过警告")
+                    self.cfg = _policy_cfg
+                    self.engine.touch_iface = _policy_iface
+                    self.engine.update(**_policy_engine_cfg)
+                    save_cfg(self.cfg)
+                    assert "calibrate" not in self.win.c
+                    _st_txt = self.win.c.get("edid_status")
+                    _p("    位置校正状态行: %r / %r"
+                       % (_st_txt.stringValue() if _st_txt else "",
+                          self.win.c.get("edid_status2").stringValue()
+                          if "edid_status2" in self.win.c else ""))
             self.win.page = "overview"
             self.win._relayout(animate=False)      # 收尾: 回到默认页
             if _sw == "exit" or _sw == "show" or _sw.startswith("shot"):
                 if _sw != "exit":
+                    from AppKit import NSAppearance
+                    _appearance = os.environ.get("DPTOUCH_SHOT_APPEARANCE", "")
+                    if _appearance in ("light", "dark"):
+                        NSApplication.sharedApplication().setAppearance_(NSAppearance.appearanceNamed_(
+                            "NSAppearanceNameAqua" if _appearance == "light" else "NSAppearanceNameDarkAqua"))
+                    if os.environ.get("DPTOUCH_SHOT_REDUCED") == "1":
+                        self._ui_injection_guards.enter_context(_ui_patch.object(UI, "_reduce_transparency", return_value=True))
+                        self.win._relayout(animate=False)
+                    _p("截图导航材质: %s" % self.win._nav_material)
                     # 真把窗口显示出来一次 (证明"界面能弹出来"), 读到状态就立刻收起
                     self.win.show()
                     _p("显示自检: isVisible=%s frame=%s"
@@ -607,6 +976,9 @@ class DPApp(NSObject):
                     if os.environ.get("DPTOUCH_SHOT_DONE"):
                         try:
                             _fake = _fake_st(True, True, 0, _dev)
+                            # Representative screenshot fixture only; no hardware claim.
+                            _fake.update(selected_mode="native", touch_mode="auto", touch_iface=True,
+                                         native_touch=True, mode_reason="截图示例 · 自动选择原生触控")
                             # 连引擎的状态一起钉住: 否则每次刷新的递归都会去问真实引擎
                             # (自检里引擎没跑), 假状态刚喂进去就被顶回来。
                             self.engine.status = lambda: dict(_fake)
@@ -635,7 +1007,26 @@ class DPApp(NSObject):
                             pass
                         NSRunLoop.currentRunLoop().runUntilDate_(
                             NSDate.dateWithTimeIntervalSinceNow_(0.8))
-                        _cv = self.win.win.contentView()
+                        _shot_window = self.win.win
+                        if os.environ.get("DPTOUCH_SHOT_ADVANCED") == "1":
+                            self.win.adv.show()
+                            _shot_window = self.win.adv.win
+                            NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.2))
+                        if os.environ.get("DPTOUCH_SHOT_MODE_PANEL") == "1":
+                            from unittest.mock import patch as _mode_patch
+                            self._disp_tgt = dict(id=999, name="离线 fixture 平板屏")
+                            self._disp_opts = [dict(w=1704,h=1136,pw=3408,ph=2272,hz=60,hidpi=True),
+                                               dict(w=1280,h=800,pw=2560,ph=1600,hz=60,hidpi=True)]
+                            with _mode_patch.object(DP, "current", return_value=dict(self._disp_opts[0])), \
+                                 _mode_patch.object(DP, "panel_native", return_value=(3408,2272)):
+                                self.win._sync_display()
+                                self.win.mode_panel.setTitle_("更改分辨率 · 离线 fixture")
+                                self.win.mode_panel.makeKeyAndOrderFront_(None)
+                                self.win.c["disp"].selectItemAtIndex_(1)
+                                self.win.onModeSelection_(self.win.c["disp"])
+                            _shot_window = self.win.mode_panel
+                            NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.2))
+                        _cv = _shot_window.contentView()
                         # ★给 README 出图: 连标题栏一起拍, 看起来才像"一个真窗口",
                         # 而不是飘在灰底上的一块内容。主题框 (contentView 的父视图) 自己会
                         # 画标题栏和红绿灯; 拿不到就退回只拍内容视图。
@@ -645,7 +1036,7 @@ class DPApp(NSObject):
                         # (a) 先把背景铺一层窗口背景色 —— 视图自己不画背景,
                         #     不然渲染出来底色是透明的 (看起来像黑底)
                         _rep = _fr.bitmapImageRepForCachingDisplayInRect_(_rec)
-                        _bgc = self.win.win.backgroundColor()
+                        _bgc = _shot_window.backgroundColor()
                         if _bgc is not None:
                             _g = NSGraphicsContext.graphicsContextWithBitmapImageRep_(_rep)
                             NSGraphicsContext.saveGraphicsState()
@@ -686,7 +1077,7 @@ class DPApp(NSObject):
                               len(_dat)))
                         # (b) 同一时刻再导一份 PDF (矢量, 文字必在), 便于比对/放大
                         try:
-                            _pdf = self.win.win.dataWithPDFInsideRect_(_rec_cv)
+                            _pdf = _shot_window.dataWithPDFInsideRect_(_rec_cv)
                             _pok = bool(_pdf.writeToFile_atomically_(_path + ".pdf", True))
                             _p("PDF 自检: ok=%s -> %s.pdf | %d 字节"
                                % (_pok, _path, len(_pdf)))
@@ -1274,6 +1665,16 @@ class DPApp(NSObject):
         self._sync_display()
         self._sync_target_menu()
         self._upd_tick()             # 检查更新: 排期 + 取后台结果
+        # 位置校正控制器: 按三个开关的现状推进状态机 (应用/恢复/拓扑重应用/退避)。
+        # 内部全部短路, 不会在每秒 tick 上反复 apply。
+        try:
+            self.edid.set_desired(self.enabled,
+                                  self.native_touch_active(),
+                                  bool(self.cfg.get("edid_correct")))
+            self.edid.tick()
+        except Exception as e:
+            log("EDID 控制器异常: %r" % (e,))
+        self._poll_calibration()
 
     @objc.python_method
     def _sync_display(self, force=False):
@@ -1356,6 +1757,13 @@ class DPApp(NSObject):
         self.cfg["enabled"] = self.enabled
         save_cfg(self.cfg)
         self._reflect()
+        # 「app 启用」是位置校正的三个闸门之一: 关掉 -> 立即恢复工厂 EDID
+        try:
+            self.edid.set_desired(self.enabled, self.native_touch_active(),
+                                  bool(self.cfg.get("edid_correct")))
+            self.edid.tick()
+        except Exception as e:
+            log("EDID 控制器推进失败: %r" % (e,))
 
     def actClearCounters_(self, sender):
         self.engine.zero_counters()      # 连 Bridge 的计数一起清 (HID 线程在动那批字段)
@@ -1665,6 +2073,78 @@ class DPApp(NSObject):
         log("输入模式 -> %s" % HB2.input_mode_title(mode))
 
     @objc.python_method
+    def native_touch_active(self):
+        st = self.engine.status()
+        return bool(st.get("touch_iface") and st.get("native_touch"))
+
+    @objc.python_method
+    def set_touch_mode(self, mode, acknowledged=False):
+        from dptouch_mode import POLICIES, modern
+        if mode not in POLICIES:
+            return False
+        if mode == "legacy" and modern() and not acknowledged:
+            return False
+        self._apply(touch_mode=mode, legacy_touch_ack=bool(mode == "legacy" and acknowledged))
+        self.edid.reconfigure()
+        self.edid.set_desired(self.enabled, self.native_touch_active(), bool(self.cfg.get("edid_correct")))
+        self.edid.tick()
+        return True
+
+    @objc.python_method
+    def set_native_touch(self, on):
+        """原生触控模式: 开 = 手指事件由 macOS 系统直接处理 (桥接只计数不合成,
+        否则与系统双发); 关 = 老行为 (桥接模拟)。笔路径两种模式下一字不改。
+
+        开这个开关不会替用户在系统里开触控手势 —— 那一步在系统设置 (设置页里有
+        「打开『显示器』设置…」入口)。
+        """
+        # Compatibility entry point never bypasses legacy acknowledgement.
+        return self.set_touch_mode("native" if on else "legacy")
+
+    @objc.python_method
+    def set_edid_correct(self, on):
+        """位置校正 (EDID 几何 B): 开 = 管理平板屏的物理尺寸 override,
+        关 = 恢复工厂 EDID。目标必须唯一匹配且没有第三方 override, 否则拒绝。"""
+        on = bool(on)
+        if on == bool(self.cfg.get("edid_correct")):
+            return
+        self._apply(edid_correct=on)
+        self.edid.reconfigure()
+        try:
+            self.edid.set_desired(self.enabled, self.native_touch_active(),
+                                  bool(self.cfg.get("edid_correct")))
+            self.edid.tick()          # 立即推一次 (开关/退出/恢复都是马上执行)
+        except Exception as e:
+            log("EDID 控制器推进失败: %r" % (e,))
+        log("位置校正 -> %s" % ("开" if on else "关"))
+        try:
+            self.win.refresh(force=True)
+        except Exception:
+            pass
+
+    @objc.python_method
+    def edid_status(self):
+        """位置校正控制器现状 (设置页状态行 / 诊断共用这一份)。"""
+        try:
+            return self.edid.status()
+        except Exception as e:
+            return {"state": "unsupported", "detail": "控制器不可用: %r" % (e,),
+                    "helper": None, "helper_ok": False}
+
+    def actOpenTouchSettings_(self, sender):
+        open_prefs(["x-apple.systempreferences:com.apple.Touch-Settings.extension"])
+
+    @objc.python_method
+    def start_calibration(self):
+        """User measurement route is withdrawn; stale callers fail closed."""
+        return False
+
+    @objc.python_method
+    def _poll_calibration(self):
+        """Do not resume or analyze a historical user measurement session."""
+        return None
+
+    @objc.python_method
     def relaunch_cmd(self):
         """重启用什么命令: 装在 .app 里就 open -a 那个 bundle, 开发态就直接跑脚本。
 
@@ -1685,6 +2165,10 @@ class DPApp(NSObject):
     def actRelaunch_(self, sender=None):
         """重启本程序 —— 授权后 TCC 要求新进程才生效, 这一步本来要用户自己去退出再打开。"""
         log("重启: 由设置窗口里的「立即重启」触发")
+        try:
+            self.edid.shutdown("重启")
+        except Exception as e:
+            log("EDID 控制器退出失败: %r" % (e,))
         try:
             self.engine.stop()
         except Exception:
@@ -1911,6 +2395,10 @@ class DPApp(NSObject):
             return
         log("更新: 交给后台脚本换包 (本进程 pid %d) -> %s" % (os.getpid(), script))
         try:
+            self.edid.shutdown("更新换包")
+        except Exception as e:
+            log("EDID 控制器退出失败: %r" % (e,))
+        try:
             self.engine.stop()
         except Exception:
             pass
@@ -1990,6 +2478,8 @@ class DPApp(NSObject):
             "方向翻转: %s | 增益 %.2g" % (st["flip"], self.cfg["gain"]),
             "系统自然滚动: %s" % E.system_natural_scrolling(),
             "",
+            "EDID 位置校正: %s" % self._edid_diag_line(),
+            "",
             "日志: %s" % LOG_PATH,
         ]
         if st["error"]:
@@ -1999,8 +2489,30 @@ class DPApp(NSObject):
         alert.runModal()
 
 
+    @objc.python_method
+    def _edid_diag_line(self):
+        """诊断弹窗里的位置校正一行 (与设置页状态行同一份状态)。"""
+        try:
+            es = self.edid.status()
+        except Exception as e:
+            return "控制器不可用 (%r)" % (e,)
+        txt = {"applied": "已应用", "disabled": "未启用", "unsupported": "不可用",
+               "ambiguous": "目标不唯一", "checking": "检查中", "failed": "失败"}.get(
+                   es.get("state"), es.get("state"))
+        if es.get("state") == "applied" and es.get("readback_after"):
+            ra = es["readback_after"]
+            txt = "已应用 · 系统读回 %.1f×%.1f mm" % (ra[0], ra[1])
+        if es.get("detail"):
+            txt += " (%s)" % es["detail"][:80]
+        txt += " | 助手: %s" % (es.get("helper") or "缺失")
+        return txt
+
     def actQuit_(self, sender):
         log("退出")
+        try:
+            self.edid.shutdown("退出")
+        except Exception as e:
+            log("EDID 控制器退出失败: %r" % (e,))
         try:
             self.engine.stop()
         except Exception:
@@ -2009,6 +2521,17 @@ class DPApp(NSObject):
 
 
 def main():
+    # Window self-tests dispatch real actions: never write the user's config.
+    global CFG_DIR, CFG_PATH, LOG_PATH
+    if os.environ.get("DPTOUCH_SELFTEST_WINDOW"):
+        import tempfile
+        original_config = CFG_PATH
+        CFG_DIR = tempfile.mkdtemp(prefix="dptouch-window-selftest-")
+        CFG_PATH = os.path.join(CFG_DIR, "config.json")
+        if os.path.isfile(original_config):
+            shutil.copy2(original_config, CFG_PATH)
+        if os.environ.get("DPTOUCH_SELFTEST_LOG"):
+            LOG_PATH = os.path.abspath(os.environ["DPTOUCH_SELFTEST_LOG"])
     fanout_output()
     AS.set_logger(log)
     try:

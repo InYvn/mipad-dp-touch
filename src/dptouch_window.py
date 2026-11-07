@@ -25,12 +25,13 @@ GUI 是"我改我看不见"的东西, 所以布局给了离线质检: ``check_la
 import os
 
 import objc
+from dptouch_previews import SettingPreview
 from AppKit import (
     NSAffineTransform, NSAttributedString, NSBackingStoreBuffered, NSBox, NSBundle, NSButton,
     NSColor, NSFont, NSGradient, NSGraphicsContext, NSShadow,
     NSFontAttributeName, NSForegroundColorAttributeName, NSImage, NSImageView,
     NSMakePoint, NSMakeRect, NSMakeSize,
-    NSObject, NSPopUpButton, NSTrackingArea,
+    NSObject, NSPopUpButton, NSSegmentedControl, NSSlider, NSTrackingArea,
     NSTextField, NSWindow, NSWorkspace,
     NSWindowStyleMaskClosable, NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskTitled,
 )
@@ -45,9 +46,257 @@ except Exception:                           # pragma: no cover
 # 下拉框文字画成灰的, 而且第一次点击只用来激活 App、不落到控件上(用户看到的就是
 # "选项是灰的、点了没反应、勾选又弹回去")。这两个子类让控件直接吃下第一击;
 # 抢焦点另见 SettingsWindow._activate()。
+class _TitlebarActionProbe(NSWindow):
+    def close(self):
+        self.close_action_seen = True
+
+
+def audit_native_titlebar(win, report=print):
+    """Inspect actual AppKit hit testing; never inject desktop mouse events."""
+    from AppKit import (NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton,
+                        NSWindowStyleMaskFullSizeContentView, NSWindowStyleMaskResizable)
+    assert win.isOpaque() and win.backgroundColor().alphaComponent() == 1
+    assert not win.titlebarAppearsTransparent()
+    assert not win.styleMask() & NSWindowStyleMaskFullSizeContentView
+    assert not win.ignoresMouseEvents() and win.isMovable()
+    content = win.contentView()
+    root = content.superview()
+    assert root is not None
+    content_rect = content.convertRect_toView_(content.bounds(), root)
+    for kind in (NSWindowCloseButton, NSWindowMiniaturizeButton):
+        button = win.standardWindowButton_(kind)
+        assert button is not None and button.isEnabled() and not button.isHiddenOrHasHiddenAncestor()
+        assert button.window() is win and button.respondsToSelector_("accessibilityPerformPress")
+        report("Native accessibility: role=%s element=%s" % (button.accessibilityRole(), button.isAccessibilityElement()))
+        bounds = button.bounds()
+        center = (bounds.size.width / 2, bounds.size.height / 2)
+        point = button.convertPoint_toView_(center, root)
+        hit = root.hitTest_(point)
+        assert hit is button or (hit is not None and hit.isDescendantOf_(button)), (kind, hit)
+        assert point.y >= content_rect.origin.y + content_rect.size.height
+        action, target = button.action(), button.target()
+        assert action is not None
+        from AppKit import NSApplication
+        assert NSApplication.sharedApplication().targetForAction_to_from_(action, target, button) is not None
+        report("Native titlebar: button=%s enabled visible native-control action=%s frame=%s hit=%s" %
+               (kind, action, button.convertRect_toView_(bounds, root), hit.__class__.__name__))
+    zoom = win.standardWindowButton_(NSWindowZoomButton)
+    assert zoom is not None and not zoom.isHiddenOrHasHiddenAncestor()
+    assert bool(zoom.isEnabled()) == bool(win.styleMask() & NSWindowStyleMaskResizable)
+    zp = zoom.convertPoint_toView_((zoom.bounds().size.width / 2, zoom.bounds().size.height / 2), root)
+    assert root.hitTest_(zp) is zoom
+    report("Native titlebar: green zoom visible hit=button enabled=%s (original fixed-size style preserved)" % zoom.isEnabled())
+    # Center of the native titlebar is outside custom content, leaving AppKit drag handling intact.
+    assert win.frame().size.height > content.frame().size.height
+    probe = _TitlebarActionProbe.alloc().initWithContentRect_styleMask_backing_defer_(
+        NSMakeRect(0, 0, 120, 80), win.styleMask(), NSBackingStoreBuffered, False)
+    probe.setReleasedWhenClosed_(False)
+    probe.close_action_seen = False
+    close = probe.standardWindowButton_(NSWindowCloseButton)
+    assert NSApplication.sharedApplication().sendAction_to_from_(close.action(), close.target(), close)
+    assert probe.close_action_seen, "native _close: did not reach performClose:"
+    probe.orderOut_(None)
+    report("Native titlebar: opaque alpha=1 standard chrome; no full-size content overlay; movable=True; native close dispatch reached mock close")
+
+
+def _reduce_transparency():
+    """Read the system accessibility preference; tests replace this accessor only."""
+    try:
+        return bool(NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceTransparency())
+    except Exception:
+        return True  # fail toward readability
+
+
+def _public_glass_class():
+    from Foundation import NSClassFromString
+    if NSClassFromString("NSGlassEffectView") is None:
+        return None
+    try:
+        return getattr(__import__("AppKit"), "NSGlassEffectView", None) or objc.lookUpClass("NSGlassEffectView")
+    except Exception:
+        return None
+
+
+def _navigation_material(rect):
+    """Real public Liquid Glass for navigation only, never the content plane.
+
+    NSVisualEffectView is the older/accessibility fallback, not Liquid Glass.
+    Keep controls inside contentView so AppKit applies legibility treatments.
+    """
+    reduced = _reduce_transparency()
+    cls = None if reduced else _public_glass_class()
+    if cls is not None:
+        try:
+            view = cls.alloc().initWithFrame_(rect)
+            if all(view.respondsToSelector_(sel) for sel in ("setContentView:", "setCornerRadius:")):
+                view.setContentView_(NSView.alloc().initWithFrame_(NSMakeRect(0, 0, rect.size.width, rect.size.height)))
+                view.setCornerRadius_(0.0)  # a full-height pane, not an inset card
+                view.setIdentifier_("line")
+                return view, "liquid-glass", reduced
+        except Exception:
+            pass
+    from AppKit import (NSVisualEffectView, NSVisualEffectMaterialSidebar,
+                        NSVisualEffectBlendingModeBehindWindow, NSVisualEffectStateFollowsWindowActiveState)
+    view = NSVisualEffectView.alloc().initWithFrame_(rect)
+    view.setMaterial_(NSVisualEffectMaterialSidebar)
+    view.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+    view.setState_(NSVisualEffectStateFollowsWindowActiveState)
+    view.setIdentifier_("line")
+    return view, "visual-effect-accessibility" if reduced else "visual-effect-legacy", reduced
+
+
 class _FirstMousePopup(NSPopUpButton):
     def acceptsFirstMouse_(self, event):
         return True
+
+
+class _TouchModeSegments(NSSegmentedControl):
+    """Native select-one control; preserves the popup binding contract."""
+    def acceptsFirstMouse_(self, event):
+        return True
+
+    @objc.python_method
+    def selectItemAtIndex_(self, index):
+        self.setSelectedSegment_(index)
+
+    @objc.python_method
+    def indexOfSelectedItem(self):
+        return self.selectedSegment()
+
+
+class _ThresholdSlider(NSSlider):
+    """Discrete native slider; keeps existing index-based action selectors."""
+    def acceptsFirstMouse_(self, event):
+        return True
+
+    @objc.python_method
+    def selectItemAtIndex_(self, index):
+        self.setDoubleValue_(float(index))
+
+    @objc.python_method
+    def indexOfSelectedItem(self):
+        return int(round(self.doubleValue()))
+
+
+from AppKit import NSTableView, NSTableColumn, NSIndexSet, NSScrollView, NSPanel
+
+
+class _ModeList(NSTableView):
+    @objc.python_method
+    def removeAllItems(self):
+        self.titles = []
+        self.reloadData()
+
+    @objc.python_method
+    def addItemsWithTitles_(self, titles):
+        self.titles.extend(titles)
+        self.reloadData()
+
+    @objc.python_method
+    def selectItemAtIndex_(self, index):
+        self.selectRowIndexes_byExtendingSelection_(NSIndexSet.indexSetWithIndex_(index), False)
+
+    @objc.python_method
+    def indexOfSelectedItem(self):
+        return self.selectedRow()
+
+    @objc.python_method
+    def titleOfSelectedItem(self):
+        i = self.selectedRow()
+        return self.titles[i] if 0 <= i < len(self.titles) else ""
+
+    def numberOfRowsInTableView_(self, table):
+        return len(self.titles)
+
+    def tableView_objectValueForTableColumn_row_(self, table, column, row):
+        return self.titles[row]
+
+
+def mode_list(rect):
+    table = _ModeList.alloc().initWithFrame_(rect)
+    table.titles = []
+    column = NSTableColumn.alloc().initWithIdentifier_("mode")
+    column.setWidth_(rect.size.width - 20)
+    column.headerCell().setStringValue_("逻辑尺寸 · 输出模式 · 刷新率")
+    table.addTableColumn_(column)
+    table.setRowHeight_(32)
+    table.setAllowsMultipleSelection_(False)
+    table.setDataSource_(table)
+    table.setAccessibilityLabel_("可用分辨率；选择后按应用才会切换")
+    return table
+
+
+class _ActionMenu(NSPopUpButton):
+    """Flat native menu entry; menu headers never change the persisted action index."""
+    def acceptsFirstMouse_(self, event):
+        return True
+
+    @objc.python_method
+    def indexOfSelectedItem(self):
+        item = self.selectedItem()
+        return item.tag() if item else 0
+
+    @objc.python_method
+    def selectItemAtIndex_(self, index):
+        for item in self.itemArray():
+            if item.isEnabled() and item.tag() == index:
+                self.selectItem_(item)
+                return
+
+
+def action_control(rect, gesture):
+    from AppKit import NSMenu, NSMenuItem
+    options = HB.gesture_actions(gesture)
+    control = _ActionMenu.alloc().initWithFrame_pullsDown_(rect, False)
+    control.setBordered_(False)
+    menu = NSMenu.alloc().initWithTitle_("映射行为")
+    menu.setAutoenablesItems_(False)
+    symbols = {"none": "nosign", "left": "cursorarrow.click", "right": "contextualmenu.and.cursorarrow",
+               "middle": "computermouse", "double": "cursorarrow.click.2", "scroll": "arrow.up.arrow.down",
+               "drag": "arrow.up.left.and.arrow.down.right", "space": "space", "back": "arrow.backward", "screen": "display.2"}
+    for heading, keys in (("鼠标", ("left", "right", "middle", "double")),
+                          ("连续操作", ("scroll", "drag")),
+                          ("键盘与导航", ("space", "back", "screen")), ("停用", ("none",))):
+        choices = [key for key in keys if key in options]
+        if not choices:
+            continue
+        header = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(heading, None, "")
+        header.setEnabled_(False)
+        header.setTag_(-1)
+        menu.addItem_(header)
+        for key in choices:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(HB.action_title(gesture, key), None, "")
+            item.setTag_(options.index(key))
+            item.setImage_(NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbols[key], None))
+            menu.addItem_(item)
+    control.setMenu_(menu)
+    control.selectItemAtIndex_(0)
+    control.setAccessibilityLabel_("手势对应动作")
+    return control
+
+
+def direction_control(rect):
+    control = _TouchModeSegments.alloc().initWithFrame_(rect)
+    control.setSegmentCount_(3)
+    control.setTrackingMode_(0)
+    control.setSegmentStyle_(5)
+    for i, title in enumerate(("跟随系统", "自然", "传统")):
+        control.setLabel_forSegment_(title, i)
+        control.setWidth_forSegment_(rect.size.width / 3, i)
+    control.setAccessibilityLabel_("滚动方向")
+    return control
+
+
+def gain_control(rect):
+    from dptouch_engine import GAINS
+    control = _ThresholdSlider.alloc().initWithFrame_(rect)
+    control.setMinValue_(0)
+    control.setMaxValue_(len(GAINS) - 1)
+    control.setNumberOfTickMarks_(len(GAINS))
+    control.setAllowsTickMarkValuesOnly_(True)
+    control.setContinuous_(True)
+    control.setAccessibilityLabel_("滚动增益")
+    return control
 
 
 class _FirstMouseButton(NSButton):
@@ -85,6 +334,22 @@ class _CardView(NSView):
             c = c.colorWithAlphaComponent_(a)
         c.set()
         b.fill()
+
+
+class _GeometryIllustration(NSView):
+    """Explanatory target diagram, not measured touch samples."""
+    def drawRect_(self, rect):
+        for x, offset in ((4, 9), (104, 0)):
+            _color("secondaryLabelColor").setStroke()
+            screen = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(x, 10, 76, 43), 4, 4)
+            screen.setLineWidth_(1.2)
+            screen.stroke()
+            path = NSBezierPath.bezierPath()
+            path.moveToPoint_((x + 32, 31)); path.lineToPoint_((x + 44, 31))
+            path.moveToPoint_((x + 38, 25)); path.lineToPoint_((x + 38, 37))
+            path.stroke()
+            _color("systemOrangeColor" if offset else "systemGreenColor").setFill()
+            NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(x + 35 + offset, 28 + offset, 6, 6)).fill()
 
 
 class _HoverTint(_CardView):
@@ -502,11 +767,12 @@ BIND_ROWS = tuple((g, title, HB.gesture_actions(g), d)
                   for g, title, _o, d in HB.BIND_GESTURES)
 SCROLL_ROWS = (("nat", "滚动方向"), ("gain", "滚动速度"))
 
-# 侧栏导航的四个页面 (设计稿: 设备概览 / 手势映射 / 显示与缩放 / 运行与诊断)
+# 侧栏导航: 先选触控与位置，再编辑手势，最后运行与诊断。
 PAGES = (
     ("overview", "square.grid.2x2", "设备概览"),
+    ("touch", "scope", "触控与位置"),
     ("gestures", "hand.point.up", "手势映射"),
-    ("display", "display", "显示与缩放"),
+    ("display", "display", "显示设置"),
     ("runtime", "gearshape", "运行与诊断"),
 )
 
@@ -581,6 +847,34 @@ def _color(name, fallback=None):
         return fallback if fallback is not None else NSColor.labelColor()
 
 
+def input_mode_text(st, enabled):
+    """Render the Engine's resolved route, never infer it from a preference.
+
+    A selected route is not evidence of input flow or of system gestures being on.
+    Inactive states qualify the route instead of claiming the bridge is running.
+    """
+    title = {"pen_only": "仅笔", "native": "原生触控", "legacy": "兼容模拟"}.get(
+        st.get("selected_mode"), "等待检测")
+    if not enabled:
+        state = "已暂停"
+    elif not st.get("ax"):
+        state = "等待授权"
+    elif st.get("rc", 0) != 0:
+        state = "输入不可用"
+    elif not st.get("running"):
+        state = "未运行"
+    elif not st.get("devices"):
+        state = "未连接"
+    else:
+        state = "运行中" if title != "等待检测" else "待确认"
+    policy = st.get("touch_mode")
+    provenance = "自动选择" if policy == "auto" else "手动选择" if policy in ("native", "legacy") else "来源待确认"
+    detail = ("手指由系统处理 · 系统手势需开启" if st.get("selected_mode") == "native" else
+              "手指由应用模拟 · 笔映射保留" if st.get("selected_mode") == "legacy" else
+              "未接入手指接口 · 保留笔映射" if st.get("selected_mode") == "pen_only" else "等待接口检测")
+    return "%s · %s" % (state, title), "%s · %s" % (provenance, detail)
+
+
 def _label(text, rect, size=13.0, bold=False, dim=False, right=False, color=None):
     f = NSTextField.alloc().initWithFrame_(rect)
     f.setStringValue_(text)
@@ -640,6 +934,21 @@ def _ident(v):
         return ""
 
 
+def _layout_views(root):
+    """Flatten only our material host, not composite controls or AppKit internals."""
+    for child in root.subviews():
+        if _ident(child) == "navigation-material":
+            content = child.contentView() if child.respondsToSelector_("contentView") else child
+            yield from content.subviews()
+        else:
+            yield child
+
+
+def _rect_relative(v, root):
+    f = v.convertRect_toView_(v.bounds(), root)
+    return (float(f.origin.x), float(f.origin.y), float(f.size.width), float(f.size.height))
+
+
 def _hit(a, b, slack=0.5):
     """两个矩形是否真重叠 —— 只挨着不算(布局里行与行本来就是贴着的)。"""
     return (a[0] + a[2] - slack > b[0] and b[0] + b[2] - slack > a[0]
@@ -666,7 +975,7 @@ def check_layout(view, w=None, h=None):
         w = _w if w is None else w
         h = _h if h is None else h
     items = []
-    for v in view.subviews():
+    for v in _layout_views(view):
         try:
             if v.identifier() in ("bg", "line"):
                 continue        # 分组底本来就垫在控件底下, 不算"重叠"
@@ -690,7 +999,7 @@ def check_layout(view, w=None, h=None):
                 txt = v.titleOfSelectedItem() or ""
             except Exception:
                 pass
-        items.append((v, _rect(v), txt))
+        items.append((v, _rect_relative(v, view), txt))
     bad = []
     for v, r, txt in items:
         if r[0] < -0.5 or r[1] < -0.5 or r[0] + r[2] > w + 0.5 or r[1] + r[3] > h + 0.5:
@@ -702,7 +1011,7 @@ def check_layout(view, w=None, h=None):
                                                    items[j][2][:16], tuple(items[j][1])))
     # ★画到框外: NSView 默认不裁剪绘制, 视图可以画到自己的 frame 之外压住别人,
     #   而 frame 之间并不重叠 —— 审计看不见。自绘视图声明 content_box() 就按它验。
-    for _v in view.subviews():
+    for _v in _layout_views(view):
         _cb = getattr(_v, "content_box", None)
         if not callable(_cb):
             continue
@@ -717,7 +1026,7 @@ def check_layout(view, w=None, h=None):
             pass
     # ★组合控件内部审计看不见 —— NSButton 的默认标题是 "Button", 忘了清就会自己画一行字
     #   叠在图标上 (用户实测报过: "侧边栏有 button 字样重叠在上面")。这里显式钉住。
-    for _v in view.subviews():
+    for _v in _layout_views(view):
         if isinstance(_v, NSButton) and not isinstance(_v, NSPopUpButton):
             try:
                 if _v.title() == "Button":
@@ -740,7 +1049,7 @@ def check_layout(view, w=None, h=None):
     # 卡片自己在建 items 时就被跳过了), 但看着就是和下面的框粘在一起。留最小呼吸间距。
     # 注意坐标系: _r() 转出来的 frame 是 AppKit 的 y 向上, 卡片「顶边」= y + h。
     MIN_GAP = 3.5
-    _cards = [_rect(_v) for _v in view.subviews() if _ident(_v) == "bg"]
+    _cards = [_rect_relative(_v, view) for _v in _layout_views(view) if _ident(_v) == "bg"]
     if os.environ.get("DPTOUCH_AUDIT_DEBUG"):
         print("     bg 视图 %d 个: %s" % (len(_cards), [_cards[i] for i in range(len(_cards))]))
     for v, r, txt in items:
@@ -814,7 +1123,7 @@ def logo_view(path):
 
 
 def dump_layout(view):
-    for v in view.subviews():
+    for v in _layout_views(view):
         txt = ""
         if isinstance(v, NSButton) and not isinstance(v, NSPopUpButton):
             # NSButton 的 stringValue 是"选中态"不是标题, 这里要的是人看得懂的那句
@@ -856,6 +1165,13 @@ class _Pane(NSObject):
     坐标一律按「从上往下」写, 这里翻成 AppKit 的从左下角 —— 布局代码读起来就是
     视觉顺序, 不用在脑子里做减法。
     """
+
+    @objc.python_method
+    def _preview(self, parent, key, rect):
+        view = SettingPreview.alloc().initWithFrame_(rect)
+        parent.addSubview_(view)
+        self.c[key] = view
+        return view
 
     @objc.python_method
     def _r(self, x, y_top, w, h):
@@ -960,6 +1276,11 @@ class SettingsWindow(_Pane):
         self.win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, W, H), style, NSBackingStoreBuffered, False)
         self.win.setTitle_(self.name)
+        # Keep WindowServer's standard opaque titlebar and traffic-light hit region.
+        # Transparency belongs to the navigation material's contentView, not NSWindow.
+        self.win.setOpaque_(True)
+        self.win.setBackgroundColor_(NSColor.windowBackgroundColor())
+        self.win.setTitlebarAppearsTransparent_(False)
         self.win.setReleasedWhenClosed_(False)   # 关掉不销毁: 下次还能开
         self.win.center()
         self._layout()
@@ -1040,7 +1361,7 @@ class SettingsWindow(_Pane):
         self._sidebar(v, y, body_h)
         v.addSubview_(_fill_view(self._r(SIDEBAR_W, y, 1, body_h), "separatorColor",
                                  ident="line"))
-        v.addSubview_(_fill_view(self._r(SIDEBAR_W + 1, y, W - SIDEBAR_W - 1, body_h),
+        v.addSubview_(_fill_view(self._r(SIDEBAR_W + 1, y, W - SIDEBAR_W - 1, self._H),
                                  "controlBackgroundColor", ident="line"))
         self._page(v, y, body_h)
         y += body_h
@@ -1054,7 +1375,7 @@ class SettingsWindow(_Pane):
         self.c["strip"] = _label("设备在线 · 配置已就绪", self._r(M + 17, y + 12, 420, 16),
                                  size=11, color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["strip"])
-        v.addSubview_(_label("使用说明 · ⌘1–4 切换页面",
+        v.addSubview_(_label("使用说明 · ⌘1–5 切换页面",
                              self._r(W - M - 260, y + 12, 260, 16), size=11, dim=True, right=True))
         used = y + STRIP_H
 
@@ -1074,8 +1395,16 @@ class SettingsWindow(_Pane):
         ★导航项里的图标/文字/徽标都放在**按钮内部** —— 布局自检只走一层, 放外面会被
         判成"和按钮重叠"。
         """
-        v.addSubview_(_fill_view(self._r(0, y0, SIDEBAR_W, h), "windowBackgroundColor",
-                                 ident="line"))
+        material, self._nav_material, self._nav_reduced = _navigation_material(self._r(0, 0, SIDEBAR_W, self._H))
+        material.setIdentifier_("navigation-material")
+        v.addSubview_(material)
+        v = material.contentView() if self._nav_material == "liquid-glass" else material
+        # The full-height material includes the status strip; no opaque sidebar
+        # overlay or content layer may conceal the native compositing surface.
+        if self._nav_material == "liquid-glass":
+            v.setWantsLayer_(True)
+            v.layer().setBackgroundColor_(NSColor.clearColor().CGColor())
+        v.setBoundsOrigin_((0, 0))
         y = y0 + 20
         lg = logo_view(logo_path())
         if lg is not None:
@@ -1090,7 +1419,7 @@ class SettingsWindow(_Pane):
         v.addSubview_(_lb)
         y += 54 + 15
         y += 4
-        for key, icon, title in PAGES:
+        for nav_index, (key, icon, title) in enumerate(PAGES, 1):
             sel = (key == self.page)
             btn = _NavButton.alloc().initWithFrame_(self._r(11, y, SIDEBAR_W - 22, NAV_H))
             btn.key = key
@@ -1099,6 +1428,8 @@ class SettingsWindow(_Pane):
             btn.setState_(1 if sel else 0)
             btn.setTarget_(self)
             btn.setAction_("onNav:")
+            btn.setKeyEquivalent_(str(nav_index))
+            btn.setKeyEquivalentModifierMask_(1 << 20)
             ic = _icon(icon, NAV_ICON, 0.0,
                        brand_color() if sel else _color("secondaryLabelColor"))
             if ic is not None:
@@ -1163,6 +1494,8 @@ class SettingsWindow(_Pane):
             y = self._page_overview(v, px, pw, y)
         elif self.page == "gestures":
             y = self._page_gestures(v, px, pw, y)
+        elif self.page == "touch":
+            y = self._page_touch(v, px, pw, y)
         elif self.page == "display":
             y = self._page_display(v, px, pw, y)
         else:
@@ -1176,9 +1509,11 @@ class SettingsWindow(_Pane):
 
     @objc.python_method
     def _page_head(self, v, x, w, y, title, subtitle, btn_title=None, btn_act=None):
-        v.addSubview_(_label(title, self._r(x, y, w - 200, 36), size=28, bold=True))
-        v.addSubview_(_label(subtitle, self._r(x, y + 40, w - 200, 18), size=12,
-                             color=_color("secondaryLabelColor")))
+        self.c["page_title"] = _label(title, self._r(x, y, w - 200, 36), size=28, bold=True)
+        self.c["page_subtitle"] = _label(subtitle, self._r(x, y + 40, w - 140, 18), size=12,
+                                          color=_color("secondaryLabelColor"))
+        v.addSubview_(self.c["page_title"])
+        v.addSubview_(self.c["page_subtitle"])
         if btn_title:
             self.c["head_btn"] = _button(btn_title, self._r(x + w - 108, y + 6, 108, 26),
                                          self, btn_act, small=True)
@@ -1207,8 +1542,8 @@ class SettingsWindow(_Pane):
             self.c["tb_%s" % icon.replace(".", "_")] = btn
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
-        v.addSubview_(_label("连接完成，随时开始。" if done else "还差一步就能用。",
-                             self._r(x, y, w - 40, 40), size=30, bold=True))
+        self.c["ov_hero"] = _label("设备概览", self._r(x, y, w - 40, 40), size=30, bold=True)
+        v.addSubview_(self.c["ov_hero"])
         y += 44
         self.c["perm_ok"] = _label("✓" if done else "!", self._r(x, y + 1, 18, 18), size=13,
                                    bold=True, color=(_color("systemGreenColor") if done
@@ -1217,9 +1552,10 @@ class SettingsWindow(_Pane):
         self.c["perm_sum"] = _label("", self._r(x + 22, y, 400, 20), size=13)
         v.addSubview_(self.c["perm_sum"])
         y += 18 + 10
-        v.addSubview_(_label("小米平板 9 Pro Max 作为触控输入设备接入这台 Mac。手势映射与显示配置"
-                             "都在左侧页面里。", self._r(x, y, w - 20, 40), size=13,
-                             color=_color("secondaryLabelColor")))
+        self.c["ov_mode"] = _label("", self._r(x, y, w - 20, 20), size=15, bold=True)
+        self.c["ov_mode_detail"] = _label("", self._r(x, y + 23, w - 20, 17), size=12, dim=True)
+        v.addSubview_(self.c["ov_mode"])
+        v.addSubview_(self.c["ov_mode_detail"])
         y += 40 + 16
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
         y += 18
@@ -1228,8 +1564,9 @@ class SettingsWindow(_Pane):
             self._perm_block(v, x, y, w)
             y += PERM_H_FULL + 18
         # 当前手势配置
-        v.addSubview_(_label("当前手势配置", self._r(x, y, 300, 16), size=12, bold=True,
-                             color=_color("secondaryLabelColor")))
+        self.c["sum_scope"] = _label("当前笔手势配置", self._r(x, y, 400, 16), size=12, bold=True,
+                                     color=_color("secondaryLabelColor"))
+        v.addSubview_(self.c["sum_scope"])
         y += 16 + 10
         binds = HB.binds_from_cfg(self.app.cfg)
         for i, (g, title, _o, _d) in enumerate(BIND_ROWS):
@@ -1258,9 +1595,8 @@ class SettingsWindow(_Pane):
         y += 18 + 6
         self.c["ov_disp_sub"] = _label("", self._r(x, y, w / 2.0 - 30, 16), size=11, dim=True)
         v.addSubview_(self.c["ov_disp_sub"])
-        v.addSubview_(_label("轻点、拖拽直接用手指，不用笔", self._r(x + w / 2.0, y,
-                                                                    w / 2.0 - 30, 16),
-                             size=11, dim=True))
+        self.c["ov_touch_sub"] = _label("", self._r(x + w / 2.0, y, w / 2.0 - 30, 16), size=11, dim=True)
+        v.addSubview_(self.c["ov_touch_sub"])
         return y + 16
 
     @objc.python_method
@@ -1289,9 +1625,13 @@ class SettingsWindow(_Pane):
 
     @objc.python_method
     def _page_gestures(self, v, x, w, y):
-        y = self._eyebrow(v, x, y, "INPUT SETTINGS / 01")
+        y = self._eyebrow(v, x, y, "GESTURE SETTINGS / 02")
         y = self._page_head(v, x, w, y, "手势映射", "为轻点、滑动和长按设置对应的鼠标操作。",
                             "恢复默认", "onResetBinds:")
+        # Keep references for live scope updates without rebuilding controls or
+        # touching mappings. Native fingers never consume this shared table.
+        self.c["mapping_title"] = self.c["page_title"]
+        self.c["mapping_scope"] = self.c["page_subtitle"]
         v.addSubview_(_label("● 当前配置 · 小米平板 9 Pro Max      自动保存",
                              self._r(x, y, w, 16), size=11, color=_color("systemGreenColor")))
         y += 16 + 12
@@ -1302,7 +1642,6 @@ class SettingsWindow(_Pane):
         y += 16 + 8
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
         y += 1
-        notes = {g: d for g, _t, _o, d in HB.BIND_GESTURES}
         ROWG = 48.0                       # 定高窗口放不下 56 的行距, 收到 48
         for i, (g, title, _o, _d) in enumerate(BIND_ROWS):
             ry = y + i * ROWG
@@ -1311,10 +1650,8 @@ class SettingsWindow(_Pane):
             if ic is not None:
                 ic.setFrame_(self._r(x, ry + 13, 20, 20))
                 v.addSubview_(ic)
-            v.addSubview_(_label(title, self._r(x + 32, ry + 8, 200, 18), size=13, bold=True))
-            v.addSubview_(_label(notes.get(g, ""), self._r(x + 32, ry + 27, 300, 15),
-                                 size=11, dim=True))
-            pop = _popup(self._r(x + w - 252, ry + 10, 252, 26), HB.gesture_action_titles(g))
+            v.addSubview_(_label(title, self._r(x + 32, ry + 15, 200, 18), size=13, bold=True))
+            pop = action_control(self._r(x + w - 252, ry + 10, 252, 26), g)
             pop.setTarget_(self)
             pop.setAction_("onBind:")
             pop.setTag_(i)
@@ -1323,23 +1660,29 @@ class SettingsWindow(_Pane):
             v.addSubview_(_line_view(self._r(x, ry + ROWG - 1, w, 1)))
         y += 4 * ROWG
         # 滚动方向 / 速度 (并一行)
-        v.addSubview_(_label("滚动", self._r(x, y + 8, 200, 18), size=13, bold=True))
-        v.addSubview_(_label("滚动方向与速度", self._r(x + 32, y + 27, 300, 15), size=11, dim=True))
-        self.c["nat"] = _popup(self._r(x + w - 252, y + 10, 130, 26),
-                               [t for _v, t in NAT_LABELS])
+        v.addSubview_(_label("滚动", self._r(x, y + 8, 90, 18), size=13, bold=True))
+        self._preview(v, "scroll_preview", self._r(x + 100, y + 3, 180, 40))
+        self.c["nat"] = direction_control(self._r(x + w - 300, y + 10, 300, 26))
         self.c["nat"].setTarget_(self)
         self.c["nat"].setAction_("onNat:")
         v.addSubview_(self.c["nat"])
-        self.c["gain"] = _popup(self._r(x + w - 114, y + 10, 114, 26), self._gain_titles())
+        v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
+        y += ROWG
+        v.addSubview_(_label("滚动增益", self._r(x, y + 12, 130, 18), size=13, bold=True))
+        self.c["gain_value"] = _label("", self._r(x + 138, y + 12, 160, 18), size=12, dim=True)
+        v.addSubview_(self.c["gain_value"])
+        self.c["gain_default"] = _button("恢复默认", self._r(x + w - 90, y + 9, 90, 26), self, "onGainDefault:")
+        v.addSubview_(self.c["gain_default"])
+        self.c["gain"] = gain_control(self._r(x + w - 300, y + 7, 190, 30))
         self.c["gain"].setTarget_(self)
         self.c["gain"].setAction_("onGain:")
         v.addSubview_(self.c["gain"])
         v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
         y += ROWG
         # 增强模式: 整行 (开关在右)
-        v.addSubview_(_label("增强模式 · 手指触控", self._r(x, y + 8, 300, 18), size=13,
+        v.addSubview_(_label("增强模式 · 接收触摸接口", self._r(x, y + 8, 300, 18), size=13,
                              bold=True))
-        v.addSubview_(_label("检测到触摸屏接口，可直接使用手指点击与拖拽",
+        v.addSubview_(_label("接口接入开关，不修改系统手指手势",
                              self._r(x, y + 27, 460, 15), size=11, dim=True))
         self.c["enhanced"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 13, 36, 22))
         self.c["enhanced"].setBordered_(False)
@@ -1352,49 +1695,109 @@ class SettingsWindow(_Pane):
         return y
 
     @objc.python_method
+    def _page_touch(self, v, x, w, y):
+        y = self._eyebrow(v, x, y, "TOUCH & POSITION / 01")
+        y = self._page_head(v, x, w, y, "触控与位置",
+                            "按系统与接口选择触控方式，显示设备位置修正状态。")
+        self.c["touch_actual"] = _label("等待检测", self._r(x, y, w, 19), size=14, bold=True)
+        v.addSubview_(self.c["touch_actual"])
+        y += 27
+        self.c["touch_mode"] = _TouchModeSegments.alloc().initWithFrame_(self._r(x, y, w, 30))
+        seg = self.c["touch_mode"]
+        seg.setSegmentCount_(3)
+        seg.setTrackingMode_(0)  # NSSegmentSwitchTrackingSelectOne
+        seg.setSegmentStyle_(5)  # NSSegmentStyleCapsule: native selected-state contrast
+        for i, (title, icon) in enumerate((("自动 · 推荐", "sparkles"), ("原生触控", "hand.tap"), ("兼容模拟", "cursorarrow"))):
+            seg.setLabel_forSegment_(title, i)
+            seg.setWidth_forSegment_(w / 3.0, i)
+            image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(icon, title)
+            if image: seg.setImage_forSegment_(image, i)
+        seg.setTarget_(self)
+        seg.setAction_("onNativeTouch:")
+        seg.setAccessibilityLabel_("触控方式")
+        seg.setToolTip_("自动按系统与接口选路；原生无事件不会自动回退。兼容模式仍需确认关闭系统触控手势。")
+        v.addSubview_(seg)
+        for i, text in enumerate(("按系统与接口选择", "手指交给 macOS", "桥接为鼠标操作")):
+            v.addSubview_(_label(text, self._r(x + i * w / 3, y + 36, w / 3 - 8, 16), size=11, dim=True))
+        self.c["touch_reason"] = _label("", self._r(x, y + 61, w, 16), size=11, dim=True)
+        v.addSubview_(self.c["touch_reason"])
+        self._preview(v, "route_preview", self._r(x, y + 84, w, 36))
+        y += 128
+        v.addSubview_(_line_view(self._r(x, y, w, 1)))
+        y += 14
+        # 位置校正: 只对小米平板屏改 EDID 物理几何 (282×188 mm), 有真状态行
+        v.addSubview_(_label("设备位置修正 · 自动", self._r(x, y + 16, 300, 18), size=13,
+                             bold=True))
+        v.addSubview_(_label("已验证设备自动应用；退出后恢复",
+                             self._r(x, y + 36, 460, 15), size=11, dim=True))
+        self.c["edid_correct"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 20, 36, 22))
+        self.c["edid_correct"].setBordered_(False)
+        self.c["edid_correct"].setTitle_("")
+        self.c["edid_correct"].setTarget_(self)
+        self.c["edid_correct"].setAction_("onCorr:")
+        v.addSubview_(self.c["edid_correct"])
+        v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
+        y += 60
+        # 状态行: applied / disabled / unsupported / ambiguous / failed + 跳转入口
+        self.c["edid_status"] = _label("", self._r(x, y + 12, w, 16), size=11, dim=True)
+        v.addSubview_(self.c["edid_status"])
+        self.c["edid_status2"] = _label("", self._r(x, y + 32, w, 16), size=11, dim=True)
+        v.addSubview_(self.c["edid_status2"])
+        self.c["disp_settings_btn"] = _button("系统触控设置…",
+                                               self._r(x + w - 158, y + 76, 158, 26),
+                                               self, "onOpenDispSettings:")
+        v.addSubview_(self.c["disp_settings_btn"])
+        y += 60
+        illustration = _GeometryIllustration.alloc().initWithFrame_(self._r(x, y, 186, 58))
+        v.addSubview_(illustration)
+        v.addSubview_(_label("偏移 → 对齐 · 原理示意，非实测", self._r(x + 202, y + 19, w - 380, 17), size=11, dim=True))
+        return y + 66
+
+    @objc.python_method
     def _page_display(self, v, x, w, y):
         # 进这一页先同步一次档位缓存(31ms), 免得下拉停在「正在扫描…」等下一次 tick
         try:
             self.app._sync_display(force=True)
         except Exception:
             pass
-        y = self._eyebrow(v, x, y, "DISPLAY SETTINGS / 02")
-        y = self._page_head(v, x, w, y, "显示与缩放",
-                            "选择屏幕输出模式，保持清晰度与触控坐标一致。",
+        y = self._eyebrow(v, x, y, "DISPLAY SETTINGS / 03")
+        y = self._page_head(v, x, w, y, "显示设置",
+                            "设置屏幕输出与桥接笔的光标目标。",
                             "重新扫描", "onDispRescan:")
-        v.addSubview_(_label("连接显示器", self._r(x, y, 200, 16), size=11, bold=True,
-                             color=_color("secondaryLabelColor")))
-        y += 16 + 10
-        v.addSubview_(_line_view(self._r(x, y, w, 1)))
-        y += 1
-        # 当前显示器
-        v.addSubview_(_label("当前显示器", self._r(x, y + 16, 200, 18), size=13, bold=True))
-        self.c["disp_dev"] = _label("", self._r(x, y + 36, 300, 15), size=11, dim=True)
+        v.addSubview_(_label("屏幕与坐标", self._r(x, y, w, 18), size=13, bold=True))
+        y += 27
+        self.c["disp_dev"] = _label("屏幕输出 · 分辨率", self._r(x, y, 240, 17), size=12, dim=True)
         v.addSubview_(self.c["disp_dev"])
-        v.addSubview_(_label("● 已连接", self._r(x + w - 120, y + 17, 120, 16), size=11,
-                             color=_color("systemGreenColor"), right=True))
-        v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
-        y += 60
-        # 输出分辨率 (真控件: 缩放档位下拉)
-        v.addSubview_(_label("输出分辨率", self._r(x, y + 16, 200, 18), size=13, bold=True))
-        v.addSubview_(_label("推荐保持像素 1:1 以获得最佳锐度", self._r(x, y + 36, 320, 15),
-                             size=11, dim=True))
-        self.c["disp_btn"] = _button("重新扫描", self._r(x + w - 108, y + 16, 108, 26),
-                                     self, "onDispRescan:")
-        v.addSubview_(self.c["disp_btn"])
-        v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
-        y += 60
-        self.c["disp"] = _popup(self._r(x, y + 10, min(380.0, w - 30), 26), ["正在扫描…"])
-        self.c["disp"].setTarget_(self)
-        self.c["disp"].setAction_("onDisp:")
-        v.addSubview_(self.c["disp"])
-        self.c["disp_hint"] = _label("", self._r(x, y + 10, w, 16), size=11, dim=True)
+        self.c["disp_summary"] = _label("正在扫描…", self._r(x, y + 23, w - 130, 19), size=14, bold=True)
+        v.addSubview_(self.c["disp_summary"])
+        self.c["mode_change"] = _button("更改…", self._r(x + w - 108, y + 15, 108, 28), self, "onModePanel:")
+        v.addSubview_(self.c["mode_change"])
+        self._build_mode_panel()
+        y += 54
+        self.c["disp_hint"] = _label("", self._r(x, y, w, 16), size=11, dim=True)
         v.addSubview_(self.c["disp_hint"])
-        return y + 30
+        y += 26
+        v.addSubview_(_label("笔的光标基准屏", self._r(x, y + 3, 166, 18), size=13, bold=True))
+        self.c["target_auto"] = _button("自动", self._r(x + 176, y, 68, 26), self, "onTargetAuto:")
+        v.addSubview_(self.c["target_auto"])
+        self.c["target"] = _popup(self._r(x + 256, y, w - 256, 26), [t for _, t in self.app.target_choices()])
+        self.c["target"].setTarget_(self)
+        self.c["target"].setAction_("onTarget:")
+        self.c["target"].setToolTip_("仅影响桥接笔的坐标；不改变系统原生手指映射。")
+        v.addSubview_(self.c["target"])
+        y += 36
+        self._preview(v, "monitor_preview", self._r(x, y, w, 150))
+        y += 160
+        self.c["target_result"] = _label("", self._r(x, y, w, 18), size=12, bold=True)
+        v.addSubview_(self.c["target_result"])
+        self.c["target_note"] = _label("", self._r(x, y + 26, w, 18), size=11, dim=True)
+        v.addSubview_(self.c["target_note"])
+        y += 55
+        return y
 
     @objc.python_method
     def _page_runtime(self, v, x, w, y):
-        y = self._eyebrow(v, x, y, "APP SETTINGS / 03")
+        y = self._eyebrow(v, x, y, "APP SETTINGS / 04")
         y = self._page_head(v, x, w, y, "运行与诊断", "后台行为、启动方式与问题排查。",
                             "高级选项", "onAdvanced:")
         v.addSubview_(_label("常规", self._r(x, y, 200, 16), size=11, bold=True,
@@ -1407,13 +1810,14 @@ class SettingsWindow(_Pane):
                 ("autostart", "开机自启", "登录 macOS 后自动运行", "onAutostart:"),
                 ("debug", "详细日志", "记录设备检测与输入映射的诊断信息", "onDebug:")):
             v.addSubview_(_label(title, self._r(x, y + 16, 300, 18), size=13, bold=True))
-            v.addSubview_(_label(sub, self._r(x, y + 36, 420, 15), size=11, dim=True))
+            v.addSubview_(_label(sub, self._r(x, y + 36, w - 185, 15), size=11, dim=True))
             self.c[key] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 20, 36, 22))
             self.c[key].setBordered_(False)
             self.c[key].setTitle_("")
             self.c[key].setTarget_(self)
             self.c[key].setAction_(act)
             v.addSubview_(self.c[key])
+            self._preview(v, "state_" + key, self._r(x + w - 170, y + 15, 115, 32))
             v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
             y += 60
         y += 18
@@ -1436,13 +1840,13 @@ class SettingsWindow(_Pane):
         v.addSubview_(self.c["adv"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60 + 16
-        v.addSubview_(_label("关于 Mipad DP Touch 1.2 · MIT License", self._r(x, y, w, 16),
+        v.addSubview_(_label("Mipad DP Touch · 运行状态来自当前进程", self._r(x, y, w, 16),
                              size=11, dim=True))
         return y + 16
 
     # ---------------- 交互: 切页 / 外观 / 详情 / 提示条 ----------------
     def onNav_(self, sender):
-        """侧栏切页 (⌘1–4 同效)。整窗重建 —— 和权限态切换走同一条路。"""
+        """侧栏切页 (⌘1–5 同效)。整窗重建 —— 和权限态切换走同一条路。"""
         key = getattr(sender, "key", "")
         if key and key != self.page:
             self.page = key
@@ -1658,6 +2062,21 @@ class SettingsWindow(_Pane):
         st = st if st is not None else a.engine.status()
         get = (st or {}).get
         self._last_st = st or {}
+        if getattr(self, "_nav_reduced", None) != _reduce_transparency():
+            self._relayout(animate=False)
+            return
+        mode_main, mode_detail = input_mode_text(st or {}, a.enabled)
+        route = get("selected_mode")
+        for key, text in (("ov_mode", mode_main), ("ov_mode_detail", mode_detail),
+                          ("ov_hero", "设备已连接。" if get("devices") else "等待设备接入。"),
+                          ("sum_scope", "当前笔与手指手势配置" if route == "legacy" else "当前笔手势配置"),
+                          ("mapping_title", "手势映射" if route == "legacy" else "笔手势映射"),
+                          ("mapping_scope", "手指手势由系统处理，以下设置仅影响笔" if route == "native" else
+                           "以下设置影响笔与兼容手指触控" if route == "legacy" else "以下设置仅影响笔"),
+                          ("enhanced_hint", "系统原生处理" if route == "native" else "应用兼容模拟" if route == "legacy" else "仅笔 · 未接入手指接口"),
+                          ("ov_touch_sub", "需开启系统触控手势" if route == "native" else "不修改系统手势设置")):
+            if key in self.c:
+                self.c[key].setStringValue_(text)
 
         # --- 状态 ---
         devs = get("devices") or []
@@ -1732,11 +2151,24 @@ class SettingsWindow(_Pane):
         try:
             for _k, _v in (("enable", 1 if a.enabled else 0),
                            ("debug", 1 if a.cfg["debug_log"] else 0),
-                           ("enhanced", 1 if _on else 0)):
+                           ("enhanced", 1 if _on else 0),
+
+                           ("edid_correct", 1 if a.cfg.get("edid_correct") else 0)):
                 if _k in self.c:
                     self.c[_k].setState_(_v)
-            if "enhanced_hint" in self.c:       # 概览页那格状态字
-                self.c["enhanced_hint"].setStringValue_(self._enhanced_hint(a))
+            if "target" in self.c:
+                AdvancedWindow._sync_target_popup(self, a)
+            if "touch_mode" in self.c:
+                from dptouch_mode import POLICIES
+                self._select(self.c["touch_mode"], list(POLICIES), a.cfg.get("touch_mode", "auto"))
+                ms = st or {}
+                self.c["touch_actual"].setStringValue_(mode_main)
+                reason = ms.get("mode_reason", "")
+                if ms.get("native_touch") and ms.get("touch_mode") != "legacy":
+                    reason = ("macOS 27.3+ 优先原生" if ms.get("touch_mode") == "auto" else "手动原生") + " · 系统手势需开启，无事件不回退"
+                self.c["touch_reason"].setStringValue_(reason)
+                self.c["touch_reason"].setToolTip_(ms.get("native_hint", ""))
+
             for g, _t, opts, _d in BIND_ROWS:
                 if ("bind_%s" % g) in self.c:
                     self._select(self.c["bind_%s" % g], list(opts), binds.get(g))
@@ -1744,6 +2176,8 @@ class SettingsWindow(_Pane):
                 self._select(self.c["nat"], [k for k, _ in NAT_LABELS], a.cfg["natural"])
                 from dptouch_engine import GAINS
                 self._select(self.c["gain"], [g for g, _ in GAINS], a.cfg["gain"])
+                self.c["gain_value"].setStringValue_("%g×%s" % (a.cfg["gain"], " · 默认" if a.cfg["gain"] == 1.0 else ""))
+                self.c["gain_default"].setEnabled_(a.cfg["gain"] != 1.0)
         finally:
             self._syncing = False
         if "nat" in self.c:
@@ -1752,6 +2186,22 @@ class SettingsWindow(_Pane):
             for _k in ("nat", "gain"):
                 self.c[_k].setEnabled_(usable)
                 self.c[_k].setToolTip_(None if usable else "没有手势绑「滚动」")
+
+        # --- 显示页: 位置校正状态行 (同一份状态: 设置页 + 诊断弹窗) ---
+        if "edid_status" in self.c:
+            try:
+                es = a.edid_status()
+            except Exception as e:
+                es = {"state": "unsupported", "detail": "%r" % (e,), "helper_ok": False}
+            t1, t2, c1 = self._edid_status_text(a, es)
+            self.c["edid_status"].setStringValue_(t1)
+            self.c["edid_status"].setTextColor_(c1)
+            self.c["edid_status2"].setStringValue_(t2)
+            # 助手缺失时校正开关灰掉 (特性安全禁用, 不影响笔桥接)
+            if "edid_correct" in self.c:
+                self.c["edid_correct"].setEnabled_(bool(es.get("helper_ok")))
+                self.c["edid_correct"].setToolTip_(
+                    None if es.get("helper_ok") else "原生助手未打包或无法执行")
 
         # 窗口起来了却还没成为 key: 再抢几次(菜单收起那一刻的激活请求系统会忽略)。
         # 抢到就停, 免得一直跟用户抢焦点。
@@ -1774,7 +2224,43 @@ class SettingsWindow(_Pane):
             if "autostart" in self.c:
                 self.c["autostart"].setState_(1 if s["enabled"] else 0)
             self._sync_display()
-        self.c["ver"].setStringValue_("v%s · MIT" % self.version)
+        self.c["ver"].setStringValue_("v%s" % self.version)
+        # Visual feedback consumes the same current state as the native controls.
+        if "scroll_preview" in self.c:
+            natural = a.cfg["natural"] == "on" or (a.cfg["natural"] == "system" and self._sys_natural())
+            self.c["scroll_preview"].update("scroll", (natural, float(a.cfg["gain"]), "scroll" in binds.values()),
+                "笔向上，内容" + ("向上" if natural else "向下") + " · 增益 %s" % a.cfg["gain"])
+        if "route_preview" in self.c:
+            self.c["route_preview"].update("route", (route, "运行中" in mode_main), mode_main + " · " + mode_detail)
+        for key, symbol in (("enable", "cursorarrow"), ("autostart", "power"), ("debug", "doc.text.magnifyingglass")):
+            if "state_" + key in self.c:
+                on = bool(self.c[key].state())
+                self.c["state_" + key].update("state", (on, symbol), key + (" 已开启" if on else " 已关闭"))
+        if "monitor_preview" in self.c:
+            import dptouch_display as DP
+            infos = DP.displays()
+            resolved = dict(getattr(a.engine, "target", {}) or {})
+            self.c["monitor_preview"].update("monitors", (infos, resolved.get("id")), "在线屏幕排列；引擎目标：" + resolved.get("label", "未解析"))
+            from dptouch_previews import monitor_regions
+            preview = self.c["monitor_preview"]
+            signature = tuple((i['id'], tuple(i.get('bounds', (0,0,i.get('w',1),i.get('h',1))))) for i in infos)
+            if getattr(preview, 'button_signature', None) != signature:
+                for child in list(preview.subviews()):
+                    child.removeFromSuperview()
+                for display_id, frame in monitor_regions(infos, preview.bounds().size.width, preview.bounds().size.height):
+                    button = _FirstMouseButton.alloc().initWithFrame_(NSMakeRect(*frame))
+                    button.setTitle_("")
+                    button.setBordered_(False)
+                    button.setTag_(display_id)
+                    button.setTarget_(self)
+                    button.setAction_("onMonitorTarget:")
+                    button.setAccessibilityLabel_("选择笔目标屏 %s" % display_id)
+                    button.setToolTip_("点击选择笔目标屏 %s；也可使用上方菜单" % display_id)
+                    preview.addSubview_(button)
+                preview.button_signature = signature
+            self.c["target_result"].setStringValue_("当前 → " + resolved.get("label", "未解析"))
+            self.c["target_note"].setStringValue_(resolved.get("note") or ("绝对坐标接管" if resolved.get("takeover") else "跟随光标 · 不接管坐标"))
+            self.c["target_note"].setToolTip_(resolved.get("note", ""))
         # --- 侧栏设备区 / 底条 / 概览页的实时字段 ---
         _d = devs[0] if devs else None
         if "dev_name" in self.c:
@@ -1814,12 +2300,112 @@ class SettingsWindow(_Pane):
         # (旧的「详情」按钮已被右上角图标按钮取代, 见 onDetails_)
 
     @objc.python_method
+    def _edid_status_text(self, a, es):
+        """位置校正状态 -> (主行, 副行, 主行颜色)。状态只有 6 种, 文案与控制器一致。"""
+        st = es.get("state", "disabled")
+        detail = (es.get("detail") or "").strip()
+        grey = _color("secondaryLabelColor")
+        if st == "failed" and "没找到平板" in detail:
+            return "设备位置修正：自动 · 未连接", detail, grey
+        if st == "applied":
+            ra = es.get("readback_after")
+            if not ra:
+                return "设备位置修正：自动 · 待读回确认", "暂无有效尺寸读回，不宣称生效", grey
+            main = ("设备位置修正：自动 · 已生效 · 读回 %.1f×%.1f mm" % (ra[0], ra[1])) if ra \
+                else "设备位置修正：自动 · 已应用（缺少读回尺寸）"
+            return main, "退出后恢复", \
+                _color("systemGreenColor")
+        if st == "disabled":
+            if not a.cfg.get("edid_correct"):
+                return "设备位置修正：手动关闭 · 未生效", "保留现有手动策略；开启后仅接受已验证设备", grey
+            return "设备位置修正：自动 · 未生效", "未连接触摸接口、非原生模式或应用已暂停", grey
+        if st == "unsupported":
+            return "设备位置修正：自动 · 不可用", (detail or "原生助手未打包或无法执行"), \
+                _color("systemOrangeColor")
+        if st == "ambiguous":
+            return "设备位置修正：自动 · 目标不唯一", "拒绝改动 · 拔掉多余的同型号屏后再试", \
+                _color("systemOrangeColor")
+        if st == "checking":
+            return "设备位置修正：自动 · 检查中", detail or "解析目标并读回工厂 EDID", grey
+        return "设备位置修正：自动 · 失败 / 不匹配", (detail or "未知错误")[:96], _color("systemRedColor")
+
+    @objc.python_method
     def _sys_natural(self):
         try:
             from dptouch_engine import system_natural_scrolling
             return bool(system_natural_scrolling())
         except Exception:
             return False
+
+    @objc.python_method
+    def _build_mode_panel(self):
+        previous = getattr(self, "mode_panel", None)
+        if previous:
+            previous.orderOut_(None)
+        panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, 560, 410), NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
+            NSBackingStoreBuffered, False)
+        panel.setTitle_("更改分辨率")
+        panel.setReleasedWhenClosed_(False)
+        self.mode_panel = panel
+        view = panel.contentView()
+        self.c["mode_status"] = _label("选择档位后按应用；选择不会切换屏幕", NSMakeRect(20, 372, 520, 20), size=12)
+        view.addSubview_(self.c["mode_status"])
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 82, 520, 278))
+        scroll.setHasVerticalScroller_(True)
+        table = mode_list(NSMakeRect(0, 0, 500, 256))
+        table.setTarget_(self)
+        table.setAction_("onModeSelection:")
+        table.setDelegate_(self)
+        scroll.setDocumentView_(table)
+        view.addSubview_(scroll)
+        self.c["disp"] = table
+        self._disp_sig = None
+        for key, title, x, width, action in (("mode_scan", "重新扫描", 20, 108, "onDispRescan:"),
+                                            ("mode_cancel", "取消", 340, 90, "onModeCancel:"),
+                                            ("mode_apply", "应用", 450, 90, "onModeApply:")):
+            button = _button(title, NSMakeRect(x, 20, width, 28), self, action)
+            view.addSubview_(button)
+            self.c[key] = button
+        self.c["mode_apply"].setKeyEquivalent_("\r")
+        self.c["mode_cancel"].setKeyEquivalent_("\x1b")
+        self.c["mode_apply"].setEnabled_(False)
+
+    def onModePanel_(self, sender):
+        self.app._sync_display(force=True)
+        self._sync_display()
+        self.mode_panel.center()
+        self.mode_panel.makeKeyAndOrderFront_(None)
+        self.mode_panel.makeFirstResponder_(self.c["disp"])
+        self.onModeSelection_(self.c["disp"])
+
+    def onModeCancel_(self, sender):
+        self.mode_panel.orderOut_(None)
+
+    def tableViewSelectionDidChange_(self, notification):
+        if not self._syncing and "mode_apply" in self.c:
+            self.onModeSelection_(self.c["disp"])
+
+    def onModeSelection_(self, sender):
+        index = self.c["disp"].indexOfSelectedItem()
+        opts = list(getattr(self.app, "_disp_opts", []) or [])
+        valid = getattr(self.app, "_disp_tgt", None) is not None and 0 <= index < len(opts)
+        pending = valid and index != getattr(self, "_mode_current_index", -1)
+        self.c["mode_apply"].setEnabled_(pending)
+        self.c["mode_status"].setStringValue_(
+            ("待应用 → " if pending else "当前已应用 → ") + self.c["disp"].titleOfSelectedItem()
+            if valid else "未识别到平板屏；不会改变任何显示设置")
+
+    def onModeApply_(self, sender):
+        if not self.c["mode_apply"].isEnabled():
+            return
+        requested = self.c["disp"].indexOfSelectedItem()
+        self.c["mode_status"].setStringValue_("正在应用…")
+        self.onDisp_(self.c["disp"])
+        self._sync_display()
+        self.onModeSelection_(self.c["disp"])
+        if requested != getattr(self, "_mode_current_index", -1):
+            self.c["mode_status"].setStringValue_("未应用 · 当前档位未改变；可以重试或取消")
 
     @objc.python_method
     def _sync_display(self):
@@ -1834,13 +2420,18 @@ class SettingsWindow(_Pane):
         has_popup = "disp" in self.c
         opts = list(getattr(self.app, "_disp_opts", []) or [])
         tgt = getattr(self.app, "_disp_tgt", None)
-        sig = tuple((o["w"], o["h"]) for o in opts)
+        sig = (tgt.get("id") if tgt else None, tuple((o["w"], o["h"], o.get("hz"), o.get("hidpi")) for o in opts))
         if tgt is None:
             self._disp_wh = None
             self._disp_name = ""
             if has_popup:
+                self.c["disp_summary"].setStringValue_("未识别到平板屏")
+                self.c["mode_change"].setEnabled_(False)
+                self.c["mode_apply"].setEnabled_(False)
+                self.c["mode_status"].setStringValue_("平板屏离线；不会改变任何显示设置")
                 self.c["disp_hint"].setStringValue_("未识别到平板屏，这里不动任何显示设置")
-                if self._disp_sig is not None:
+                self.c["disp"].setEnabled_(False)
+                if self.c["disp"].titleOfSelectedItem() != "未识别到平板屏":
                     self.c["disp"].removeAllItems()
                     self.c["disp"].addItemsWithTitles_(["未识别到平板屏"])
                     self._disp_sig = None
@@ -1851,21 +2442,31 @@ class SettingsWindow(_Pane):
         self._disp_name = tgt.get("name") or ""
         if not has_popup:
             return
-        if sig != self._disp_sig:
+        self.c["disp_summary"].setStringValue_("%s × %s · %s · %s Hz" %
+            (cur["w"], cur["h"], "HiDPI" if cur.get("hidpi") else "标准", cur.get("hz", "—")))
+        self.c["mode_change"].setEnabled_(bool(opts))
+        self.c["disp"].setEnabled_(bool(opts))
+        changed = sig != self._disp_sig
+        if changed:
             self._disp_sig = sig
             self.c["disp"].removeAllItems()
-            self.c["disp"].addItemsWithTitles_([DP.label_short(o, panel) for o in opts] or ["没有可选档位"])
+            self.c["disp"].addItemsWithTitles_([
+                DP.label_short(o, panel) for o in opts] or ["没有可选档位"])
         # (cur 与缓存已在上面算过, 这里直接用)
         # 正常时不占视线 (「当前 UI / 帧缓冲…」那串挪到高级选项了); 只有出问题才在这说一句
         self.c["disp_hint"].setStringValue_("")
         self._syncing = True
+        self._mode_current_index = -1
         try:
             for i, o in enumerate(opts):
                 if (o["w"], o["h"]) == (cur["w"], cur["h"]):
-                    self.c["disp"].selectItemAtIndex_(i)
+                    self._mode_current_index = i
+                    if changed or not self.mode_panel.isVisible():
+                        self.c["disp"].selectItemAtIndex_(i)
                     break
         finally:
             self._syncing = False
+        self.onModeSelection_(self.c["disp"])
 
     # ---------------- 交互(一律转交 app, 不在窗口里另留一份状态) ----------------
     def onPerm_(self, sender):
@@ -1904,6 +2505,16 @@ class SettingsWindow(_Pane):
         """「增强模式」开关: 开 = 连触摸屏接口一起认（手指可用）, 关 = 只认笔（1.1 行为）。"""
         self.app.actToggleEnhanced_(None)
         self.refresh(force=True)
+
+    def onMonitorTarget_(self, sender):
+        import dptouch_display as DP
+        if int(sender.tag()) in {int(info['id']) for info in DP.displays()}:
+            self.app.set_target(str(sender.tag()))
+        self.refresh_all()
+
+    def onTargetAuto_(self, sender):
+        self.app.set_target("auto")
+        self.refresh_all()
 
     def onTarget_(self, sender):
         """高级选项里的「光标基准屏」下拉 —— 值按下标回到 app._tgt_opts 里取。"""
@@ -1980,6 +2591,10 @@ class SettingsWindow(_Pane):
         self.app.set_natural(NAT_LABELS[max(0, sender.indexOfSelectedItem())][0])
         self.refresh(force=True)
 
+    def onGainDefault_(self, sender):
+        self.app.set_gain(1.0)
+        self.refresh(force=True)
+
     def onGain_(self, sender):
         if self._syncing:
             return
@@ -1997,6 +2612,43 @@ class SettingsWindow(_Pane):
     def onDispRescan_(self, sender):
         self.app.actDisplayRescan_(None)
         self.refresh(force=True)
+
+    def onNativeTouch_(self, sender):
+        if self._syncing:
+            return
+        from dptouch_mode import POLICIES, modern
+        mode = POLICIES[max(0, sender.indexOfSelectedItem())]
+        acknowledged = False
+        if mode == "legacy" and modern():
+            acknowledged = self._confirm_legacy_touch()
+            if not acknowledged:
+                self.refresh(force=True)
+                return
+        self.app.set_touch_mode(mode, acknowledged=acknowledged)
+        self.refresh(force=True)
+
+    @objc.python_method
+    def _confirm_legacy_touch(self):
+        from AppKit import NSAlert, NSAlertFirstButtonReturn
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("兼容模拟 · 高级选项")
+        alert.setInformativeText_("请先在系统设置关闭触控手势，否则系统与桥接可能双重派发。确认已关闭后才能使用兼容模拟。")
+        alert.addButtonWithTitle_("取消")
+        alert.addButtonWithTitle_("已关闭，使用兼容模拟")
+        return alert.runModal() != NSAlertFirstButtonReturn
+
+    def onCorr_(self, sender):
+        """显示页「位置校正」开关。"""
+        self.app.set_edid_correct(not bool(self.app.cfg.get("edid_correct")))
+        self.refresh(force=True)
+
+    def onOpenDispSettings_(self, sender):
+        """Open the system Touch pane, without changing its preferences."""
+        self.app.actOpenTouchSettings_(None)
+
+    def onCalibrate_(self, sender):
+        # Retired selector: stale senders cannot start a sampler.
+        return False
 
     def onLog_(self, sender):
         self.app.actOpenLog_(None)
@@ -2057,13 +2709,23 @@ class AdvancedWindow(_Pane):
                 titles, wide = list(HOLD_TITLES), 130
             else:
                 titles, wide = list(RC_TITLES), 130
-            pop = _popup(self._r(cx + 104, ry + 1, wide, 26), titles)
+            if key == "target":
+                pop = _popup(self._r(cx + 104, ry + 1, wide, 26), titles)
+            else:
+                pop = _ThresholdSlider.alloc().initWithFrame_(self._r(cx + 104, ry + 1, wide, 26))
+                pop.setMinValue_(0)
+                pop.setMaxValue_(len(titles) - 1)
+                pop.setNumberOfTickMarks_(len(titles))
+                pop.setAllowsTickMarkValuesOnly_(True)
+                pop.setAccessibilityLabel_(title)
             pop.setTarget_(self.owner)
             pop.setAction_(act)
             v.addSubview_(pop)
             self.c[key] = pop
             if key == "target":
                 self._tgt_titles = list(titles)
+            else:
+                self._preview(v, "time_" + key, self._r(cx + 250, ry + 2, 190, 24))
             ry += ROW_H
         by = ry + 6            # ry 已经在 popups 循环里走到它们下面了, 别再乘一遍
         self.c["check_upd"] = _button("立即检查更新", self._r(cx, by, 128, 24),
@@ -2130,6 +2792,10 @@ class AdvancedWindow(_Pane):
             self._sync_target_popup(a)
             self._select(self.c["hold_ms"], list(_HOLD_MS), int(a.cfg.get("hold_ms") or 250))
             self._select(self.c["rc_hold"], list(_RC_HOLD), int(a.cfg.get("rc_hold_ms") or 0))
+            for key, cfg, maximum in (("hold_ms", "hold_ms", max(_HOLD_MS)), ("rc_hold", "rc_hold_ms", max(_RC_HOLD))):
+                ms = int(a.cfg.get(cfg) or (250 if key == "hold_ms" else 0))
+                self.c["time_" + key].update("timeline", (ms, maximum), "%d ms · %s" % (ms, "短按 / 长按分界" if ms else "关闭"))
+                self.c[key].setAccessibilityValueDescription_("%d 毫秒" % ms if ms else "关闭")
             # 平板屏当前参数 (只读; 原来在主窗口显示缩放下面)
             try:
                 import dptouch_display as DP

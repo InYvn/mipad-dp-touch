@@ -1,0 +1,72 @@
+{
+  "version": "2.0.0-beta",
+  "renderer": "Installed AppKit app: DPTOUCH_SELFTEST_WINDOW=shot:<path>",
+  "binary_sha256": "6fd30ec0f0b27b210d5f9900fec460fd05b7de14f3aa86d7471dbf2042136313",
+  "environment": {
+    "DPTOUCH_SHOT_DONE": "1",
+    "DPTOUCH_SHOT_APPEARANCE": "light",
+    "DPTOUCH_SHOT_REDUCED": "0",
+    "DPTOUCH_SHOT_PAGE": "<page>",
+    "DPTOUCH_TEST_DIR": "<isolated directory>",
+    "DPTOUCH_SELFTEST_LOG": "<isolated log>"
+  },
+  "fixture": "Existing permission-ready native-mode documentation fixture; not live hardware verification. Display settings can reflect read-only host enumeration. Offscreen render does not demonstrate desktop refraction.",
+  "optimization": "Lossless IDAT zlib recompression; identical decoded scanlines; no resize.",
+  "images": [
+    {
+      "page": "overview",
+      "file": "settings-overview.png",
+      "dimensions": [
+        1960,
+        1456
+      ],
+      "bytes": 270638,
+      "sha256": "b72d788528458dd20045aed2dd5aae2595fc5cfbf6f543491575cb1e9e94d6b2",
+      "selftest_rc": 0
+    },
+    {
+      "page": "touch",
+      "file": "settings-touch.png",
+      "dimensions": [
+        1960,
+        1456
+      ],
+      "bytes": 298971,
+      "sha256": "9bf25b7973eb9a15e17c0a3a90a8c930ebda9700934c40f530c130873e5f08f3",
+      "selftest_rc": 0
+    },
+    {
+      "page": "gestures",
+      "file": "settings-gestures.png",
+      "dimensions": [
+        1960,
+        1456
+      ],
+      "bytes": 301554,
+      "sha256": "86db4b132844068a786a6fcee0a2b70f8641a64ff6daf7fc5b740330d9ca3d6b",
+      "selftest_rc": 0
+    },
+    {
+      "page": "display",
+      "file": "settings-display.png",
+      "dimensions": [
+        1960,
+        1456
+      ],
+      "bytes": 260443,
+      "sha256": "c2515dacc407c24266ef33df362e7331bf06fb098d90d1aba75ef7f39d81bd59",
+      "selftest_rc": 0
+    },
+    {
+      "page": "runtime",
+      "file": "settings-runtime.png",
+      "dimensions": [
+        1960,
+        1456
+      ],
+      "bytes": 287924,
+      "sha256": "b371df7729c36424fc5b29250b6d72c822ac12c8b0b588912a0e22a04224a64d",
+      "selftest_rc": 0
+    }
+  ]
+}

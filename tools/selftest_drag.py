@@ -107,6 +107,7 @@ class Eng:
         self.seen = Seen()
         self.total = Seen()
         self._want_down = False
+        self._multi = False
         self.pres_cur = 0
         self.pres_peak = 0
         self.debug = False

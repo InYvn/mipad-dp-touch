@@ -28,3 +28,6 @@ tablet/dist/
 
 # 截图导出的 PDF
 docs/window.png.pdf
+
+# Local Python environment (including symlinks)
+.venv
