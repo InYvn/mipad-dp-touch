@@ -126,11 +126,11 @@
   <h2>状态 <span class="where">设备概览</span></h2>
   <div class="item">
     <div class="name">连接状态<small>LIVE</small></div>
-    <div class="desc"><p>当前设备状态：如实显示「运行中」「未运行」「等平板上线」，不粉饰。</p></div>
+    <div class="desc"><p>显示当前运行状态：「运行中」「未运行」「等平板上线」。</p></div>
   </div>
   <div class="item">
     <div class="name">事件计数<small>COUNTERS</small></div>
-    <div class="desc"><p>设备概览的 <span class="mark">输入事件</span> 实时计数，菜单栏「清零计数」可归零。笔到底有没有反应，看这里最快。</p></div>
+    <div class="desc"><p>设备概览的 <span class="mark">输入事件</span> 实时计数，菜单栏「清零计数」可归零。可在此查看笔输入事件。</p></div>
   </div>
 <figure class="shot"><img loading="lazy" src="assets/settings-overview.png?v=2.0.0-beta-release2" alt="2.0.0-beta 设备概览页"><figcaption>设备概览</figcaption></figure>
 </section>
@@ -138,9 +138,9 @@
 <section id="permissions">
   <h2>权限 <span class="where">设备概览 · 只做一次</span></h2>
   <div class="item">
-    <div class="name">为什么必须分步<small>STEP BY STEP</small></div>
+    <div class="name">权限授权<small>PERMISSIONS</small></div>
     <div class="desc">
-      <p>macOS 不允许程序自己给自己授权，所以必须你在系统设置里点两下。App 不会把两个弹窗糊你脸上 —— 上一步没完成，下一步是灰的，<span class="mark">每秒对一次权限状态</span>，完成第 ① 步第 ② 步自己亮起来。</p>
+      <p>按顺序完成辅助功能与输入监控授权。完成第 ① 步后，第 ② 步可用；窗口自动更新权限状态。</p>
       <div class="opts"><span class="opt rec">① 辅助功能</span><span class="opt rec">② 输入监控</span></div>
       <p style="margin-top:10px">① <b>辅助功能</b>：允许合成点击与拖拽 —— <span class="hi">不开，笔能移光标但点了没反应</span>。按 App 的入口前往系统设置，允许该 App 的辅助功能权限。</p>
       <p>② <b>输入监控</b>：读取平板笔的原始数据 —— <span class="hi">不开，收不到任何笔事件</span>。</p>
@@ -149,8 +149,8 @@
   <div class="item">
     <div class="name">立即重启 / 重新检测<small>TCC</small></div>
     <div class="desc">
-      <p>macOS 的权限判定发生在<b>进程启动时</b>，授权后点「立即重启」才生效（不用手动退出再打开）。「重新检测」则重新连一次，如实告诉你成没成。</p>
-      <div class="tip"><p><b>更新 App 后权限失效？</b> 本 App 是 ad-hoc 签名，按代码哈希记身份，重新打包哈希必变 —— 关掉开关再开没用。终端重置再重启：<code>tccutil reset Accessibility io.github.inyvn.xiaomi-dptouch</code> + <code>tccutil reset ListenEvent io.github.inyvn.xiaomi-dptouch</code>。升级时 bundle id 故意不变，就是尽量别让你走到这一步。</p></div>
+      <p>macOS 的权限判定发生在<b>进程启动时</b>，授权后点「立即重启」才生效（不用手动退出再打开）。「重新检测」会重新连接并更新状态。</p>
+      <div class="tip"><p><b>更新 App 后权限失效？</b> 本 App 是 ad-hoc 签名，按代码哈希记身份，重新打包哈希必变 —— 关掉开关再开没用。终端重置再重启：<code>tccutil reset Accessibility io.github.inyvn.xiaomi-dptouch</code> + <code>tccutil reset ListenEvent io.github.inyvn.xiaomi-dptouch</code>。</p></div>
     </div>
   </div>
 </section>
@@ -170,7 +170,7 @@
   <div class="item">
     <div class="name">按键绑定<small>BINDINGS</small></div>
     <div class="desc">
-      <p>点当前动作，打开轻量分组菜单更换绑定。一支笔按<b>形态</b>分成四类手势，每一类可绑定一个动作。<b>默认就是一直以来的手感</b>，所以升级过来不用改；改坏了点右上角「恢复默认」。</p>
+      <p>点当前动作，打开轻量分组菜单更换绑定。一支笔按<b>形态</b>分成四类手势，每一类可绑定一个动作。默认动作见下表；点右上角「恢复默认」可恢复默认绑定。</p>
       <table>
         <tr><th>手势</th><th>怎么算</th><th>默认动作</th></tr>
         <tr><td class="rec"><b>轻点</b></td><td>笔尖点一下就走</td><td>左键单击</td></tr>
@@ -178,9 +178,9 @@
         <tr><td><b>停住再滑</b></td><td>笔尖先停住一小会儿，然后再划</td><td>拖拽 · 移动窗口</td></tr>
         <tr><td><b>停住不动</b></td><td>笔尖停住又没划走，抬手时算</td><td>右键菜单</td></tr>
       </table>
-      <p style="margin-top:10px">可绑的动作：<b>关</b> / 左键单击 / 右键菜单 / 中键单击 / 双击 / 滚动翻页 / 拖拽 / 空格键 / 返回 / <b>切换屏幕</b>。同一个「拖拽」在两个手势下叫法不同 —— 绑在<b>快速滑动</b>上叫<b>「拖拽 · 选中文字」</b>（起手就划，快进快出划选一段），绑在<b>停住再滑</b>上叫<b>「拖拽 · 移动窗口」</b>（先按住在挪）。每一类手势只列出它<b>真的做得到</b>的那些（轻点没有位移，就绑不了滚动和拖拽）。</p>
+      <p style="margin-top:10px">可绑的动作：<b>关</b> / 左键单击 / 右键菜单 / 中键单击 / 双击 / 滚动翻页 / 拖拽 / 空格键 / 返回 / <b>切换屏幕</b>。同一个「拖拽」在两个手势下叫法不同 —— 绑在<b>快速滑动</b>上叫<b>「拖拽 · 选中文字」</b>（起手就划，快进快出划选一段），绑在<b>停住再滑</b>上叫<b>「拖拽 · 移动窗口」</b>（先按住在挪）。每类手势列出可用动作（轻点没有位移，就绑不了滚动和拖拽）。</p>
       <p><b>想每一笔都是拖拽？</b>把「快速滑动」的动作改成<b>「拖拽 · 选中文字」</b> —— 这就是老版本的「滑动选择」模式，现在不需要单独的开关了。</p>
-      <p><b>为什么划动不会误选文字？</b>因为「滚动翻页」全程<b>一个鼠标按键都不发</b> —— 不是「划完再取消选择」，而是压根没有「按住」这个状态。</p>
+      <p>「滚动翻页」发送滚动事件。</p>
       <p><b>切换屏幕</b> = 把<a href="#display">光标基准屏</a>换到<b>下一块</b>在线屏：顺序按桌面排列从左到右、到头绕回第一块，循环。<b>只换笔的落点</b>，不改任何一块屏的分辨率 / 排列 / 镜像；只接了一块屏时按了不动作（日志会写一句）。接了两块以上屏、又不想每次都去点菜单栏时，把它绑到一类手势上（例如「停住不动」）就行了。</p>
       <p>组合起来就是一套自己的手感，例如：轻点 = 双击、停住不动 = 空格键（翻 PPT）、快速滑动 = 拖拽；多屏时「停住不动 = 切换屏幕」也很顺手。改完立即生效，不用重启。</p>
     </div>
@@ -188,7 +188,7 @@
   <div class="item">
     <div class="name">滚动方向<small>SCROLL DIR</small></div>
     <div class="desc">
-      <p>通过原生分段控件切换，默认<span class="mark">跟随系统</span> —— 跟你 Mac「系统设置 → 鼠标/触控板 → 自然滚动」走的设置，你不需要理解原理。觉得方向反了，选「始终自然」或「始终传统」覆盖即可。</p>
+      <p>通过原生分段控件切换，默认<span class="mark">跟随系统</span> —— 跟你 Mac「系统设置 → 鼠标/触控板 → 自然滚动」走的设置。觉得方向反了，选「始终自然」或「始终传统」覆盖即可。</p>
       <div class="opts"><span class="opt rec">跟随系统（默认）</span><span class="opt">始终自然</span><span class="opt">始终传统</span></div>
     </div>
   </div>
@@ -210,10 +210,10 @@
 <section id="display">
   <h2>显示设置 <span class="where">分辨率与笔目标屏</span></h2>
   <div class="item">
-    <div class="name">为什么会有这个功能<small>WHY</small></div>
+    <div class="name">HiDPI 缩放<small>HIDPI</small></div>
     <div class="desc">
       <p>平板面板原生 <b>3408×2272</b>（13.3″、308 ppi）。按 1x 直接送信号时逻辑 PPI ≈ 308，字比 MacBook Air 小 2.4 倍 —— 这就是「字太小」那档。<b>直接拉低分辨率会糊</b>：帧缓冲小于面板原生，平板要自己放大。</p>
-      <p>正确做法是切到系统已经生成好的 <b>HiDPI 档</b>（按 2x 渲染、再 1:1 送面板，画面仍是最锐的）：</p>
+      <p>正确做法是切到系统已经生成好的 <b>HiDPI 档</b>（按 2x 渲染、再 1:1 送面板，保持面板原生像素输出）：</p>
       <table>
         <tr><th>档位</th><th>UI 看起来</th><th>帧缓冲（真实信号）</th><th>逻辑 PPI</th><th>锐度</th></tr>
         <tr><td class="rec"><b>1704×1136</b> @120Hz</td><td>字大了一档，刚好顺手</td><td>3408×2272（= 面板原生，1:1）</td><td>≈154</td><td class="rec">最锐，零放大</td></tr>
@@ -236,8 +236,8 @@
 <section id="advanced">
   <h2>高级选项 <span class="where">独立小窗</span></h2>
   <div class="item">
-    <div class="name">为什么要单独一个小窗<small>WHY</small></div>
-    <div class="desc"><p>主窗口只留常用开关，不常用的都收进「高级选项…」—— 界面不至于一屏全是开关，也不至于把排查用的开关藏得找不到。状态与主窗口同一份，改完立即生效。</p></div>
+    <div class="name">高级选项入口<small>ADVANCED</small></div>
+    <div class="desc"><p>在「运行与诊断」打开「高级选项…」。高级选项与主窗口共享配置，改完立即生效。</p></div>
   </div>
 
   <div class="item">
@@ -247,11 +247,11 @@
 
   <div class="item">
     <div class="name">允许管理未实测的显示器<small>ALLOW+</small></div>
-    <div class="desc"><p>多屏时「显示缩放」整组变灰说明没认出平板那块屏 —— 勾上这个才允许操作 EDID/名字不匹配的屏。这是防误触碰发的，确认列出来的是平板再开。</p></div>
+    <div class="desc"><p>多屏时「显示缩放」整组变灰说明没认出平板那块屏 —— 勾上这个才允许操作 EDID/名字不匹配的屏。开启前确认列出的目标屏是平板。</p></div>
   </div>
   <div class="item">
     <div class="name">自动检查更新<small>UPDATE</small></div>
-    <div class="desc"><p>整个程序只有这一项会让它联网：启动后静默查一次 GitHub 上的最新版本，之后每天一次；查到了就弹窗告诉你有新版。关掉它就完全不联网。</p><p>更新流程是：下载 → 按发版正文里的 <code>SHA256</code> 校验 → 退出程序 → 替换 App（旧版先备份，任何一步失败都回滚）→ 重新打开。设置和日志都在你自己的 <code>~/Library/</code> 下，更新不动它们。<b>检查版本与下载安装包时会联网</b>（<code>api.github.com</code> 查版本、<code>github.com</code> 取安装包）。</p></div>
+    <div class="desc"><p>开启后，在启动时静默查一次 GitHub 上的最新版本，之后每天一次；查到了就弹窗告诉你有新版。关闭后停止自动检查。</p><p>更新流程是：下载 → 按发版正文里的 <code>SHA256</code> 校验 → 退出程序 → 替换 App（旧版先备份，替换失败时回滚）→ 重新打开。设置和日志都在你自己的 <code>~/Library/</code> 下，更新不动它们。<b>检查版本与下载安装包时会联网</b>（<code>api.github.com</code> 查版本、<code>github.com</code> 取安装包）。</p></div>
   </div>
   <div class="item">
     <div class="name">立即检查更新<small>CHECK NOW</small></div>
@@ -260,7 +260,7 @@
   <div class="item">
     <div class="name">停住再滑 / 停住不动的判定时长<small>THRESHOLDS</small></div>
     <div class="desc">
-      <p>「停住再滑」默认 <b>0.25s</b> 算停住（四档：0.2 / 0.25 / 0.35 / 0.5s）；「停住不动」默认 <b>0.8s</b>（可 0.6 / 1.0s，选「关」则该手势不再触发）。太灵敏就调慢。停住之后又划走仍算拖拽，不会误弹菜单。</p>
+      <p>「停住再滑」默认 <b>0.25s</b> 算停住（四档：0.2 / 0.25 / 0.35 / 0.5s）；「停住不动」默认 <b>0.8s</b>（可 0.6 / 1.0s，选「关」则该手势不再触发）。太灵敏就调慢。停住之后又划走仍算拖拽。</p>
     </div>
   </div>
 </section>
