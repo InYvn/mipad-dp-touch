@@ -24,7 +24,7 @@
         observer.unobserve(entry.target);
       });
     }, { threshold: 0, rootMargin: '0px 0px -32px 0px' });
-    document.querySelectorAll('main section h2, main section .kicker, main section .lead, .compare > .col, .feature, .shot, .item, .faq-list > details, .steps > li, .cta-row, .callout, .more > p').forEach(element => {
+    document.querySelectorAll('main section h2, main section .kicker, main section .lead, .compare > .col, .feature, .shot, .status-card, .item, .faq-list > details, .steps > li, .cta-row, .callout, .more > p').forEach(element => {
       // Do not nest entrance transforms or alter the tutorial's gesture stages.
       if (!element.closest('.tut, .item, .steps li') || element.matches('.item, .steps > li')) observer.observe(element);
     });

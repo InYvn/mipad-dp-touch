@@ -40,8 +40,34 @@ section h2{font-weight:600;font-size:clamp(24px,3vw,32px);letter-spacing:-.025em
 .feature h3{font-size:17px;margin-bottom:10px}.feature h3 .ic{display:inline-block;font-size:17px;margin-right:8px;filter:grayscale(1)}
 .feature p{font-size:14px;line-height:1.85}
 .showcase{background:#111419}.showcase-grid{display:grid;grid-template-columns:240px minmax(0,1fr);gap:48px;align-items:center}.showcase h2{font-size:26px;line-height:1.5;text-wrap:nowrap}.showcase .lead{font-size:15px;margin:16px 0 24px}.showcase .shot{margin:0;min-width:0}.shot img{max-width:980px;border-radius:16px;box-shadow:0 18px 48px #0004}.shot figcaption{color:var(--faint);font-size:12px;margin-top:16px}
-.status-card{border-radius:16px;scrollbar-color:#67707e #161a20}.status-card:focus-visible{outline-offset:4px}
-table.status{min-width:1020px;font-size:14px;line-height:1.65}table.status th,table.status td{padding:18px 16px;vertical-align:top}table.status th{letter-spacing:0;background:#1b2027;color:#c1c6ce}table.status td:first-child{min-width:185px;font-weight:550;position:sticky;left:0;background:#14171c;box-shadow:1px 0 var(--border)}table.status td.yes{font-family:var(--sans);font-size:13px}table.status tr:hover td{background:#1b2027}
+/* One semantic matrix: comparison on desktop, configuration cards below 960px. */
+.status-card{border-radius:16px;overflow:visible}
+table.status{width:100%;min-width:0;table-layout:fixed;font-size:14px;line-height:1.65}
+table.status col:nth-child(1){width:22%}table.status col:nth-child(2){width:11%}table.status col:nth-child(3){width:21%}table.status col:nth-child(4){width:14%}table.status col:nth-child(n+5){width:10.666%}
+table.status th,table.status td{padding:18px 12px;vertical-align:top;text-align:left;border-bottom:1px solid var(--border)}
+table.status thead th{white-space:nowrap;letter-spacing:0;background:#1b2027;color:#c1c6ce;font-size:13px}
+table.status thead th:first-child{border-top-left-radius:16px}table.status thead th:last-child{border-top-right-radius:16px}
+table.status tbody th{background:none;color:var(--ink);font-size:14px;font-weight:550;letter-spacing:0}
+table.status tbody tr:last-child> *{border-bottom:0}
+table.status td.yes{font-family:var(--sans);font-size:14px}
+.config-system{display:block;font-size:12px;color:var(--muted);font-weight:400;margin-top:3px;white-space:nowrap}
+.value-line{display:block;white-space:nowrap}
+.cell-label{display:none}
+@media(max-width:959px){
+ .status-card{border:0;background:none}
+ table.status{display:block;table-layout:auto}
+ table.status colgroup{display:none}
+ table.status thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+ table.status tbody{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+ table.status tbody tr{display:block;min-width:0;padding:20px;border:1px solid var(--border);border-radius:16px;background:var(--bg-raised)}
+ table.status tbody th{display:block;padding:0 0 16px;border-bottom:1px solid var(--border)}
+ table.status tbody td{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:12px;min-width:0;padding:12px 0;border-bottom:1px solid var(--border)}
+ table.status tbody tr:last-child>th,table.status tbody tr:last-child>td{border-bottom:1px solid var(--border)}
+ table.status tbody tr>td:last-child{border-bottom:0;padding-bottom:0}
+ .cell-label{display:block;color:var(--muted);font-size:13px}
+ .cell-value{min-width:0}
+}
+@media(max-width:639px){table.status tbody{grid-template-columns:1fr}table.status tbody tr{padding:20px}}
 header.page{padding:64px 0 40px}header.page h1{font-size:clamp(29px,4vw,40px)}header.page .lead{margin-bottom:0;margin-top:16px}
 main.wrap{max-width:1080px}main.wrap section{padding:36px 0}main.wrap h2{font-size:22px;flex-wrap:wrap;gap:6px 18px}main.wrap h2 .where{font-family:var(--sans);letter-spacing:0;font-size:12px}
 .item{grid-template-columns:220px minmax(0,1fr);gap:32px;padding:22px 0}.item .name small{color:var(--faint)}
@@ -52,7 +78,7 @@ details{border-radius:14px;margin-bottom:14px}details summary{padding:19px 22px;
 footer{padding:36px 0 44px;color:var(--faint)}footer p{font-size:12px}.flinks a{padding:5px 0}
 [id]{scroll-margin-top:100px}
 @media(max-width:1000px){nav .wrap{height:auto;min-height:64px;flex-wrap:wrap;gap:0;padding-top:12px;padding-bottom:0}nav .links{width:100%;justify-content:space-between;gap:12px;margin-top:4px}nav .links a{min-height:44px}nav .brand{min-height:32px}.showcase-grid{grid-template-columns:1fr;gap:28px}.showcase .lead{max-width:600px;margin-bottom:12px}[id]{scroll-margin-top:128px}}
-@media(max-width:600px){.wrap{padding-left:24px;padding-right:24px}nav .wrap{padding-left:20px;padding-right:20px}nav .brand{font-size:14px}nav .links{font-size:12px;gap:8px}header:not(.page){padding:42px 0 44px}header .logo{width:64px;height:64px;margin-bottom:20px}header h1{font-size:29px;max-width:330px;margin:auto;line-height:1.15}header .subtitle{font-size:21px;max-width:320px;margin-top:18px}header .tagline{font-size:14px;line-height:1.85;text-align:left;margin-top:20px}header .platforms{gap:0;row-gap:8px}.pill{font-size:11px;padding:0 8px}header .cta{gap:10px}.btn{padding:11px 18px;font-size:13px}section{padding:44px 0}.compare .col{padding:24px}.lead{font-size:15px;margin-bottom:24px}.features{gap:12px}.feature{padding:24px}.showcase-grid{gap:24px}.showcase .shot{margin-left:-8px;margin-right:-8px}.shot img{border-radius:10px}.item{grid-template-columns:1fr;gap:8px}header.page{padding:40px 0 30px}.tut{padding:24px;gap:22px}.tut .stage{width:240px}.cta-strip{padding-left:24px;padding-right:24px}table.status td:first-child{min-width:150px;max-width:150px}footer .flinks{gap:12px 20px}.table-card table{min-width:560px}}
+@media(max-width:600px){.wrap{padding-left:24px;padding-right:24px}nav .wrap{padding-left:20px;padding-right:20px}nav .brand{font-size:14px}nav .links{font-size:12px;gap:8px}header:not(.page){padding:42px 0 44px}header .logo{width:64px;height:64px;margin-bottom:20px}header h1{font-size:29px;max-width:330px;margin:auto;line-height:1.15}header .subtitle{font-size:21px;max-width:320px;margin-top:18px}header .tagline{font-size:14px;line-height:1.85;text-align:left;margin-top:20px}header .platforms{gap:0;row-gap:8px}.pill{font-size:11px;padding:0 8px}header .cta{gap:10px}.btn{padding:11px 18px;font-size:13px}section{padding:44px 0}.compare .col{padding:24px}.lead{font-size:15px;margin-bottom:24px}.features{gap:12px}.feature{padding:24px}.showcase-grid{gap:24px}.showcase .shot{margin-left:-8px;margin-right:-8px}.shot img{border-radius:10px}.item{grid-template-columns:1fr;gap:8px}header.page{padding:40px 0 30px}.tut{padding:24px;gap:22px}.tut .stage{width:240px}.cta-strip{padding-left:24px;padding-right:24px}footer .flinks{gap:12px 20px}.table-card table{min-width:560px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 
 /* Release marker: 2.0.0-beta-release2 */
