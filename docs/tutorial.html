@@ -267,6 +267,11 @@
     nav .links a.gh { padding: 0; background: none; border: none; }
   }
   @media (max-width: 480px) { nav .brand { font-size: 14px; gap: 6px; } h2 { flex-wrap: wrap; } }
+  /* App 安装三步独立编号，不影响外层三部分。 */
+  ol.app-install-steps { list-style: decimal; margin: 12px 0 18px; padding-left: 24px; }
+  ol.steps ol.app-install-steps > li, ol.app-install-steps > li { counter-increment: none; position: static; padding: 0 0 16px; }
+  ol.steps ol.app-install-steps > li::before, ol.steps ol.app-install-steps > li::after { content: none; }
+  ol.app-install-steps h4 { font-size: 15px; margin-bottom: 5px; }
 </style>
 <link rel="stylesheet" href="site.css?v=2.0.0-beta-release2">
 </head>
@@ -357,9 +362,21 @@
     <ol class="steps">
       <li>
         <h3>安装 App</h3>
-        <p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg">2.0.0-beta 的 DMG</a>，打开后把 App 拖到「应用程序」，双击打开。</p>
+    <ol class="app-install-steps">
+      <li>
+        <h4>下载安装包</h4>
+        <p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg"><code>Mipad-DP-Touch-2.0.0-beta.dmg</code></a>（测试版 2.0.0-beta）。</p>
+      </li>
+      <li>
+        <h4>拖进「应用程序」并打开</h4>
+        <p>打开 DMG，把 App 拖到「应用程序」，双击打开。装好约占 25 MB；想卸载，退出 App、删掉即可。</p>
+      </li>
+      <li>
+        <h4>按提示分两步授权</h4>
+        <p>① 辅助功能 → ② 输入监控。两项都 ✓ 后点「立即重启」。<br>然后用笔点一下图标 —— 能点开就成了。分步图文见 <a href="https://github.com/InYvn/mipad-dp-touch/blob/main/INSTALL.md">INSTALL.md</a>。</p>
+      </li>
+    </ol>
         <p><b>首次打开被系统拦下（ad-hoc 签名，不是文件坏了）</b><br>推荐：打开「系统设置 → 隐私与安全性 → 安全性」，点被拦那条的「仍要打开」，再确认一次。</p>
-        <p>按 App 的分步引导完成辅助功能与输入监控授权，两项都 ✓ 后点「立即重启」。</p>
       </li>
       <li>
         <h3>安装模块（需要 root）</h3>
