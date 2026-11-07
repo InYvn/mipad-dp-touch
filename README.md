@@ -53,7 +53,7 @@ xattr -dr com.apple.quarantine "/Applications/Mipad DP Touch.app"
 
 ### 2. 准备平板触控模块
 
-已有模块直接沿用。首次安装时，下载 [`mipad-dp-touch-module-v1.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip)，在平板的 **KernelSU / Magisk 管理器 → 模块 → 从存储安装**中选择 ZIP，安装后重启或软重启平板，再重新连接 USB-C 或进入 DP-in。
+已有模块直接沿用。首次安装时，下载 [`mipad-dp-touch-module-v1.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip)，在平板的 **KernelSU / Magisk 管理器 → 模块 → 从存储安装**中选择 ZIP，安装后使用热重启模块完成热重启，再重新连接 USB-C 或进入 DP-in。
 
 ### 3. 完成 macOS 原生触控设置
 
@@ -131,7 +131,7 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 菜单栏「检查更新…」和高级选项中的「立即检查更新」可检查新版本。有更新时点「下载并安装」，App 会下载、校验 SHA256、替换并重新打开。「高级选项 → 自动检查更新」控制自动检查。
 
-卸载 Mac App 时，退出 App，再从「应用程序」删除。平板模块通过 KernelSU / Magisk 管理器卸载；脚本方式见[平板侧说明](tablet/README.md#卸载)。
+卸载 Mac App 时，退出 App，再从「应用程序」删除。平板模块通过 KernelSU / Magisk 管理器卸载，详见[平板侧说明](tablet/README.md#卸载)。
 
 ## 从源码构建
 
@@ -145,7 +145,7 @@ cd mipad-dp-touch
 ## 文档
 
 - [INSTALL.md](INSTALL.md)：安装、权限授权与卸载说明。
-- [平板侧说明](tablet/README.md)：模块安装与临时 root 脚本操作。
+- [平板侧说明](tablet/README.md)：模块安装、热重启与卸载说明。
 - [CHANGELOG.md](CHANGELOG.md)：版本更新记录。
 - [官网](https://inyvn.github.io/mipad-dp-touch/)：操作教程。
 
