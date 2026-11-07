@@ -2,11 +2,10 @@
   <h1>
     <img src="docs/logo.png?v=2.0.0-beta" width="170" alt="Mipad DP Touch Enhanced"/>
     <br/>
-    Mipad DP Touch Enhanced
+    Mipad DP Touch <img src="docs/assets/enhanced-badge.svg" width="86" height="24" align="middle" alt="Enhanced"/>
   </h1>
   <p>小米平板 9 Pro Max，变身 Mac 原生触控屏。</p>
   <p>通过 USB-C DP-in 连接，接入 macOS 27.3 系统原生触控。轻点、拖拽、滚动、右键与多指手势，直接在屏幕上完成。搭配小米焦点触控笔 Pro，笔尖上的点击、滚动与拖拽也一并就位。</p>
-  <p><b>2.0.0-beta：接入 macOS 27.3 系统原生触控，更新五页原生设置界面。</b></p>
   <p><a href="https://inyvn.github.io/mipad-dp-touch/">官网与操作教程</a> · <a href="https://github.com/InYvn/mipad-dp-touch/releases">下载安装包</a> · <a href="CHANGELOG.md">更新日志</a></p>
 
 ![平台](https://img.shields.io/badge/platform-macOS%2027-blue)
@@ -14,13 +13,6 @@
 [![许可](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 </div>
-
-## 2.0.0-beta 有什么变化
-
-- 接入 macOS 27.3 系统原生触控，手指输入与手势交给系统处理，触控笔继续使用 App 的点击、滚动和拖拽映射。
-- 默认按系统版本与触摸接口自动选择运行方式：macOS 27.3 及以上优先原生触控，较早系统使用兼容模拟，笔接口可独立使用。
-- 原生触控下，已验证设备自动应用位置修正；「触控与位置」页显示实际修正状态，退出 App 后恢复。
-- 设置窗口整理为五页，使用原生分段控件、轻量动作菜单和滑条。显示页按真实屏幕排列选择笔的目标屏，分辨率通过独立面板更改。
 
 ## 准备
 
@@ -43,7 +35,6 @@
 - **DP-in 显示画面**由平板硬件与系统提供，不依赖 App 或模块；App 的显示设置提供分辨率、HiDPI 与刷新率档位选择，无需模块。
 - **笔手势映射**通过 App 桥接笔的轻点、滚动、拖拽与右键，原厂笔接口无需模块即可使用。
 - **兼容模拟**还提供手指双指滚动；**系统原生**模式下，手指输入与多点手势交给 macOS 处理。
-- **macOS 27.3 及以上**：前往「系统设置 → 无障碍 → 触控 → 触控调节 → 设置」，完成引导并保持触控调节开启。旧平板模块可继续沿用。
 - **自动触控位置修正**在 App + 模块的原生模式下，对已验证设备自动应用；退出 App 后恢复。
 
 ## 快速开始
@@ -82,7 +73,7 @@ App 的「触控与位置」保持「自动 · 推荐」即可。连接后，在
 
 macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页对应显示为「笔手势映射」，可继续单独调整笔的动作、滚动方向和速度。
 
-「触控与位置」提供「自动 · 推荐」「原生触控」「兼容模拟」三种选择。默认使用自动选择。
+「触控与位置」提供「自动 · 推荐」「原生触控」「兼容模拟」三种选择。默认按系统版本与触摸接口自动选择：macOS 27.3 及以上优先使用系统原生触控，较早系统使用模拟鼠标的兼容模式；笔接口可独立使用。
 
 ### 触控笔手势
 
@@ -103,7 +94,7 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 ![设备概览](docs/assets/settings-overview.png?v=2.0.0-beta)
 
-**2.0.0-beta 界面预览**
+**界面预览**
 
 <details>
 <summary>查看其余四页</summary>
