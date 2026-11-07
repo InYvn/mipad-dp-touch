@@ -2,7 +2,7 @@
   <h1>
     <img src="docs/logo.png?v=2.0.0-beta" width="170" alt="Mipad DP Touch Enhanced"/>
     <br/>
-    Mipad DP Touch <img src="docs/assets/enhanced-badge.svg" width="86" height="24" align="middle" alt="Enhanced"/>
+    Mipad DP Touch <img alt="Enhanced" src="https://img.shields.io/badge/-Enhanced-ff6900?style=flat-square">
   </h1>
   <p>小米平板 9 Pro Max，变身 Mac 原生触控屏。</p>
   <p>通过 USB-C DP-in 连接，接入 macOS 27.3 系统原生触控。轻点、拖拽、滚动、右键与多指手势，直接在屏幕上完成。搭配小米焦点触控笔 Pro，笔尖上的点击、滚动与拖拽也一并就位。</p>
