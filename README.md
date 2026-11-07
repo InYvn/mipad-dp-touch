@@ -53,9 +53,7 @@ xattr -dr com.apple.quarantine "/Applications/Mipad DP Touch.app"
 
 ### 2. 准备平板触控模块
 
-已有模块直接沿用。首次安装时，下载 [`mipad-dp-touch-module-v1.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip)，在平板的 **KernelSU / Magisk 管理器 → 模块 → 从存储安装**中选择 ZIP，安装后重启平板，再重新连接 USB-C 或进入 DP-in。
-
-临时 root 的脚本操作见[平板侧安装说明](tablet/README.md)。模块让平板在 DP-in 下提供触摸屏与笔接口。
+已有模块直接沿用。首次安装时，下载 [`mipad-dp-touch-module-v1.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip)，在平板的 **KernelSU / Magisk 管理器 → 模块 → 从存储安装**中选择 ZIP，安装后重启或软重启平板，再重新连接 USB-C 或进入 DP-in。
 
 ### 3. 完成 macOS 原生触控设置
 
