@@ -339,7 +339,7 @@
       </div>
     </div>
     <div class="rootcause"><b>显示与输入，各司其职。</b>DP-in 显示画面由平板硬件与系统提供，不依赖 App 或模块。App 提供笔手势映射与显示设置；平板模块提供手指触摸接口。</div>
-    <p class="note">手指触控需要平板侧解锁 —— 装上模块（<code>tablet/</code>）后触摸屏接口就会出现，手指可直接点击、拖拽；旧 v1.0 模块可继续沿用。</p>
+    <p class="note">平板模块 2.0.0 提供 DP-in 触摸屏与笔接口，并优化双指缩放。请按下方步骤安装当前模块。</p>
   </div>
 </section>
 
@@ -378,7 +378,7 @@
     <h2>手指交给系统，笔继续顺手</h2>
     <p class="lead">App 默认按系统版本与触摸接口自动选择运行方式：macOS 27.2 及以下使用模拟鼠标，27.3 及以上优先系统原生触控。</p>
     <ol class="steps">
-      <li><h3>沿用平板模块</h3><p>旧 <code>mipad-dp-touch-module-v1.0.zip</code> 无需更新。首次安装下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip">平板模块 v1.0</a>，在平板的 KernelSU / Magisk 管理器 → 模块 → 从存储安装中选择 ZIP，安装需要平板 root 权限。安装后使用热重启模块完成热重启，再重新连接 USB-C 或进入 DP-in。</p></li>
+      <li><h3>安装平板模块 2.0.0</h3><p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip">平板模块 2.0.0 ZIP</a>，保存到平板，在平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。</p><p><a href="#quickstart">查看安装前提与旧模块迁移步骤</a>。</p></li>
       <li><h3>完成系统触控引导</h3><p>macOS 27.3 及以上，前往「系统设置 → 无障碍 → 触控 → 触控调节 → 设置」，完成引导并保持触控调节开启。安装、打开 App 与完成系统设置的顺序不限。</p></li>
       <li><h3>保持自动选择</h3><p>「触控与位置」保持「自动 · 推荐」。在「设备概览」查看实际运行方式；原生模式下，已验证设备自动应用位置修正，在「触控与位置」查看状态，退出 App 后恢复。</p></li>
     </ol>
@@ -430,7 +430,7 @@
       </li>
       <li>
         <h3>安装模块（需要 root）</h3>
-        <p>已有旧 v1.0 模块可继续沿用，无需更新。首次安装下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v1.0.zip">平板模块 v1.0 ZIP</a>，保存到平板，在 KernelSU / Magisk 管理器 → 模块 → 从存储安装中选择 ZIP。安装后使用热重启模块完成热重启，再重新连接 USB-C 或进入 DP-in。</p>
+        <p>下载 <a href="https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip">平板模块 2.0.0 ZIP</a>，保存到平板，在平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。</p><p>安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。</p><p>已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.0。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。</p>
       </li>
       <li>
         <h3>开启触控调节（需要 macOS 27.3+）</h3>
