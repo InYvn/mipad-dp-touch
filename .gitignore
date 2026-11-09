@@ -12,6 +12,8 @@ dist-pyi/
 __pycache__/
 *.py[cod]
 *.so
+# Verified Android module payload; other shared-library build output stays ignored.
+!tablet/module/fullsplit-bounded-v2.so
 
 # 运行期状态文件
 .hidpi_prev_mode.json

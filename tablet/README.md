@@ -4,6 +4,14 @@
 
 模块使用运行时覆盖与自有处理程序，不刷系统分区、不修改原厂 HAL/init 文件。
 
+当前附件修复运行监控重复启动，并增加控制器失败与禁用写入诊断。模块版本保持 **2.0.0**。
+
+`mipad-dp-touch-module-v2.0.0.zip` SHA256：
+
+```text
+9ca7c6f28a9cd32b9fc4a5047c57eb0a5961a36992d4f737ebcc763dd7f1a4a4
+```
+
 ## 安装模块
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。

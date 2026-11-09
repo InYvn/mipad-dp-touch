@@ -1,74 +1,101 @@
 #!/system/bin/sh
-# Mipad DP Touch 触控解锁 —— 共用函数（post-fs-data / service / action 都 source 这个）
-#
-# 背景（2026-10 反汇编 + 实测钉死）：
-#   DP-in 时官方 /odm/bin/vendor.xiaomi.usb.dp-service 会读
-#       /sys/devices/platform/mca_strategy_pd_auth/adapter_svid
-#   读到 1452（= 0x5AC = Apple VID）-> 认为主机是 Mac -> 把 hid.usb1 写成 107 字节「只笔」描述符；
-#   读到别的值（或读失败）    -> 认为主机不是 Mac -> 写 914 字节「触摸屏 + 笔」描述符。
-#   Mac 端拿到的就是这条 hid.usb1，所以：把那个节点盖住 = 让 Mac 也能拿到触摸屏接口。
-#
-# 只动内存：假文件放在 /data/adb/mipad_dptouch/，用 bind mount 盖在 sysfs 节点上；
-#           卸载 / 重启即复原，不刷分区、不改 /odm、不 remount、不碰任何系统文件。
-
-STATE=/data/adb/mipad_dptouch
+# Persistent backing and recovery record; never adopt pre-existing/foreign mounts.
+STATE=/data/adb/mipad_dptouch_v102
 TARGET=/sys/devices/platform/mca_strategy_pd_auth/adapter_svid
 FAKE=$STATE/fake_svid
-LOG=$STATE/log.txt
-
-mkdir -p "$STATE" 2>/dev/null          # 先建好状态目录: 下面 dlog 要往里写
-
-dlog() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null; }
-
-# 节点在不在（不在 = 不是这台机型，什么都不做）
-have_target() { [ -e "$TARGET" ]; }
-
-# 已经挂上了没？HAL 在 init 的 mount namespace 里，两边都看一眼
-is_mounted() {
-    grep -q " $TARGET " /proc/mounts 2>/dev/null && return 0
-    nsenter --mount=/proc/1/ns/mnt -- grep -q " $TARGET " /proc/mounts 2>/dev/null && return 0
-    return 1
+OWNER=$STATE/owner
+LOCK=$STATE/lock
+fail() { echo "Mipad DP Touch: $*" >&2; return 1; }
+ns() { readlink /proc/self/ns/mnt; }
+boot() { cat /proc/sys/kernel/random/boot_id; }
+entry() { awk -v t="$TARGET" '$5==t {print $1}' /proc/self/mountinfo; }
+identity() { stat -c '%d:%i:%u:%g:%a' "$1"; }
+# Require global init namespace; never fall back to an invisible private mount.
+global_check() {
+ [ "$(ns)" = "$(readlink /proc/1/ns/mnt)" ] || return 1
+ for p in $(pidof vendor.xiaomi.usb.dp-service); do
+  [ "$(readlink /proc/$p/ns/mnt)" = "$(ns)" ] || return 1
+ done
 }
-
+owned() {
+ [ -f "$OWNER" ] && [ ! -L "$OWNER" ] || return 1
+ [ "$(wc -l < "$OWNER" | tr -d ' ')" = 5 ] || return 1
+ { IFS= read -r ob; IFS= read -r on; IFS= read -r oi; IFS= read -r of; IFS= read -r ot; } < "$OWNER"
+ [ "$ob" = "$(boot)" ] && [ "$on" = "$(ns)" ] &&
+ [ -n "$oi" ] && [ "$oi" = "$(entry)" ] &&
+ [ "$of" = "$(identity "$FAKE")" ] &&
+ [ "$ot" = "$(identity "$TARGET")" ] && [ "$of" = "$ot" ] &&
+ [ "$(cat "$FAKE")" = 0 ] && [ "$(cat "$TARGET")" = 0 ]
+}
 apply() {
-    if [ -f "$STATE/off" ]; then
-        dlog "已停用（存在 $STATE/off）"
-        return 0
-    fi
-    if ! have_target; then
-        dlog "没有 $TARGET —— 不是目标机型，什么都不做"
-        return 0
-    fi
-    mkdir -p "$STATE" 2>/dev/null
-    printf '0' > "$FAKE" || { dlog "写假文件失败"; return 1; }
-    chmod 644 "$FAKE"
-    if is_mounted; then
-        dlog "已经挂着，跳过"
-        return 0
-    fi
-    # 关键：挂进 init 的 namespace —— HAL 进程在那边，挂在自己这边它读到的还是真值。
-    # （有的机型 adb/模块脚本本来就在全局 namespace，nsenter 失败就退回直接挂。）
-    if nsenter --mount=/proc/1/ns/mnt -- mount --bind "$FAKE" "$TARGET" 2>>"$LOG"; then
-        dlog "已挂载（init 命名空间）: $FAKE -> $TARGET"
-        return 0
-    fi
-    if mount --bind "$FAKE" "$TARGET" 2>>"$LOG"; then
-        dlog "已挂载（当前命名空间）: $FAKE -> $TARGET"
-        return 0
-    fi
-    dlog "挂载失败"
-    return 1
+ profile_check || { fail 'unknown hardware/HAL/init profile'; return 1; }
+ [ ! -f "$STATE/off" ] || return 0
+ if [ -n "$(entry)" ]; then owned || { fail 'foreign or unrecorded mount: not adopted'; return 1; }; return 0; fi
+ [ -e "$TARGET" ] && [ ! -L "$TARGET" ] || return 1
+ # Original sysfs SVID is hexadecimal, observed bytes 30 35 61 63 (05ac).
+ original=$(cat "$TARGET") || return 1
+ case "$original" in ''|*[!0123456789aAbBcCdDeEfF]*) fail 'invalid original SVID'; return 1;; esac
+ [ "${#original}" -le 4 ] || return 1
+ [ "$(stat -f -c %T "$TARGET")" = sysfs ] || return 1
+ [ "$(stat -c '%u:%g:%a' "$TARGET")" = 0:0:440 ] || return 1
+ # Reboot-invalid records are safe to discard ONLY when no target mount exists.
+ rm -f "$OWNER" || return 1
+ [ ! -L "$FAKE" ] || return 1
+ printf 0 > "$FAKE" && chmod 644 "$FAKE" || return 1
+ # Bind mounts retain the backing inode label. HAL cannot read adb_data_file.
+ # Exact audited target type, on our backing only; do not relabel sysfs/policy.
+ chcon u:object_r:vendor_sysfs_xm_power:s0 "$FAKE" || return 1
+ [ "$(ls -Zd "$FAKE" | awk '{print $1}')" = u:object_r:vendor_sysfs_xm_power:s0 ] || return 1
+ # Write-ahead intent binds recovery to this boot, namespace and exact inode.
+ { boot; ns; identity "$FAKE"; } > "$STATE/mount-intent.new" &&
+ mv "$STATE/mount-intent.new" "$STATE/mount-intent" && sync || return 1
+ mount --bind "$FAKE" "$TARGET" || return 1
+ mid=$(entry)
+ [ -n "$mid" ] && [ "$(identity "$FAKE")" = "$(identity "$TARGET")" ] || {
+  fail 'post-mount verification failed; retain state; no blind rollback'; return 1;
+ }
+ { boot; ns; printf '%s\n' "$mid"; identity "$FAKE"; identity "$TARGET"; } > "$OWNER.new" &&
+ mv "$OWNER.new" "$OWNER" || return 1
+ owned || return 1
+ rm -f "$STATE/mount-intent"
 }
-
-remove() {
-    if nsenter --mount=/proc/1/ns/mnt -- umount "$TARGET" 2>/dev/null; then
-        dlog "已卸载（init 命名空间）"
-        return 0
-    fi
-    if umount "$TARGET" 2>/dev/null; then
-        dlog "已卸载"
-        return 0
-    fi
-    dlog "卸载失败（可能本来就没挂）"
-    return 1
+recover_mount_intent() {
+ [ ! -e "$OWNER" ] && [ ! -L "$OWNER" ] || return 1
+ [ -f "$STATE/mount-intent" ] && [ ! -L "$STATE/mount-intent" ] && [ ! -L "$FAKE" ] || return 1
+ [ "$(wc -l < "$STATE/mount-intent" | tr -d ' ')" = 3 ] || return 1
+ { IFS= read -r ib; IFS= read -r ins; IFS= read -r iid; } < "$STATE/mount-intent"
+ [ "$ib" = "$(boot)" ] && [ "$ins" = "$(ns)" ] && [ "$iid" = "$(identity "$FAKE")" ] &&
+ [ "$iid" = "$(identity "$TARGET")" ] && [ "$(cat "$FAKE")" = 0 ] && [ "$(cat "$TARGET")" = 0 ] || return 1
+ mid=$(entry); [ -n "$mid" ] || return 1
+ { boot; ns; printf '%s\n' "$mid"; identity "$FAKE"; identity "$TARGET"; } > "$OWNER.new" && mv "$OWNER.new" "$OWNER" || return 1
+ owned
 }
+remove_owned() {
+ if [ -z "$(entry)" ]; then rm -f "$OWNER" "$STATE/mount-intent"; return $?; fi
+ if [ ! -e "$OWNER" ]; then recover_mount_intent || { fail 'refuse foreign mount without exact write-ahead intent'; return 1; }; fi
+ owned || { fail 'refuse to unmount foreign/changed/unrecorded target'; return 1; }
+ umount "$TARGET" || { fail 'unmount failed: retain owner and backing'; return 1; }
+ [ -z "$(entry)" ] || { fail 'mount remains: retain recovery state'; return 1; }
+ rm -f "$OWNER" "$STATE/mount-intent"
+}
+run_locked() (
+ global_check || { fail 'namespace mismatch; no fallback'; return 1; }
+ [ ! -L "$STATE" ] || return 1
+ mkdir -p "$STATE" && chmod 700 "$STATE" || return 1
+ # mkdir lock is atomic. Stale lock never stolen: delete after reboot only.
+ if ! mkdir "$LOCK" 2>/dev/null; then
+  [ -f "$LOCK/boot" ] && [ "$(cat "$LOCK/boot")" != "$(boot)" ] || { fail 'busy or stale same-boot lock'; return 1; }
+  rm -f "$LOCK/boot" && rmdir "$LOCK" && mkdir "$LOCK" || return 1
+ fi
+ boot > "$LOCK/boot" || return 1
+ trap 'rm -f "$LOCK/boot"; rmdir "$LOCK"' EXIT
+ trap 'exit 1' HUP INT TERM
+ case "$1" in
+ apply) apply;;
+ disable|uninstall) touch "$STATE/off" && remove_owned;;
+ enable) rm -f "$STATE/off" && apply;;
+ status) if owned; then echo owned; else echo inactive-or-foreign; return 1; fi;;
+ toggle) if [ -f "$STATE/off" ]; then rm -f "$STATE/off" && apply; else touch "$STATE/off" && remove_owned; fi;;
+ *) return 1;;
+ esac
+)

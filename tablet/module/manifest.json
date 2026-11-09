@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "module_id": "mipad_dptouch_fullsplit_local",
+  "installation_enabled": true,
+  "manager_installation_tested": false,
+  "real_hal_startup_tested": false,
+  "real_hot_restart_tested": false,
+  "production_device_writes_performed": false,
+  "owned_android_sandbox_writes": false,
+  "supported_manager_profile": "KernelSU u:r:ksu:s0 only; manager service domain must pass runtime guard",
+  "unsupported_managers": [
+    "Magisk",
+    "Recovery"
+  ],
+  "profile": {
+    "device": "yingtian",
+    "model": "M367FC",
+    "board": "O3",
+    "hardware": "xring_o3_asic",
+    "abi": "arm64-v8a",
+    "minimum_sdk": 35,
+    "HAL_SHA256": "44efbe22de46196246c9dbf96bceba8444e5f53aea2400b8101b1b0b0d79c5c3",
+    "init_SHA256": "24c8b3714ae98e813017b8944483fafdb2fa398cc46003efac8c3295480dcd0a",
+    "original_svid_sha256": "3d1da549cf326dddc07c8684becda1c25aa58f9306f03431fa5d4ed8a5e0a92f",
+    "original_node_owner_mode": "0:0:440",
+    "original_node_bytes_hex": "303561630a",
+    "hid0_descriptor_sha256": "0ac38b057ec9608b20557ce069c520e1789bf8a597059126dc76d464f7599755",
+    "hid1_descriptor_sha256": "2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25",
+    "target_report_length": 62,
+    "candidate_domain": "u:r:hal_usb_dp_relay_default:s0",
+    "candidate_AT_SECURE": 0,
+    "uid": 0,
+    "gid": 1000,
+    "groups": [
+      1004,
+      1018,
+      3011
+    ]
+  },
+  "sender": {
+    "mode": "fullsplit explicit-release mode1 bounded-v2",
+    "sha256": "053ee9593102f907aa48e6df9a7325b76059a398b1789f45d651c6481a26748e",
+    "source_changed": false
+  },
+  "startup": {
+    "implementation": "persistent native guardian+worker+state-owned monitor; dynamic discovery; pidfd generation-bound rollback",
+    "trial_deadline_seconds": null,
+    "fixed_hal_pid": null,
+    "persistent_prepare_owner": true,
+    "disable_remove_monitor": true,
+    "restore_owner_watch_retained_until_system_takeover": true,
+    "mutating_actions_require_write_ahead_journal_and_armed_guardian": true
+  },
+  "ownership": "boot+namespace+mount ID+backing/target identity; write-ahead mount intent; no legacy/foreign adoption",
+  "excludes": [
+    "HDR",
+    "personal-tuning",
+    "vendor-binaries",
+    "historical-trial-controller"
+  ],
+  "acceptance_scope": "Local single-monitor and failure-diagnostic candidate only. Host regressions and Android cross-compilation are not actual Android execution or manager/hot-restart validation. Different retained runtime generations require controlled migration; normal reinstall remains rejected."
+}
