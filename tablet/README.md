@@ -16,7 +16,7 @@
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 
-1. 下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板。
+1. 下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.1-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板。
 2. 打开 平板的模块管理器 → 模块 → 从存储安装，选择 ZIP。
 3. 安装后确认模块已启用，再使用热重启模块完成热重启。
 4. 重新连接 USB-C 或进入 DP-in。

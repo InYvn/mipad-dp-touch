@@ -25,7 +25,7 @@
 
 ## 安装
 
-1. 从 Releases 下载 [**`Mipad-DP-Touch-2.0.0-beta.dmg`**](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg)，双击打开。
+1. 从 Releases 下载 [**`Mipad-DP-Touch-2.0.1-beta.dmg`**](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.1-beta/Mipad-DP-Touch-2.0.1-beta.dmg)，双击打开。
 2. 把里面的 **Mipad DP Touch** 拖到旁边的 **「应用程序」**。
 3. 从「应用程序」里双击打开。
 
@@ -292,7 +292,7 @@ DPTOUCH_SELFTEST_WINDOW=exit DPTOUCH_NO_GUIDE=1 "$APP"
 （`src/dptouch_engine.py` 的 `KNOWN_DEVICES`）。
 
 > **注意**：这个 app 解决**笔**；**手指触控需要平板侧解锁** —— 平板在 DP-in 下默认只输出笔这一路，
-> 下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
+> 下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.1-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
 >
 > 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 >
