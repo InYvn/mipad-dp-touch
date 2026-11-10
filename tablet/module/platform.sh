@@ -2,6 +2,7 @@
 # Production platform capability. Never called during packaging/tests.
 # Only controller's lock-owning guardian / serialized worker invokes this.
 set -eu
+umask 077
 OP=$1
 S=$2
 M=$3
@@ -64,12 +65,19 @@ descriptors_check() {
   cmp -s "$S/descriptor-length$i" /config/usb_gadget/g1/functions/hid.usb$i/report_length || return 1
  done
 }
-candidate_descriptors_check() {
- # SVID only affects the next prepareGadget; validate AFTER the owner creates it.
+candidate_descriptors_check() { known_descriptors_check 62; }
+known_descriptors_check() {
+ # Only reviewed factory (9/10) and native (9/62) shapes share these bytes.
  [ "$(cat /config/usb_gadget/g1/functions/hid.usb0/report_length)" = 9 ] || return 1
- [ "$(cat /config/usb_gadget/g1/functions/hid.usb1/report_length)" = 62 ] || return 1
+ [ "$(cat /config/usb_gadget/g1/functions/hid.usb1/report_length)" = "$1" ] || return 1
  [ "$(sha256sum /config/usb_gadget/g1/functions/hid.usb0/report_desc | cut -d ' ' -f1)" = 0ac38b057ec9608b20557ce069c520e1789bf8a597059126dc76d464f7599755 ] || return 1
- [ "$(sha256sum /config/usb_gadget/g1/functions/hid.usb1/report_desc | cut -d ' ' -f1)" = 2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25 ] || return 1
+ desc1=$(sha256sum /config/usb_gadget/g1/functions/hid.usb1/report_desc | cut -d ' ' -f1) || return 1
+ # Factory Pen is 107 bytes. Reviewed retained native descriptor bytes may
+ # also survive with the factory length; native activation still requires 62.
+ case "$1:$desc1" in
+  10:e743412bc1096b18566ad74f9bc46aa40fd2bde608fde05fbe8e2c5531031fa1|10:2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25|62:2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25) return 0;;
+  *) return 1;;
+ esac
 }
 stage() {
  [ "$(stat -f -c %T /dev)" = tmpfs ] || return 1
@@ -97,8 +105,97 @@ wait_verify() {
  done
  return 1
 }
+# Typed outcome 78 is authenticated quiescence, NOT recovered ownership and
+# NOT a claim about a physical DP cable. No prepare/stop/terminate in this path.
+waiting_descriptors_check() {
+ # Saved rollback bytes alone cannot authenticate an unknown gadget shape.
+ # A disconnected HAL may retain either reviewed factory or native lengths.
+ if candidate_descriptors_check || known_descriptors_check 10; then return 0; fi
+ # Only fully absent functions (with a readable parent) count as uncreated.
+ p=/config/usb_gadget/g1/functions
+ [ -r "$p" ] && [ ! -e "$p/hid.usb0" ] && [ ! -e "$p/hid.usb1" ]
+}
+# Read-only counterpart of remove_owned/recover_mount_intent. Never repair a
+# record to find out whether it was ours; an off flag cannot hide a foreign bind.
+wait_mount_check() (
+ [ ! -L "$STATE" ] && [ ! -L "$FAKE" ] || return 1
+ mid=$(entry) || return 1
+ case "$mid" in *[!0-9]*) return 1;; esac
+ has_owner=0; has_intent=0
+ if [ -e "$OWNER" ] || [ -L "$OWNER" ]; then
+  has_owner=1
+  [ -f "$OWNER" ] && [ ! -L "$OWNER" ] && [ "$(wc -l < "$OWNER" | tr -d ' ')" = 5 ] || return 1
+  { IFS= read -r ob; IFS= read -r on; IFS= read -r oi; IFS= read -r of; IFS= read -r ot; } < "$OWNER" || return 1
+  case "$oi" in ''|*[!0-9]*) return 1;; esac
+  [ -n "$ob" ] && [ -n "$on" ] && [ -n "$of" ] && [ "$of" = "$ot" ] &&
+   [ "$of" = "$(identity "$FAKE")" ] && [ "$(cat "$FAKE")" = 0 ] || return 1
+ fi
+ if [ -e "$STATE/mount-intent" ] || [ -L "$STATE/mount-intent" ]; then
+  has_intent=1
+  [ -f "$STATE/mount-intent" ] && [ ! -L "$STATE/mount-intent" ] &&
+   [ "$(wc -l < "$STATE/mount-intent" | tr -d ' ')" = 3 ] || return 1
+  { IFS= read -r ib; IFS= read -r ins; IFS= read -r iid; } < "$STATE/mount-intent" || return 1
+  [ -n "$ib" ] && [ -n "$ins" ] && [ -n "$iid" ] &&
+   [ "$iid" = "$(identity "$FAKE")" ] && [ "$(cat "$FAKE")" = 0 ] || return 1
+ fi
+ # No bind: known journals may survive unmount/crash/reboot, as in common.sh.
+ # They are not live ownership and are preserved here, including off+intent.
+ [ -n "$mid" ] || return 0
+ if [ "$has_owner" = 1 ]; then owned || return 1
+ else [ "$has_intent" = 1 ] || return 1; fi
+ if [ "$has_intent" = 1 ]; then
+  [ "$ib" = "$(boot)" ] && [ "$ins" = "$(ns)" ] &&
+   [ "$iid" = "$(identity "$TARGET")" ] && [ "$(cat "$TARGET")" = 0 ] || return 1
+ fi
+)
+wait_probe() {
+ wait_mount_check || return 1
+ # All retained journals must remain interpretable; do not erase stale evidence.
+ preexec=0
+ for name in candidate candidate-owner recovery-owner recovery-owner-replacement; do
+  if [ -e "$S/$name" ] || [ -L "$S/$name" ]; then
+   expected=$CLIENT; [ "$name" != candidate ] || expected=$HAL
+   journal_rc=0; "$T" journal "$S/$name" "$expected" || journal_rc=$?
+   case "$journal_rc" in 0) :;; 80) preexec=1;; *) return 1;; esac
+  fi
+ done
+ # Exact preexec identity is allowed ONLY back to the pre-existing cleanup.
+ [ "$preexec" = 0 ] || return 80
+ found=0; "$T" find "$HAL" > "$S/wait-hal" || found=$?
+ # No HAL is not quiescence. Recovery may follow its existing controlled
+ # start path, but ambiguity/read failures must never reach that path.
+ if [ "$found" = 2 ]; then return 79; fi
+ [ "$found" = 0 ] || return 1
+ role=original
+ if [ -f "$S/candidate" ] && cmp -s "$S/candidate" "$S/wait-hal"; then role=hooked; fi
+ rc=0; "$T" quiescent "$S/wait-hal" "$role" "$DSO" || rc=$?
+ wait_kind=quiescence
+ if [ "$rc" = 1 ]; then
+  # A live pidfd without endpoints is not idle. Accept only an exact current
+  # journaled prepare generation referenced by that HAL, twice authenticated.
+  # This never asserts ownership success or launches another prepare client.
+  for client_record in candidate-owner recovery-owner recovery-owner-replacement; do
+   [ -f "$S/$client_record" ] || continue
+   owner_rc=0; "$T" quiescent "$S/wait-hal" "$role" "$DSO" "$S/$client_record" "$CLIENT" || owner_rc=$?
+   if [ "$owner_rc" = 78 ]; then rc=78; wait_kind=prepare_in_progress; break; fi
+  done
+ fi
+ case "$rc" in
+  0) return 0;;
+  78) waiting_descriptors_check || return 1
+      log "WAIT_AUTHENTICATED kind=$wait_kind role=$role; ownership unverified; journals retained; no prepare"
+      return 78;;
+  *) return 1;;
+ esac
+}
 recover() {
  [ -e "$S/pending" ] || [ -f "$S/recovery-owner" ] || return 0
+ # Probe BEFORE candidate termination, SVID changes or owner replacement.
+ if [ -e "$S/pending" ]; then oldboot=$(cat "$S/pending"); else oldboot=$(cat "$S/owner-boot"); fi
+ if [ "$oldboot" = "$(boot)" ]; then
+  probe=0; wait_probe || probe=$?
+  case "$probe" in 0|79|80) :;; *) return "$probe";; esac
+ fi
  log 'recovery begin; controller journal retained until ownership verified'
  if [ -e "$S/pending" ]; then oldboot=$(cat "$S/pending"); else oldboot=$(cat "$S/owner-boot"); fi
  if [ "$oldboot" = "$(boot)" ]; then
@@ -130,6 +227,21 @@ recover() {
  if "$T" baseline "$S/hal" > "$S/current-owner" && descriptors_check; then
   descriptors_check || return 1
   read -r current current_start < "$S/current-owner"
+  # A prepare started before idle waiting can become the real owner later.
+  # Promote its already-verified journal before clearing pending, so uninstall
+  # and disabled monitoring retain the exact live recovery dependency.
+  if [ -f "$S/recovery-owner-replacement" ]; then
+   if "$T" verify "$S/hal" "$S/recovery-owner-replacement" original "$DSO"; then
+    if [ -f "$S/recovery-owner" ]; then
+     read -r retained retained_start ignored < "$S/recovery-owner"
+     if [ "$retained:$retained_start" != "$current:$current_start" ]; then "$T" terminate "$S/recovery-owner" || return 1; fi
+    fi
+    mv "$S/recovery-owner-replacement" "$S/recovery-owner"; boot > "$S/owner-boot"; sync
+   else
+    "$T" terminate "$S/recovery-owner-replacement" || return 1
+    rm -f "$S/recovery-owner-replacement"
+   fi
+  fi
  else
   # Liveness alone is not ownership: a client can outlive its old Binder HAL.
   # Keep the stale client journal until a replacement owns the current HAL.
@@ -169,7 +281,23 @@ reconcile() {
  [ -d "$M" ] && [ ! -e "$M/disable" ] && [ ! -e "$M/remove" ] || return 1
  if [ -e "$S/pending" ]; then verify_candidate || return 1; return 0; fi
  # No destructive action before dynamic baseline and an armed guardian exist.
- record_hal && "$T" baseline "$S/hal" > "$S/baseline-owner" || return 75
+ record_hal || return 1
+ baseline_rc=0; "$T" baseline "$S/hal" > "$S/baseline-owner" || baseline_rc=$?
+ if [ "$baseline_rc" != 0 ]; then
+  # baseline=2 is ambiguous (no endpoints OR invalid owner). Never equate it
+  # with waiting: only the stronger, read-only classifier can return 78.
+  probe=0; wait_probe || probe=$?
+  [ "$probe" = 78 ] && return 78
+  # probe=0: the gadget is active (both endpoints) but no verifiable owner is
+  # recorded yet. That is the plug-in / prepare window, not a fault: three
+  # samples inside ~5s would otherwise write `disable` before ownership exists.
+  # Nothing is mutated here, so waiting is strictly safer than failing.
+  if [ "$probe" = 0 ] && waiting_descriptors_check; then
+   log 'WAIT_ACTIVE kind=active role=original; endpoints present; ownership unverified; journals retained; no prepare'
+   return 78
+  fi
+  return 1
+ fi
  descriptors_save && stage || return 1
  boot > "$S/pending.new" && mv "$S/pending.new" "$S/pending" && sync || return 1
  svid_action enable || return 1

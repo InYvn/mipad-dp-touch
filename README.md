@@ -19,7 +19,7 @@
 - 小米平板 9 Pro Max、小米焦点触控笔 Pro，以及支持视频传输的 USB-C 全功能线。
 - Mac 运行 macOS 27；使用系统原生触控时运行 macOS 27.3 或以上。
 - 平板进入 DP-in，通过 USB-C 连接 Mac。
-- 手指触控使用平板侧模块 `mipad-dp-touch-module-v2.0.0.zip`，提供触摸屏与笔接口，并优化双指缩放；安装需要平板 root 权限和匹配的硬件及固件。
+- 手指触控使用平板侧模块 `mipad-dp-touch-module-v2.0.1.zip`，提供触摸屏与笔接口，并优化双指缩放；安装需要平板 root 权限和匹配的硬件及固件。
 
 ## 按你的配置看功能
 
@@ -49,11 +49,11 @@
 
 ### 2. 准备平板触控模块
 
-下载 [`mipad-dp-touch-module-v2.0.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
+下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 
-已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.0。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。
+已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.1。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.1 可覆盖重装。
 
 ### 3. 完成 macOS 原生触控设置
 

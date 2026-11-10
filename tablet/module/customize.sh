@@ -38,10 +38,54 @@ module_identity_ok "$MODPATH" || abort "Unknown incoming module identity."
 profile_check || abort "Unknown hardware/HAL/init contract. No activation permitted."
 [ ! -d /data/adb/modules/mipad_dptouch ] || abort "Old SVID module exists. Controlled migration required; no foreign mount adoption."
 # Identical-runtime reinstall is non-destructive: never copy, stop or retire live
-# runtime helpers/owners from the manager installer. Different generations remain
-# fail-closed; an ordinary uninstall is NOT a migration or root recovery method.
+# runtime helpers/owners from the manager installer. A retained runtime from the
+# published 2.0.0 generation is upgraded in place, but only when its manifest is
+# the exact pinned bytes and nothing live depends on it; every other generation
+# stays fail-closed, and an ordinary uninstall is NOT a migration method.
 S=/data/adb/mipad_fullsplit_local
 [ ! -L "$S" ] || abort "Unsafe runtime path."
+PREV_RUNTIME_SHA256=f0282236188b796a0ca8c1ffb37d369f1809dff5b9a9bd18ac6d7e87e1935f7a
+SVID_TARGET=/sys/devices/platform/mca_strategy_pd_auth/adapter_svid
+MOUNTINFO=${MIPAD_TEST_MOUNTINFO:-/proc/self/mountinfo}
+migrate_known_generation() {
+ [ -f "$S/runtime.sha256" ] && [ ! -L "$S/runtime.sha256" ] || return 1
+ [ "$(sha256sum "$S/runtime.sha256" | cut -d' ' -f1)" = "$PREV_RUNTIME_SHA256" ] || return 1
+ (cd "$S" && sha256sum -c runtime.sha256) >/dev/null 2>&1 || return 1
+ # A live hook owns the gadget and its journals; never migrate under it.
+ for f in pending candidate candidate-owner; do
+  [ ! -e "$S/$f" ] && [ ! -L "$S/$f" ] || return 1
+ done
+ [ -r "$MOUNTINFO" ] || return 1
+ [ -z "$(awk -v t="$SVID_TARGET" '$5==t {print $1}' "$MOUNTINFO")" ] || return 1
+ # Only differing files are replaced, so an inode a live process still holds
+ # (the retained prepare owner) keeps its path and its journal stays valid.
+ # A generation that changes prepare-owner while such an owner is live needs
+ # the operator-controlled migration instead.
+ while read -r digest name; do
+  old=$(awk -v n="$name" '$2==n {print $1}' "$S/runtime.sha256")
+  [ "$old" = "$digest" ] && continue
+  if [ "$name" = prepare-owner ] && { [ -e "$S/recovery-owner" ] || [ -e "$S/recovery-owner-replacement" ]; }; then
+   return 1
+  fi
+  src="$MODPATH/$name"
+  [ -f "$src" ] && [ ! -L "$src" ] || return 1
+  cp "$src" "$S/$name.migrate" || return 1
+  [ "$(sha256sum "$S/$name.migrate" | cut -d' ' -f1)" = "$digest" ] || return 1
+  if [ "$(id -u)" = 0 ]; then chown 0:0 "$S/$name.migrate" || return 1; fi
+  chmod 700 "$S/$name.migrate" || return 1
+ done < "$MODPATH/runtime.sha256"
+ [ ! -f "$S/fullsplit-bounded-v2.so.migrate" ] || chmod 600 "$S/fullsplit-bounded-v2.so.migrate" || return 1
+ while read -r digest name; do
+  [ -f "$S/$name.migrate" ] || continue
+  mv "$S/$name.migrate" "$S/$name" || return 1
+ done < "$MODPATH/runtime.sha256"
+ cp "$MODPATH/runtime.sha256" "$S/runtime.sha256.migrate" || return 1
+ if [ "$(id -u)" = 0 ]; then chown 0:0 "$S/runtime.sha256.migrate" || return 1; fi
+ chmod 600 "$S/runtime.sha256.migrate" || return 1
+ mv "$S/runtime.sha256.migrate" "$S/runtime.sha256" || return 1
+ (cd "$S" && sha256sum -c runtime.sha256) >/dev/null 2>&1 || return 1
+ ui_print "- 已把保留运行时从 2.0.0 受控升级到当前版本。"
+}
 if [ -e "$S" ] && [ ! -f "$S/runtime-ready" ]; then
  abort "Incomplete existing runtime: retain recovery helpers; controlled recovery required."
 fi
@@ -56,7 +100,9 @@ if [ -e "$S/runtime-ready" ]; then
  # Missing installed metadata is not identity evidence: acceptance below still
  # requires the exact authenticated incoming generation and every runtime byte.
  [ -f "$S/runtime.sha256" ] && [ ! -L "$S/runtime.sha256" ] || abort "Unsafe or missing runtime manifest."
- cmp -s "$MODPATH/runtime.sha256" "$S/runtime.sha256" || abort "Different runtime generation: controlled migration required. Do not uninstall or reboot to bypass this guard."
+ if ! cmp -s "$MODPATH/runtime.sha256" "$S/runtime.sha256"; then
+  migrate_known_generation || abort "Different runtime generation: controlled migration required. Do not uninstall or reboot to bypass this guard."
+ fi
  while read -r digest name; do
   [ -f "$S/$name" ] && [ ! -L "$S/$name" ] || abort "Unsafe or missing runtime helper."
  done < "$MODPATH/runtime.sha256"
@@ -67,7 +113,7 @@ fi
 (cd "$MODPATH" && sha256sum -c files.sha256) || abort "Package integrity check failed."
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 for f in module-controller platform-tool prepare-owner platform.sh bootstrap.sh runtime-monitor.sh service.sh post-fs-data.sh uninstall.sh action.sh; do set_perm "$MODPATH/$f" 0 0 0755; done
-ui_print "- Mipad DP Touch 触控解锁 2.0.0"
+ui_print "- Mipad DP Touch 触控解锁 2.0.1"
 ui_print "- 提供 DP-in 触摸屏与笔接口，并优化双指缩放。"
 ui_print "- 仅支持 KernelSU / root / Enforcing / arm64。"
 ui_print "- 需要匹配的小米平板 9 Pro Max（yingtian）硬件与 HAL/init 固件。"

@@ -1,27 +1,27 @@
 # 平板侧：让手指触控也能传给 Mac
 
-平板模块 **2.0.0** 提供 DP-in 触摸屏与笔接口，并优化双指缩放。Mac 端 App 按系统版本选择原生触控或模拟鼠标。
+平板模块 **2.0.1** 提供 DP-in 触摸屏与笔接口，并优化双指缩放。Mac 端 App 按系统版本选择原生触控或模拟鼠标。
 
 模块使用运行时覆盖与自有处理程序，不刷系统分区、不修改原厂 HAL/init 文件。
 
-当前附件修复运行监控重复启动，并增加控制器失败与禁用写入诊断。模块版本保持 **2.0.0**。
+2.0.1 修复开机、插线或热重启后模块可能被自动禁用的问题：未接线、锁屏或 DP 尚未就绪时只等待，不计失败；只有连续失败且持续 30 秒以上才会禁用，禁用标记会写明原因。
 
-`mipad-dp-touch-module-v2.0.0.zip` SHA256：
+`mipad-dp-touch-module-v2.0.1.zip` SHA256：
 
 ```text
-9ca7c6f28a9cd32b9fc4a5047c57eb0a5961a36992d4f737ebcc763dd7f1a4a4
+799b085550726d6526acd4b1cc7a2574afd01b67ea2ad750006e3c90d9a0b06c
 ```
 
 ## 安装模块
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 
-1. 下载 [`mipad-dp-touch-module-v2.0.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip)，保存到平板。
+1. 下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板。
 2. 打开 平板的模块管理器 → 模块 → 从存储安装，选择 ZIP。
 3. 安装后确认模块已启用，再使用热重启模块完成热重启。
 4. 重新连接 USB-C 或进入 DP-in。
 
-已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.0。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。
+已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.1。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.1 可覆盖重装。
 
 ## 怎么验证成功了
 

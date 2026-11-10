@@ -1,6 +1,6 @@
 id=mipad_dptouch_fullsplit_local
 name=Mipad DP Touch 触控解锁
-version=2.0.0
-versionCode=20000
+version=2.0.1
+versionCode=20001
 author=InYvn
 description=小米平板 9 Pro Max 当 Mac 外接屏（DP-in）时，提供触摸屏与笔接口，并优化双指缩放。
