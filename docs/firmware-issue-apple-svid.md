@@ -13,7 +13,7 @@
 
 | 项目 | 值 |
 |---|---|
-| 平板 | 小米平板 9 Pro Max（型号 M367FC / product `yingtian`，SoC `xring_o3_asic`） |
+| 平板 | 小米平板 9 Pro Max（型号 M367FC / product `yingtian`，序列号 `0585D89009983540`，SoC `xring_o3_asic`） |
 | 主机 | Mac mini M4（Mac16,10），macOS 27.0（Build 26A428） |
 | 连接 | 一根 USB-C 转 USB-C 全功能线，直连主机本体 Type-C 口（`atc3`） |
 | 形态 | 平板 DP-in 作为 Mac 的外接显示器（主显示器，面板 `MI DISPLAY`，3408×2272） |

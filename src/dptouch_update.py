@@ -90,10 +90,15 @@ def parse_sha256(text):
     """
     if not text:
         return None
-    for m in re.finditer(r"SHA256[^\n]*?([0-9a-fA-F]{64})[^\n]*", text):
-        if ".dmg" in m.group(0).lower():
-            return m.group(1).lower()
-    m = re.search(r"SHA256[^\n]*?([0-9a-fA-F]{64})", text)
+    digest = r"(?<![0-9a-fA-F])([0-9a-fA-F]{64})(?![0-9a-fA-F])"
+    # Markdown tables label the column rather than every data row.
+    # Only a DMG row may supply the table checksum, never the module ZIP.
+    for line in text.splitlines():
+        if ".dmg" in line.lower() and ("sha256" in line.lower() or "|" in line):
+            m = re.search(digest, line)
+            if m:
+                return m.group(1).lower()
+    m = re.search(r"SHA256[^\n]*?" + digest, text, re.I)
     return m.group(1).lower() if m else None
 
 

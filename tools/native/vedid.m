@@ -237,32 +237,18 @@ static io_service_t CopyAVServiceForDisplay(CGDirectDisplayID display) {
         io_string_t path = {0};
         size_t len = strlen(wantPath);
         BOOL controllerMatch = NO;
-        // Some macOS 26/27 machines no longer keep DCPAVServiceProxy under the
-        // display-controller subtree (dispN@.../...): the AV service can live
-        // under a separate dcpextN@... node, and IODisplayLocation may end with
-        // an extra AppleCLCD2 level. Match the epic service by DCP unit name
-        // instead: take the deepest "name@address" node of the location
-        // (disp0@8A000000 -> disp0, dispext0@88000000 -> dispext0) and look for
-        // "/<unit>:dcpav-service-epic:" anywhere in the service path. Identity
-        // checks below still require a unique external service whose EDID
-        // matches the display, so this only relaxes how the node is located.
-        char unit[128] = {0}, scan[1024];
-        strlcpy(scan,wantPath,sizeof(scan));
-        for (char *tok = scan; tok && *tok; ) {
-            char *end = strchr(tok,'/');
-            if (end) *end = 0;
-            char *at = strchr(tok,'@');
-            if (at) { *at = 0; strlcpy(unit,tok,sizeof(unit)); }
-            tok = end ? end + 1 : NULL;
+        char scope[1024]; strlcpy(scope,wantPath,sizeof(scope));
+        char *controller = strrchr(scope,'/');
+        if (controller) {
+            *controller++ = 0;
+            char *unitEnd = strchr(controller,'@');
+            if (unitEnd) *unitEnd = 0;
+            char epic[256]; snprintf(epic,sizeof(epic),"/%s:dcpav-service-epic:",controller);
+            IORegistryEntryGetPath(s,kIOServicePlane,path);
+            controllerMatch = strlen(controller)>0 && strncmp(path,scope,strlen(scope))==0 &&
+                path[strlen(scope)]=='/' && strstr(path,epic)!=NULL;
         }
-        if (!unit[0]) {
-            char *lastSlash = strrchr(wantPath,'/');
-            strlcpy(unit, lastSlash ? lastSlash + 1 : wantPath, sizeof(unit));
-        }
-        char epic[256]; snprintf(epic,sizeof(epic),"/%s:dcpav-service-epic:",unit);
-        kern_return_t pathRC = IORegistryEntryGetPath(s, kIOServicePlane, path);
-        controllerMatch = pathRC == KERN_SUCCESS && unit[0] && strstr(path,epic)!=NULL;
-        if (pathRC == KERN_SUCCESS &&
+        if (IORegistryEntryGetPath(s, kIOServicePlane, path) == KERN_SUCCESS &&
             (controllerMatch || (strncmp(path, wantPath, len) == 0 && (path[len] == '/' || path[len] == 0)))) {
             io_name_t name = {0};
             if (IORegistryEntryGetName(s, name) == KERN_SUCCESS &&

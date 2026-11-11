@@ -35,20 +35,26 @@ from AppKit import (NSAlert, NSApplication, NSApplicationActivationPolicyAccesso
                     NSStatusBar, NSVariableStatusItemLength, NSWorkspace, NSBundle,
                     NSBitmapImageFileTypePNG, NSGraphicsContext, NSBezierPath,
                     NSBitmapImageRep, NSImage, NSDeviceRGBColorSpace,
-                    NSCompositingOperationSourceOver)
+                    NSImageSymbolConfiguration, NSCompositingOperationSourceOver,
+                    NSView, NSTextView, NSFont)
 from Foundation import (NSObject, NSTimer, NSRunLoop, NSDate, NSMakeRect,
                         NSMakeSize, NSMakePoint, NSZeroRect)
 
 import dptouch_autostart as AS
 import dptouch_display as DP
+import dptouch_calibration as CAL
 import dptouch_edid as EDID
 import dptouch_engine as E
 import dptouch_update as UPD
+import dptouch_plugin as PLUG
+import dptouch_lock as LOCK
+import dptouch_wake as WAKE
+import dptouch_unlock as UNLOCK
 import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "2.0.1-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "2.1.0-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
@@ -106,6 +112,12 @@ DEFAULTS = {
     "update_auto": True,
     "update_last_check": 0,
     "update_skip": "",
+    # 断开平板后锁屏（只锁，不解锁）。默认关，用户在「运行与诊断」里开。
+    "lock_on_disconnect": False,
+    # 连接平板时保持显示器唤醒（锁屏界面留在平板上）。默认开。
+    "wake_with_tablet": True,
+    # 便利解锁（不安全）：密码存钥匙串，锁屏且平板刚插上时自动输入。默认关。
+    "convenience_unlock": False,
 }
 
 GAINS = E.GAINS                  # 唯一出处; 设置窗口的「滚动速度」下拉用同一份
@@ -301,6 +313,63 @@ def _dump_menu(menu, depth=0):
 # 菜单栏应用
 # --------------------------------------------------------------------------
 
+class _MaskedTextView(NSTextView):
+    """不回显明文的密码输入框。
+
+    不用 NSSecureTextField：它会打开 Secure Event Input，把屏幕键盘用
+    CGEventPost 合成的按键吞掉（表现为“键盘点了没反应”）。
+    这里自己保存真实文本，界面只画 ●，因此不触发安全输入。
+    """
+
+    def init(self):
+        self = objc.super(_MaskedTextView, self).init()
+        if self is not None:
+            self._real = ""
+        return self
+
+    @objc.python_method
+    def setupMasking(self):
+        from Foundation import NSNotificationCenter
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "textChanged:", "NSTextDidChangeNotification", None)
+        self._masking = False
+        self._shown = 0
+
+    def textChanged_(self, note):
+        """把真实输入收进 _real，界面只留 ●。"""
+        if getattr(self, "_masking", False):
+            return
+        try:
+            s = str(self.string() or "")
+        except Exception:
+            return
+        typed = "".join(c for c in s if c != "●")
+        if typed:
+            self._real = (getattr(self, "_real", "") or "") + typed
+        else:
+            gone = max(0, getattr(self, "_shown", 0) - len(s))
+            if gone:
+                self._real = (getattr(self, "_real", "") or "")[:max(0, len(self._real) - gone)]
+        self._render()
+
+    @objc.python_method
+    def _render(self):
+        self._masking = True
+        try:
+            self._shown = len(getattr(self, "_real", "") or "")
+            self.setString_("●" * self._shown)
+        finally:
+            self._masking = False
+
+    def deleteBackward_(self, sender=None):
+        self._real = (getattr(self, "_real", "") or "")[:-1]
+        self.setString_("●" * len(self._real))
+
+    @objc.python_method
+    def real(self):
+        return getattr(self, "_real", "") or ""
+
+
 class DPApp(NSObject):
 
     # ---------------- 生命周期 ----------------
@@ -363,6 +432,10 @@ class DPApp(NSObject):
         log("系统「自然滚动」= %s | 滚动方向翻转为 %s"
             % (E.system_natural_scrolling(), self.engine.b.scroll_flip))
         self._menu_open = False
+        self._quitting = False
+        self._locker = LOCK.LockDecider()
+        self._wake = WAKE.WakeKeeper(log=log)
+        self._unlocker = UNLOCK.UnlockDecider()
         # 记下「开机这一刻」的权限: 之后权限从无到有时, 窗口要提示「重启才生效」
         # (TCC 判定是进程级的, 运行中被授权不会立刻对这个老进程生效)
         self._boot_ax = bool(self.engine.ax_trusted())
@@ -374,6 +447,14 @@ class DPApp(NSObject):
         self._upd_progress = None        # (已下载, 总字节) —— 菜单项标题显示进度
         self._upd_pending = None         # 查到的新版本, 等用户点「下载并安装」
         self._upd_started = time.time()
+        # 插件（屏幕键盘）: 同样用后台线程 + 主线程取结果
+        self._plug_in = None             # ("check"|"install", data)
+        self._plug_busy = ""             # "" / "check" / "install"
+        self._plug_progress = None
+        self._plug_mod = None            # 已加载的插件模块
+        self._plug_ctl = None            # 插件控制器（键盘面板）
+        self._plug_pending = None        # 后台查到的发行信息
+        self.kb_item = None              # 状态栏键盘图标（装了插件才有）
         if not self._hold_instance_lock():
             log("已有另一个实例在跑, 本次退出 (两个实例会把每次点击发两遍)")
             try:
@@ -743,7 +824,8 @@ class DPApp(NSObject):
                 if "（" in _t or "(" in _t:
                     _bad.append("%s=%s" % (_k, _t))
             _p("  " + ("；".join(sorted(_bad)) if _bad else "一处都没有"))
-            assert [p[0] for p in UI.PAGES] == ["overview", "touch", "gestures", "display", "runtime"]
+            assert [p[0] for p in UI.PAGES] == ["overview", "touch", "gestures", "display",
+                                                "plugins", "runtime"]
             for _reduced in (False, True):
                 with _ui_patch.object(UI, "_reduce_transparency", return_value=_reduced):
                     self.win.refresh(force=True)
@@ -786,8 +868,8 @@ class DPApp(NSObject):
                 assert _kind == "visual-effect-legacy"
                 _p("导航材质 unavailable-class: %s" % _kind)
             self.win.refresh(force=True)
-            _p("=== 五页布局审计 (固定窗口 980x700, 新控件不得撑大) ===")
-            for _pg in ("overview", "touch", "gestures", "display", "runtime"):
+            _p("=== 六页布局审计 (固定窗口 980x700, 新控件不得撑大) ===")
+            for _pg in [p[0] for p in UI.PAGES]:
                 self.win.page = _pg
                 self.win._relayout(animate=False)
                 self.win.refresh(_fake_st(True, True, 0, _dev), force=True)
@@ -814,14 +896,17 @@ class DPApp(NSObject):
                     assert all("bind_" + g in self.win.c for g, *_ in UI.BIND_ROWS)
                     assert "scroll_preview" in self.win.c
                 assert self.win.c["ver"].stringValue() == "v" + APP_VERSION
-                assert len([k for k in self.win.c if k.startswith("nav_")]) == 5
+                assert len([k for k in self.win.c if k.startswith("nav_")]) == len(UI.PAGES)
                 for _i, (_key, _, _title) in enumerate(UI.PAGES, 1):
                     _nav = self.win.c["nav_" + _key]
                     assert _nav.keyEquivalent() == str(_i)
                     assert _nav.keyEquivalentModifierMask() == 1 << 20
                     assert NSApplication.sharedApplication().sendAction_to_from_(_nav.action(), _nav.target(), _nav)
                     assert self.win.page == _key
-                    assert not UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                    _probs = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                    if _probs:
+                        _p("  !! %s 布局问题: %s" % (_key, _probs[:4]))
+                    assert not _probs
                     _size = self.win.win.contentView().frame().size
                     assert abs(_size.width - 980) < 1 and abs(_size.height - 700) < 1
                 self.win.page = _pg
@@ -1568,6 +1653,16 @@ class DPApp(NSObject):
         self._mk(m, "设置…", "actOpenWindow:", key=",")
         self._mk(m, "打开日志", "actOpenLog:")
         self._mk(m, "无障碍键盘设置…", "actOpenKeyboardSettings:")
+
+        # --- 插件: 默认不装, 用户点了才从 GitHub 现场拉 ---
+        self.mi_plug_parent = self._sub(m, "插件")
+        self.mg_plug = self.mi_plug_parent.submenu()
+        self.mi_plug_kb = self._mk(self.mg_plug, "屏幕键盘：未安装…", "actKeyboardPlugin:")
+        self.mi_plug_auto = self._mk(self.mg_plug, "跟随输入框自动呼出", "actKeyboardAuto:")
+        self.mi_plug_check = self._mk(self.mg_plug, "检查插件更新…", "actPluginCheck:")
+        self.mi_plug_uninstall = self._mk(self.mg_plug, "卸载屏幕键盘插件…", "actKeyboardUninstall:")
+        self.mi_plug_auto.setEnabled_(False)
+        self.mi_plug_uninstall.setEnabled_(False)
         # 更新只在菜单里占一行: 标题会随进度变成「正在下载更新 42%」
         self.mi_check = self._mk(m, "检查更新…", "actCheckUpdate:")
         self._sep(m)
@@ -1599,6 +1694,185 @@ class DPApp(NSObject):
         self.engine.update(**kw)
         save_cfg(self.cfg)
         self._reflect()
+
+    # ---------------- 断开即锁屏 ----------------
+
+    @objc.python_method
+    def _tick_unlock(self, st):
+        """便利解锁：屏幕已锁 + 平板刚插上 -> 输一次密码。默认关。"""
+        if not self.cfg.get("convenience_unlock"):
+            return
+        present = bool((st or {}).get("devices"))
+        try:
+            locked = LOCK.screen_locked()
+        except Exception:
+            locked = False
+        if not self._unlocker.update(time.monotonic(), present, locked):
+            return
+        pw = UNLOCK.load_password()
+        if not pw:
+            log("便利解锁: 钥匙串里没有密码，跳过")
+            return
+        log("便利解锁: 屏幕已锁且平板刚接入，正在输入密码")
+        ok = UNLOCK.type_text(pw, enter=True)
+        log("便利解锁: 已发送按键 (映射完整=%s)；若仍未解锁，多半是 Secure Input 拦了合成事件" % ok)
+
+    def actToggleConvenienceUnlock_(self, sender):
+        if self.cfg.get("convenience_unlock"):
+            UNLOCK.delete_password()
+            self._apply(convenience_unlock=False)
+            self._unlocker = UNLOCK.UnlockDecider()
+            log("便利解锁: 已关闭并删除钥匙串密码")
+            return
+        # 1) 风险提示
+        i = self._ask("开启便利解锁？（不安全）",
+                      "dptouch 会把登录密码存进钥匙串，并在「屏幕已锁 + 平板刚插上」时自动输入。\n\n"
+                      "风险：\n"
+                      "1. 任何能伪装成这块平板屏的 USB-C 设备都可能触发解锁（DP-in 设备身份可伪造）\n"
+                      "2. 密码保存在本机钥匙串，以你的用户身份运行的进程可能读到\n"
+                      "3. 锁屏 Secure Input 可能吞掉合成按键，导致解锁失败\n"
+                      "4. 只对登录后的锁屏有效，FileVault 预启动界面无效\n"
+                      "5. 密码仅支持 ASCII 可打印字符（键码注入；中文密码无法使用）\n\n"
+                      "建议只在固定工位、威胁模型很低时开启。",
+                      ["我了解风险，继续", "取消"])
+        if i != 0:
+            return
+        # 2) 非模态窗口里输入密码（模态会吞掉屏幕键盘的点击）
+        self._show_password_window()
+
+    @objc.python_method
+    def _show_password_window(self):
+        """非模态密码窗口。
+
+        不能用 NSAlert.runModal：模态循环只把事件派发给弹窗，屏幕键盘那个
+        non-activating 面板收不到点击，看起来就是“键盘点了没反应”。
+        """
+        try:
+            from AppKit import (NSWindow, NSWindowStyleMaskTitled,
+                                NSWindowStyleMaskClosable, NSBackingStoreBuffered,
+                                NSMakeRect, NSButton, NSTextField)
+            if getattr(self, "_pw_win", None) is not None:
+                self._pw_win.makeKeyAndOrderFront_(None)
+                return
+            style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+            w = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, 380, 150), style, NSBackingStoreBuffered, False)
+            w.setTitle_("便利解锁：输入登录密码")
+            w.center()
+            v = w.contentView()
+
+            lab = NSTextField.alloc().initWithFrame_(NSMakeRect(20, 112, 340, 18))
+            lab.setStringValue_("密码只存本机钥匙串；仅支持英文/数字/符号（ASCII）。")
+            lab.setBezeled_(False)
+            lab.setDrawsBackground_(False)
+            lab.setEditable_(False)
+            lab.setSelectable_(False)
+            lab.setFont_(NSFont.systemFontOfSize_(11.0))
+            v.addSubview_(lab)
+
+            fld = _MaskedTextView.alloc().initWithFrame_(NSMakeRect(20, 74, 340, 26))
+            fld.setupMasking()
+            fld.setEditable_(True)
+            fld.setRichText_(False)
+            fld.setFont_(NSFont.systemFontOfSize_(13.0))
+            fld.setDrawsBackground_(True)
+            v.addSubview_(fld)
+
+            save = NSButton.alloc().initWithFrame_(NSMakeRect(260, 24, 100, 28))
+            save.setTitle_("保存")
+            save.setBezelStyle_(1)
+            save.setTarget_(self)
+            save.setAction_(_sel("pwSave:"))
+            v.addSubview_(save)
+
+            cancel = NSButton.alloc().initWithFrame_(NSMakeRect(160, 24, 92, 28))
+            cancel.setTitle_("取消")
+            cancel.setBezelStyle_(1)
+            cancel.setTarget_(self)
+            cancel.setAction_(_sel("pwCancel:"))
+            v.addSubview_(cancel)
+
+            self._pw_win, self._pw_field = w, fld
+            w.makeKeyAndOrderFront_(None)
+            w.makeFirstResponder_(fld)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        except Exception as e:
+            log("便利解锁: 密码窗口失败 %r" % (e,))
+
+    def pwSave_(self, sender):
+        pw = ""
+        try:
+            pw = self._pw_field.real()
+        except Exception:
+            pass
+        self._close_pw_window()
+        self._finish_password(pw)
+
+    def pwCancel_(self, sender):
+        self._close_pw_window()
+
+    @objc.python_method
+    def _close_pw_window(self):
+        try:
+            if getattr(self, "_pw_win", None) is not None:
+                self._pw_win.orderOut_(None)
+        except Exception:
+            pass
+        self._pw_win = None
+        self._pw_field = None
+
+    @objc.python_method
+    def _finish_password(self, pw):
+        if not pw:
+            return
+        ok, why = UNLOCK.store_password(pw)
+        if not ok:
+            self._warn("密码没有保存", why)
+            return
+        self._apply(convenience_unlock=True)
+        log("便利解锁: 已开启（密码已存入钥匙串）")
+
+    @objc.python_method
+    def _tick_wake(self, st):
+        """平板在线时阻止显示器休眠，锁屏界面才会留在平板上。"""
+        present = bool((st or {}).get("devices"))
+        self._wake.sync(present, bool(self.cfg.get("wake_with_tablet", True)))
+
+    def actWakeWithTablet_(self, sender):
+        self._apply(wake_with_tablet=not bool(self.cfg.get("wake_with_tablet", True)))
+        log("连接平板时保持唤醒 = %s" % self.cfg.get("wake_with_tablet"))
+
+    @objc.python_method
+    def _tick_lock(self, st):
+        """平板掉线 >= 8 秒后锁屏。只锁屏，不解锁，不碰密码。"""
+        if not self.cfg.get("lock_on_disconnect"):
+            # 关着时清状态：打开开关那一刻若本来就没插平板，不应该立刻算“掉线”
+            self._locker.reset()
+            return
+        if getattr(self, "_quitting", False):
+            return
+        present = bool((st or {}).get("devices"))
+        if not self._locker.update(time.monotonic(), present):
+            return
+        ext = LOCK.external_display_count()
+        if ext != 0:
+            log("锁屏: 平板已断开，但还有 %d 块外接屏，跳过" % ext
+                if ext > 0 else "锁屏: 外接屏数量读不出来，跳过")
+            return
+        if LOCK.screen_locked():
+            log("锁屏: 平板已断开，但屏幕已锁，跳过")
+            return
+        log("锁屏: 平板已断开 %.0f 秒" % self._locker.delay)
+        if LOCK.lock_screen():
+            log("锁屏已触发")
+        else:
+            log("锁屏失败: SACLockScreenImmediate 不可用")
+
+    def actLockDisconnect_(self, sender):
+        self._apply(lock_on_disconnect=not bool(self.cfg.get("lock_on_disconnect")))
+        if not self.cfg.get("lock_on_disconnect"):
+            self._locker.reset()
+        log("断开平板后锁屏 = %s" % self.cfg.get("lock_on_disconnect"))
 
     # ---------------- 定时刷新 ----------------
 
@@ -1658,13 +1932,21 @@ class DPApp(NSObject):
         _v = self.engine.take_pending_target()
         if _v:
             self.set_target(_v)
+        # Display reconnect/HiDPI can change bounds without a HID device callback
+        # or a preference edit. Refresh the existing Bridge, never restart input.
+        with self.engine._lk:
+            self.engine._sync_target()
         st = self.engine.status()
+        self._tick_wake(st)
+        self._tick_unlock(st)
+        self._tick_lock(st)
         self.mi_status.setTitle_(self.engine.status_line_short())
         self._reflect()
         self.win.refresh(st)         # 窗口没开时它自己会立刻返回
         self._sync_display()
         self._sync_target_menu()
         self._upd_tick()             # 检查更新: 排期 + 取后台结果
+        self._plug_tick()            # 插件: 安装进度 + 焦点跟随
         # 位置校正控制器: 按三个开关的现状推进状态机 (应用/恢复/拓扑重应用/退避)。
         # 内部全部短路, 不会在每秒 tick 上反复 apply。
         try:
@@ -2183,6 +2465,261 @@ class DPApp(NSObject):
             pass
         os._exit(0)      # 硬退: 不让半死的 AppKit 会话拖住重启
 
+    # ---------------- 插件: 屏幕键盘（TouchKeys） ----------------
+    @objc.python_method
+    def _plug_sync(self):
+        """把插件状态写回菜单。菜单显示期间不动（AppKit 会卡住会话）。"""
+        if getattr(self, "_menu_open", False):
+            return
+        it = getattr(self, "mi_plug_kb", None)
+        if it is None:
+            return
+        rec = PLUG.installed()
+        if self._plug_busy == "check":
+            title = "屏幕键盘：正在查询版本…"
+        elif self._plug_busy == "install":
+            title = "屏幕键盘：正在安装…"
+        elif rec:
+            title = ("屏幕键盘：收起" if (self._plug_ctl is not None
+                                       and self._plug_ctl.is_visible)
+                     else "屏幕键盘：显示")
+        else:
+            title = "屏幕键盘：未安装…"
+        if it.title() != title:
+            it.setTitle_(title)
+        self.mi_plug_auto.setEnabled_(bool(rec))
+        if rec and self._plug_ctl is not None:
+            self.mi_plug_auto.setState_(1 if getattr(self._plug_ctl, "auto", False) else 0)
+        else:
+            self.mi_plug_auto.setState_(0)
+        self.mi_plug_uninstall.setEnabled_(bool(rec) and not self._plug_busy)
+        self._sync_kb_item()
+
+    @objc.python_method
+    def _sync_kb_item(self):
+        """装了插件就在状态栏放一个键盘图标：单击直接呼出/收起，不用先开菜单。"""
+        rec = PLUG.installed()
+        bar = NSStatusBar.systemStatusBar()
+        if rec is None:
+            if self.kb_item is not None:
+                bar.removeStatusItem_(self.kb_item)
+                self.kb_item = None
+                log("状态栏键盘图标已移除")
+            return
+        if self.kb_item is None:
+            it = bar.statusItemWithLength_(NSVariableStatusItemLength)
+            btn = it.button()
+            btn.setToolTip_("屏幕键盘（TouchKeys）")
+            btn.setTarget_(self)
+            btn.setAction_("actKeyboardPlugin:")
+            self.kb_item = it
+            log("状态栏键盘图标已添加")
+        on = self._plug_ctl is not None and self._plug_ctl.is_visible
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "keyboard.fill" if on else "keyboard", None)
+        if img is not None:
+            cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(15.0, 0.0)
+            img = img.imageWithSymbolConfiguration_(cfg)
+            img.setTemplate_(True)
+            self.kb_item.button().setImage_(img)
+        else:
+            self.kb_item.button().setTitle_("⌨")
+
+    @objc.python_method
+    def _plug_ensure(self, force=False):
+        """加载插件包并建控制器（主线程）。"""
+        if self._plug_ctl is not None and not force:
+            return self._plug_ctl
+        if self._plug_ctl is not None and force:
+            try:
+                self._plug_ctl.close()
+            except Exception:
+                pass
+        mod = PLUG.load()
+        ctl = mod.create(on_hide=self._plug_on_hide, log=log)
+        self._plug_mod, self._plug_ctl = mod, ctl
+        log("插件已加载: %s %s" % (getattr(mod, "PLUGIN_ID", "?"),
+                                  getattr(mod, "VERSION", "?")))
+        return ctl
+
+    @objc.python_method
+    def _plug_on_hide(self):
+        self._plug_sync()
+
+    @objc.python_method
+    def _plug_warn_perm(self):
+        """插件跑在宿主进程里：宿主没权限时按键会被系统静默丢弃。"""
+        try:
+            ok = bool(self.engine.ax_trusted())
+        except Exception:
+            ok = True
+        if ok:
+            return
+        self._warn("还差一步授权",
+                   "屏幕键盘要在本进程里合成按键，需要「设备控制和数据访问」权限：\n\n"
+                   "系统设置 → 隐私与安全性 → 设备控制和数据访问 → 打开 Mipad DP Touch\n\n"
+                   "授权后要退出并重新打开 App 才生效。")
+
+    def actKeyboardPlugin_(self, sender):
+        if self._plug_busy:
+            return
+        if PLUG.installed():
+            try:
+                ctl = self._plug_ensure()
+            except Exception as e:
+                log("插件加载失败: %r" % (e,))
+                self._warn("插件加载失败",
+                           "%s\n\n可以在「插件 → 卸载屏幕键盘插件…」后重新安装。" % e)
+                return
+            ctl.toggle()
+            if ctl.is_visible:
+                self._plug_warn_perm()
+            self._plug_sync()
+            return
+        # 没装：先去后台查发版信息，再让用户确认（不静默下载）
+        self._plug_busy = "check"
+        self._plug_sync()
+        threading.Thread(target=self._plug_worker_check, daemon=True).start()
+
+    def actPluginCheck_(self, sender):
+        """手动检查插件更新（市场页 / 菜单都走这里）。"""
+        if self._plug_busy:
+            return
+        self._plug_busy = "check"
+        self._plug_sync()
+        threading.Thread(target=self._plug_worker_check, daemon=True).start()
+
+    def actKeyboardAuto_(self, sender):
+        try:
+            ctl = self._plug_ensure()
+        except Exception as e:
+            self._warn("插件加载失败", str(e))
+            return
+        ctl.set_auto(not getattr(ctl, "auto", False))
+        if getattr(ctl, "auto", False):
+            self._plug_warn_perm()
+        self._plug_sync()
+
+    def actKeyboardUninstall_(self, sender):
+        if not PLUG.installed():
+            return
+        i = self._ask("卸载屏幕键盘插件？",
+                      "会删除 %s 下的插件文件。App 的其它功能不受影响，随时可以重装。"
+                      % PLUG.plugin_root(), ["卸载", "取消"])
+        if i != 0:
+            return
+        try:
+            if self._plug_ctl is not None:
+                self._plug_ctl.close()
+        except Exception:
+            pass
+        ok = PLUG.uninstall()
+        self._plug_mod = self._plug_ctl = None
+        log("插件卸载: %s" % ("成功" if ok else "失败"))
+        if not ok:
+            self._warn("卸载失败", "没能删除插件目录，可能被占用。可以手动删除：\n%s"
+                       % PLUG.plugin_root())
+        self._plug_sync()
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
+
+    @objc.python_method
+    def _plug_worker_check(self):
+        try:
+            res = PLUG.check()
+        except Exception as e:
+            res = {"ok": False, "why": "查询出错（%s: %s）" % (e.__class__.__name__, e)}
+        self._plug_in = ("check", res)
+
+    @objc.python_method
+    def _plug_worker_install(self, res):
+        try:
+            cache = os.path.expanduser("~/Library/Caches/MipadDPTouch")
+            os.makedirs(cache, exist_ok=True)
+            dest = os.path.join(cache, res["asset"])
+            PLUG.download(res["url"], dest, sha256=res.get("sha256"))
+            rec = PLUG.install_from_zip(dest,
+                                        source=res.get("page") or PLUG.RELEASES_PAGE,
+                                        host_version=APP_VERSION,
+                                        sha256=res.get("sha256"))
+            out = {"ok": True, "rec": rec}
+        except Exception as e:
+            out = {"ok": False, "why": str(e)}
+        self._plug_in = ("install", out)
+
+    @objc.python_method
+    def _plug_after_check(self, res):
+        if not res.get("ok"):
+            self._warn("插件信息查询失败", res.get("why") or "原因不明。")
+            return
+        rec = PLUG.installed()
+        if rec is not None:
+            if PLUG.is_newer(res.get("version", ""), rec.get("version", "")):
+                body = ("已安装 %s，仓库里有 %s。\n\n来源：%s\n大小：%s"
+                        % (rec.get("version"), res.get("version"),
+                           res.get("page"), UPD.human_size(res.get("size") or 0)))
+                if self._ask("更新屏幕键盘插件？", body, ["下载并更新", "取消"]) != 0:
+                    return
+                self._plug_busy = "install"
+                self._plug_sync()
+                threading.Thread(target=self._plug_worker_install, args=(res,),
+                                 daemon=True).start()
+                return
+            self._warn("已是最新", "已安装的屏幕键盘插件就是最新版（%s）。" % rec.get("version"))
+            return
+        body = ("这会把屏幕键盘装到本机（不会随 App 分发）：\n\n"
+                "来源：%s\n版本：%s\n大小：%s\n安装位置：%s\n\n"
+                "安装后会在 dptouch 进程内运行，共用它的「设备控制和数据访问」权限。"
+                % (res.get("page"), res.get("version"),
+                   UPD.human_size(res.get("size") or 0), PLUG.plugin_root()))
+        if self._ask("安装屏幕键盘插件？", body, ["下载并安装", "取消"]) != 0:
+            return
+        self._plug_pending = res
+        self._plug_busy = "install"
+        self._plug_sync()
+        threading.Thread(target=self._plug_worker_install, args=(res,), daemon=True).start()
+
+    @objc.python_method
+    def _plug_after_install(self, out):
+        if not out.get("ok"):
+            self._warn("插件安装失败", out.get("why") or "原因不明。")
+            return
+        rec = out.get("rec") or {}
+        log("插件安装完成: %s %s" % (rec.get("version"), rec.get("dir")))
+        try:
+            ctl = self._plug_ensure(force=True)
+            ctl.show()
+            self._plug_warn_perm()
+        except Exception as e:
+            log("插件安装后加载失败: %r" % (e,))
+            self._warn("插件已下载但加载失败", str(e))
+            return
+        self._plug_sync()
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
+
+    @objc.python_method
+    def _plug_tick(self):
+        p = self._plug_in
+        if p:
+            self._plug_in = None
+            kind, data = p
+            self._plug_busy = ""
+            if kind == "check":
+                self._plug_after_check(data)
+            else:
+                self._plug_after_install(data)
+        if self._plug_ctl is not None:
+            try:
+                self._plug_ctl.tick()
+            except Exception as e:
+                log("插件 tick 异常: %r" % (e,))
+        self._plug_sync()
+
     # ---------------- 检查更新 ----------------
     #
     # 职责切分: 网络与文件逻辑全在 dptouch_update 里 (纯函数, 离线可测, 见
@@ -2508,6 +3045,11 @@ class DPApp(NSObject):
         return txt
 
     def actQuit_(self, sender):
+        self._quitting = True
+        try:
+            self._wake.close()
+        except Exception:
+            pass
         log("退出")
         try:
             self.edid.shutdown("退出")

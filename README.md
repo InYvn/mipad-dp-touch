@@ -1,6 +1,6 @@
 <div align="center">
   <h1>
-    <img src="docs/logo.png?v=2.0.1-beta" width="170" alt="Mipad DP Touch Enhanced"/>
+    <img src="docs/logo.png?v=2.0.0-beta" width="170" alt="Mipad DP Touch Enhanced"/>
     <br/>
     Mipad DP Touch <img alt="Enhanced" src="https://img.shields.io/badge/-Enhanced-ff6900?style=flat-square">
   </h1>
@@ -19,7 +19,7 @@
 - 小米平板 9 Pro Max、小米焦点触控笔 Pro，以及支持视频传输的 USB-C 全功能线。
 - Mac 运行 macOS 27；使用系统原生触控时运行 macOS 27.3 或以上。
 - 平板进入 DP-in，通过 USB-C 连接 Mac。
-- 手指触控使用平板侧模块 `mipad-dp-touch-module-v2.0.1.zip`，提供触摸屏与笔接口，并优化双指缩放；安装需要平板 root 权限和匹配的硬件及固件。
+- 手指触控使用平板侧模块 `mipad-dp-touch-module-v2.0.0.zip`，提供触摸屏与笔接口，并优化双指缩放；安装需要平板 root 权限和匹配的硬件及固件。
 
 ## 按你的配置看功能
 
@@ -41,7 +41,7 @@
 
 ### 1. 安装 Mac App
 
-下载 [**2.0.1-beta 的 DMG**](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.1-beta/Mipad-DP-Touch-2.0.1-beta.dmg)，打开后将 **Mipad DP Touch.app** 拖入「应用程序」，然后打开 App。
+从 [Releases](https://github.com/InYvn/mipad-dp-touch/releases) 选择 **2.0.0-beta** 的 DMG，打开后将 **Mipad DP Touch.app** 拖入「应用程序」，然后打开 App。
 
 首次打开被系统拦下时（ad-hoc 签名），在「系统设置 → 隐私与安全性 → 安全性」中点「仍要打开」并确认。
 
@@ -49,11 +49,11 @@
 
 ### 2. 准备平板触控模块
 
-下载 [`mipad-dp-touch-module-v2.0.1.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.1-beta/mipad-dp-touch-module-v2.0.1.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
+下载 [`mipad-dp-touch-module-v2.0.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 
-已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.1。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.1 可覆盖重装。
+已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.0。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。
 
 ### 3. 完成 macOS 原生触控设置
 
@@ -90,7 +90,7 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 点击菜单栏图标 →「设置…」，或按 **⌘,** 打开设置窗口。侧栏使用系统玻璃材质，可通过 **⌘1–5** 切页。
 
-![设备概览](docs/assets/settings-overview.png?v=2.0.1-beta)
+![设备概览](docs/assets/settings-overview.png?v=2.0.0-beta)
 
 **界面预览**
 
@@ -99,19 +99,19 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 ### 触控与位置
 
-![触控与位置](docs/assets/settings-touch.png?v=2.0.1-beta)
+![触控与位置](docs/assets/settings-touch.png?v=2.0.0-beta)
 
 ### 笔手势映射
 
-![笔手势映射](docs/assets/settings-gestures.png?v=2.0.1-beta)
+![笔手势映射](docs/assets/settings-gestures.png?v=2.0.0-beta)
 
 ### 显示设置
 
-![显示设置](docs/assets/settings-display.png?v=2.0.1-beta)
+![显示设置](docs/assets/settings-display.png?v=2.0.0-beta)
 
 ### 运行与诊断
 
-![运行与诊断](docs/assets/settings-runtime.png?v=2.0.1-beta)
+![运行与诊断](docs/assets/settings-runtime.png?v=2.0.0-beta)
 
 </details>
 
@@ -132,6 +132,17 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 菜单栏「检查更新…」和高级选项中的「立即检查更新」可检查新版本。有更新时点「下载并安装」，App 会下载、校验 SHA256、替换并重新打开。「高级选项 → 自动检查更新」控制自动检查。
 
 卸载 Mac App 时，退出 App，再从「应用程序」删除。平板模块通过平板的模块管理器卸载，详见[平板侧说明](tablet/README.md#卸载)。
+
+## 可选插件：屏幕键盘（TouchKeys）
+
+屏幕键盘**不随 App 打包**。菜单 →「插件 → 屏幕键盘（TouchKeys）…」：
+
+1. 首次点开时先查公开仓库（`InYvn/TouchKeys`）的最新插件发版，弹窗写明来源、版本、大小；
+2. 你点「下载并安装」后，App 才现场下载 `touchkeys-plugin-*.zip`，按发版正文里的 SHA256 校验，解压到 `~/Library/Application Support/MipadDPTouch/plugins/touchkeys/<version>/`；
+3. 插件在 dptouch 进程内运行，**共用** App 的「设备控制和数据访问」权限，不会多出 Dock/菜单栏图标；
+4. 「跟随输入框自动呼出」可在插件子菜单里开关；卸载走「插件 → 卸载屏幕键盘插件…」。
+
+校验与兼容：发版正文没有该资产的 SHA256 就拒绝安装；`plugin.json` 里的 `id` / `api` / `min_host` 不匹配也拒绝。插件加载失败时菜单会给出错误，不会静默。
 
 ## 从源码构建
 

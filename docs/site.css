@@ -81,9 +81,6 @@ footer{padding:36px 0 44px;color:var(--faint)}footer p{font-size:12px}.flinks a{
 @media(max-width:600px){.wrap{padding-left:24px;padding-right:24px}nav .wrap{padding-left:20px;padding-right:20px}nav .brand{font-size:14px}nav .links{font-size:12px;gap:8px}header:not(.page){padding:42px 0 44px}header .logo{width:64px;height:64px;margin-bottom:20px}header h1{font-size:29px;max-width:330px;margin:auto;line-height:1.15}header .subtitle{font-size:21px;max-width:320px;margin-top:18px}header .tagline{font-size:14px;line-height:1.85;text-align:left;margin-top:20px}header .platforms{gap:0;row-gap:8px}.pill{font-size:11px;padding:0 8px}header .cta{gap:10px}.btn{padding:11px 18px;font-size:13px}section{padding:44px 0}.compare .col{padding:24px}.lead{font-size:15px;margin-bottom:24px}.features{gap:12px}.feature{padding:24px}.showcase-grid{gap:24px}.showcase .shot{margin-left:-8px;margin-right:-8px}.shot img{border-radius:10px}.item{grid-template-columns:1fr;gap:8px}header.page{padding:40px 0 30px}.tut{padding:24px;gap:22px}.tut .stage{width:240px}.cta-strip{padding-left:24px;padding-right:24px}footer .flinks{gap:12px 20px}.table-card table{min-width:560px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 
-/* Release marker: 2.0.0-beta-release2 */
-.hero h1 .badge{font-size:12px;line-height:1.2;padding:5px 10px;vertical-align:middle}
-
 /* Site motion: quiet surfaces, native navigation, no perpetual effects. */
 .shot img{height:auto}
 body{background-image:radial-gradient(720px 340px at 50% 0,rgba(255,105,0,.045),transparent 72%);background-repeat:no-repeat}

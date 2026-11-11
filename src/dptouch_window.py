@@ -27,7 +27,7 @@ import os
 import objc
 from dptouch_previews import SettingPreview
 from AppKit import (
-    NSAffineTransform, NSAttributedString, NSBackingStoreBuffered, NSBox, NSBundle, NSButton,
+    NSAlert, NSAffineTransform, NSAttributedString, NSBackingStoreBuffered, NSBox, NSBundle, NSButton,
     NSColor, NSFont, NSGradient, NSGraphicsContext, NSShadow,
     NSFontAttributeName, NSForegroundColorAttributeName, NSImage, NSImageView,
     NSMakePoint, NSMakeRect, NSMakeSize,
@@ -773,6 +773,7 @@ PAGES = (
     ("touch", "scope", "触控与位置"),
     ("gestures", "hand.point.up", "手势映射"),
     ("display", "display", "显示设置"),
+    ("plugins", "puzzlepiece.extension", "插件市场"),
     ("runtime", "gearshape", "运行与诊断"),
 )
 
@@ -1357,7 +1358,7 @@ class SettingsWindow(_Pane):
         y = 0.0
 
         # ---- 主体: 侧栏 + 内容区 ----
-        body_h = H - TOPBAR_H - 1 - STRIP_H
+        body_h = self._H - TOPBAR_H - 1 - STRIP_H
         self._sidebar(v, y, body_h)
         v.addSubview_(_fill_view(self._r(SIDEBAR_W, y, 1, body_h), "separatorColor",
                                  ident="line"))
@@ -1375,7 +1376,7 @@ class SettingsWindow(_Pane):
         self.c["strip"] = _label("设备在线 · 配置已就绪", self._r(M + 17, y + 12, 420, 16),
                                  size=11, color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["strip"])
-        v.addSubview_(_label("使用说明 · ⌘1–5 切换页面",
+        v.addSubview_(_label("使用说明 · ⌘1–6 切换页面",
                              self._r(W - M - 260, y + 12, 260, 16), size=11, dim=True, right=True))
         used = y + STRIP_H
 
@@ -1498,6 +1499,8 @@ class SettingsWindow(_Pane):
             y = self._page_touch(v, px, pw, y)
         elif self.page == "display":
             y = self._page_display(v, px, pw, y)
+        elif self.page == "plugins":
+            y = self._page_plugins(v, px, pw, y)
         else:
             y = self._page_runtime(v, px, pw, y)
 
@@ -1551,12 +1554,12 @@ class SettingsWindow(_Pane):
         v.addSubview_(self.c["perm_ok"])
         self.c["perm_sum"] = _label("", self._r(x + 22, y, 400, 20), size=13)
         v.addSubview_(self.c["perm_sum"])
-        y += 18 + 10
+        y += 16 + 8
         self.c["ov_mode"] = _label("", self._r(x, y, w - 20, 20), size=15, bold=True)
         self.c["ov_mode_detail"] = _label("", self._r(x, y + 23, w - 20, 17), size=12, dim=True)
         v.addSubview_(self.c["ov_mode"])
         v.addSubview_(self.c["ov_mode_detail"])
-        y += 40 + 16
+        y += 34 + 10
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
         y += 18
         # 未完成: 分步引导 (唯一保留的"框" —— 会消失、自带动作的临时块)
@@ -1567,37 +1570,77 @@ class SettingsWindow(_Pane):
         self.c["sum_scope"] = _label("当前笔手势配置", self._r(x, y, 400, 16), size=12, bold=True,
                                      color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["sum_scope"])
-        y += 16 + 10
+        y += 16 + 6
         binds = HB.binds_from_cfg(self.app.cfg)
         for i, (g, title, _o, _d) in enumerate(BIND_ROWS):
             col = i % 2
             row = i // 2
             bx = x + col * (w / 2.0)
-            by = y + row * 46
+            by = y + row * 38
             v.addSubview_(_label(title, self._r(bx, by, 120, 18), size=14, dim=True))
             self.c["sum_%s" % g] = _label(HB.action_title(g, binds.get(g)),
                                           self._r(bx + 130, by, 200, 18), size=14, bold=True)
             v.addSubview_(self.c["sum_%s" % g])
-        y += 3 * 46 + 6
+        y += 3 * 38 + 4
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
-        y += 18
+        y += 12
         # 显示器 / 手指触控 两栏
         v.addSubview_(_label("显示器", self._r(x, y, 200, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
         v.addSubview_(_label("手指触控", self._r(x + w / 2.0, y, 200, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
-        y += 16 + 8
+        y += 16 + 6
         self.c["ov_disp"] = _label("", self._r(x, y, w / 2.0 - 30, 18), size=13, bold=True)
         v.addSubview_(self.c["ov_disp"])
         self.c["enhanced_hint"] = _label("", self._r(x + w / 2.0, y, w / 2.0 - 30, 18),
                                          size=13, bold=True)
         v.addSubview_(self.c["enhanced_hint"])
-        y += 18 + 6
+        y += 16 + 4
         self.c["ov_disp_sub"] = _label("", self._r(x, y, w / 2.0 - 30, 16), size=11, dim=True)
         v.addSubview_(self.c["ov_disp_sub"])
         self.c["ov_touch_sub"] = _label("", self._r(x + w / 2.0, y, w / 2.0 - 30, 16), size=11, dim=True)
         v.addSubview_(self.c["ov_touch_sub"])
-        return y + 16
+        y += 16 + 10
+        v.addSubview_(_label("连接行为", self._r(x, y, 200, 16), size=12, bold=True,
+                             color=_color("secondaryLabelColor")))
+        y += 16 + 8
+        rows = (("lock_disconnect", "断开锁屏",
+                 "拔掉数据线 8 秒后锁屏；仅当平板是唯一外接屏时生效，不会自动解锁", "onLockDisconnect:"),
+                ("wake_tablet", "保持唤醒",
+                 "插上平板就点亮屏幕并阻止显示器休眠；锁屏界面会留在平板上", "onWakeTablet:"),
+                ("convenience_unlock", "便利解锁（不安全）",
+                 "屏幕已锁且平板刚插上时自动输入登录密码；密码存钥匙串，开启前会先弹风险提示",
+                 "onConvenienceUnlock:"))
+        self._card(v, y, 44.0, x=x, w=w)
+        colw = w / 3.0
+        for i, (key, title, tip, act) in enumerate(rows):
+            bx = x + i * colw
+            info = _FirstMouseButton.alloc().initWithFrame_(
+                self._r(bx + PAD - 7, y + 4, 32, 32))
+            _img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("info.circle", None)
+            if _img is not None:
+                info.setImage_(_img)
+            info.setBordered_(False)
+            info.setTitle_("")
+            info.setContentTintColor_(_color("secondaryLabelColor"))
+            info.setTag_(i)
+            info.setToolTip_(tip)
+            info.setTarget_(self)
+            info.setAction_("onConnInfo:")
+            v.addSubview_(info)
+            lab = _label(title, self._r(bx + PAD + 28, y + 13, colw - 28 - 68, 18),
+                         size=13, bold=True)
+            lab.setToolTip_(tip)
+            v.addSubview_(lab)
+            self.c[key] = _Switch.alloc().initWithFrame_(
+                self._r(bx + colw - PAD - 36, y + 11, 36, 22))
+            self.c[key].setBordered_(False)
+            self.c[key].setTitle_("")
+            self.c[key].setToolTip_(tip)
+            self.c[key].setTarget_(self)
+            self.c[key].setAction_(act)
+            v.addSubview_(self.c[key])
+        return y + 44.0 + 12
 
     @objc.python_method
     def _perm_block(self, v, x, y, w):
@@ -1796,8 +1839,80 @@ class SettingsWindow(_Pane):
         return y
 
     @objc.python_method
+    def _page_plugins(self, v, x, w, y):
+        """插件市场：只列可选插件，安装动作交给 App（下载/校验/加载都在那边）。"""
+        import dptouch_plugin as PLUG
+        rec = PLUG.installed()
+        ctl = getattr(self.app, "_plug_ctl", None)
+        busy = getattr(self.app, "_plug_busy", "") or ""
+        shown = ctl is not None and ctl.is_visible
+        auto_on = ctl is not None and bool(getattr(ctl, "auto", False))
+
+        y = self._eyebrow(v, x, y, "PLUGIN MARKET / 05")
+        y = self._page_head(v, x, w, y, "插件市场",
+                            "可选功能按需安装：App 本体不打包它们，点安装时才从发行源下载并校验。",
+                            "检查更新", "onMarketCheck:")
+
+        card_h = 152
+        self._card(v, y, card_h, x, w)
+        px, pw = x + 24, w - 48
+        self.c["mk_name"] = _label("屏幕键盘 · TouchKeys", self._r(px, y + 20, pw - 190, 20),
+                                   size=15, bold=True)
+        v.addSubview_(self.c["mk_name"])
+
+        if busy == "check":
+            st, col = "正在检查更新…", _color("secondaryLabelColor")
+        elif busy == "install":
+            st, col = "正在安装…", brand_color()
+        elif rec:
+            st, col = "已安装 %s" % rec.get("version", "?"), _color("systemGreenColor")
+        else:
+            st, col = "未安装", _color("secondaryLabelColor")
+        self.c["mk_state"] = _label(st, self._r(x + w - 24 - 180, y + 22, 180, 18),
+                                    size=12, color=col, right=True)
+        v.addSubview_(self.c["mk_state"])
+
+        self.c["mk_desc"] = _label("触屏副屏用的浮动键盘：点按合成真实按键，支持中英切换与焦点跟随。",
+                                   self._r(px, y + 48, pw, 17), size=12, dim=True)
+        v.addSubview_(self.c["mk_desc"])
+        src = "来源 %s · 安装前校验发版正文里的 SHA256" % PLUG.REPO
+        self.c["mk_src"] = _label(src, self._r(px, y + 72, pw, 15), size=11, dim=True)
+        v.addSubview_(self.c["mk_src"])
+
+        by = y + 104
+        if rec:
+            self.c["mk_main"] = _button("收起键盘" if shown else "显示键盘",
+                                        self._r(px, by, 108, 28), self, "onMarketToggle:")
+        else:
+            self.c["mk_main"] = _button("安装…", self._r(px, by, 108, 28), self, "onMarketInstall:")
+        v.addSubview_(self.c["mk_main"])
+
+        if rec:
+            self.c["mk_uninstall"] = _button("卸载…", self._r(px + 116, by, 84, 28),
+                                             self, "onMarketUninstall:")
+            v.addSubview_(self.c["mk_uninstall"])
+            self.c["mk_auto"] = _button("自动跟随输入框", self._r(px + 208, by, 138, 28),
+                                        self, "onMarketAuto:", switch=True, state=auto_on)
+            self.c["mk_auto"].setEnabled_(True)
+            v.addSubview_(self.c["mk_auto"])
+
+        self.c["mk_open"] = _button("发行页 ↗", self._r(x + w - 24 - 92, by, 92, 28),
+                                    self, "onMarketOpen:")
+        v.addSubview_(self.c["mk_open"])
+
+        y += card_h + 26
+        v.addSubview_(_label("插件机制", self._r(x, y, w, 18), size=13, bold=True))
+        y += 24
+        v.addSubview_(_label("· 安装包从 GitHub Release 现场下载，校验通过才落到本机；卸载会删除插件目录。",
+                             self._r(x, y, w, 16), size=11, dim=True))
+        y += 20
+        v.addSubview_(_label("· 检查更新只读发版信息，不会自动安装；需要你确认后才会下载。",
+                             self._r(x, y, w, 16), size=11, dim=True))
+        return y + 30
+
+    @objc.python_method
     def _page_runtime(self, v, x, w, y):
-        y = self._eyebrow(v, x, y, "APP SETTINGS / 04")
+        y = self._eyebrow(v, x, y, "APP SETTINGS / 06")
         y = self._page_head(v, x, w, y, "运行与诊断", "后台行为、启动方式与问题排查。",
                             "高级选项", "onAdvanced:")
         v.addSubview_(_label("常规", self._r(x, y, 200, 16), size=11, bold=True,
@@ -1818,8 +1933,8 @@ class SettingsWindow(_Pane):
             self.c[key].setAction_(act)
             v.addSubview_(self.c[key])
             self._preview(v, "state_" + key, self._r(x + w - 170, y + 15, 115, 32))
-            v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
-            y += 60
+            v.addSubview_(_line_view(self._r(x, y + 58, w, 1)))
+            y += 58
         y += 18
         v.addSubview_(_label("诊断", self._r(x, y, 200, 16), size=11, bold=True,
                              color=_color("secondaryLabelColor")))
@@ -1839,14 +1954,59 @@ class SettingsWindow(_Pane):
                                 self, "onAdvanced:")
         v.addSubview_(self.c["adv"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
-        y += 60 + 16
-        v.addSubview_(_label("Mipad DP Touch · 运行状态来自当前进程", self._r(x, y, w, 16),
-                             size=11, dim=True))
-        return y + 16
+        y += 60
+        return y
 
     # ---------------- 交互: 切页 / 外观 / 详情 / 提示条 ----------------
+    # ---------------- 插件市场 ----------------
+    def onMarketInstall_(self, sender):
+        self.app.actKeyboardPlugin_(None)
+        self._market_later_()
+
+    def onMarketToggle_(self, sender):
+        self.app.actKeyboardPlugin_(None)
+        self._market_later_()
+
+    def onMarketCheck_(self, sender):
+        self.app.actPluginCheck_(None)
+        self._market_later_()
+
+    def onMarketUninstall_(self, sender):
+        self.app.actKeyboardUninstall_(None)
+        self._market_later_()
+
+    def onMarketAuto_(self, sender):
+        self.app.actKeyboardAuto_(None)
+        self._market_later_()
+
+    def onMarketOpen_(self, sender):
+        from Foundation import NSURL
+        NSWorkspace.sharedWorkspace().openURL_(
+            NSURL.URLWithString_("https://github.com/InYvn/TouchKeys/releases"))
+
+    @objc.python_method
+    def _market_later_(self, delay=1.4):
+        """动作是异步的（下载/弹窗），过一会儿再把这一页重排一次。"""
+        from AppKit import NSTimer
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            delay, self, "onMarketRefresh:", None, False)
+
+    def onMarketRefresh_(self, timer):
+        from AppKit import NSApp
+        if NSApp.modalWindow() is not None:
+            self._market_later_(1.5)     # 还开着弹窗: 等它关了再重排
+            return
+        if self.page == "plugins":
+            self._relayout(animate=False)
+
+    @objc.python_method
+    def market_changed(self):
+        """App 侧安装/卸载完成后调用。"""
+        if self.page == "plugins":
+            self._market_later_(0.6)
+
     def onNav_(self, sender):
-        """侧栏切页 (⌘1–5 同效)。整窗重建 —— 和权限态切换走同一条路。"""
+        """侧栏切页 (⌘1–6 同效)。整窗重建 —— 和权限态切换走同一条路。"""
         key = getattr(sender, "key", "")
         if key and key != self.page:
             self.page = key
@@ -2151,6 +2311,9 @@ class SettingsWindow(_Pane):
         try:
             for _k, _v in (("enable", 1 if a.enabled else 0),
                            ("debug", 1 if a.cfg["debug_log"] else 0),
+                           ("lock_disconnect", 1 if a.cfg.get("lock_on_disconnect") else 0),
+                           ("wake_tablet", 1 if a.cfg.get("wake_with_tablet", True) else 0),
+                           ("convenience_unlock", 1 if a.cfg.get("convenience_unlock") else 0),
                            ("enhanced", 1 if _on else 0),
 
                            ("edid_correct", 1 if a.cfg.get("edid_correct") else 0)):
@@ -2232,7 +2395,9 @@ class SettingsWindow(_Pane):
                 "笔向上，内容" + ("向上" if natural else "向下") + " · 增益 %s" % a.cfg["gain"])
         if "route_preview" in self.c:
             self.c["route_preview"].update("route", (route, "运行中" in mode_main), mode_main + " · " + mode_detail)
-        for key, symbol in (("enable", "cursorarrow"), ("autostart", "power"), ("debug", "doc.text.magnifyingglass")):
+        for key, symbol in (("enable", "cursorarrow"), ("autostart", "power"),
+                            ("debug", "doc.text.magnifyingglass"), ("lock_disconnect", "lock"),
+                            ("wake_tablet", "sun.max"), ("convenience_unlock", "lock.open")):
             if "state_" + key in self.c:
                 on = bool(self.c[key].state())
                 self.c["state_" + key].update("state", (on, symbol), key + (" 已开启" if on else " 已关闭"))
@@ -2579,6 +2744,25 @@ class SettingsWindow(_Pane):
 
     def onDebug_(self, sender):
         self.app.actDebugLog_(None)
+        self.refresh(force=True)
+
+    def onConvenienceUnlock_(self, sender):
+        self.app.actToggleConvenienceUnlock_(None)
+        self.refresh(force=True)
+
+    def onWakeTablet_(self, sender):
+        self.app.actWakeWithTablet_(None)
+        self.refresh(force=True)
+
+    def onConnInfo_(self, sender):
+        a = NSAlert.alloc().init()
+        a.setMessageText_("连接行为")
+        a.setInformativeText_(sender.toolTip() or "")
+        a.addButtonWithTitle_("好")
+        a.runModal()
+
+    def onLockDisconnect_(self, sender):
+        self.app.actLockDisconnect_(None)
         self.refresh(force=True)
 
     def onAutostart_(self, sender):

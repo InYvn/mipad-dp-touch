@@ -61,11 +61,14 @@ def verify_native_controls(app, report):
         with patch.object(app, 'start_calibration') as retired:
             assert dispatch('onCalibrate:', win, None)
             retired.assert_not_called()
-        # Retired research module is not shipped; stale selectors remain no-ops.
-        assert app.start_calibration() is False
-        app._calibration_path = 'must-not-analyze.json'
-        assert app._poll_calibration() is None
-        app._calibration_path = None
+        import dptouch_calibration as CAL
+        with patch.object(CAL, 'launch_calibration') as launch, patch.object(CAL, 'analyze_completed') as analyze:
+            assert app.start_calibration() is False
+            app._calibration_path = 'must-not-analyze.json'
+            app._poll_calibration()
+            launch.assert_not_called()
+            analyze.assert_not_called()
+            app._calibration_path = None
         win.page = 'touch'
         win._relayout(animate=False)
         for state in ('disabled', 'unsupported', 'ambiguous', 'checking', 'failed'):

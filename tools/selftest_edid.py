@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 
 import dptouch_edid as ED          # noqa: E402
 
-EVID = os.environ.get("DPTOUCH_EDID_TEST_FIXTURES", os.path.join(ROOT, "tools", "fixtures", "private-device"))
+EVID = os.path.join(ROOT, "tools", "edid-ab-evidence", "ab-1793854557")
 ORIG = open(os.path.join(EVID, "mi-display-original.edid"), "rb").read()
 GOLD = open(os.path.join(EVID, "mi-display-size-only.edid"), "rb").read()
 

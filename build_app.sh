@@ -15,7 +15,7 @@ APP_NAME="Mipad DP Touch"
 # bundle id 保持稳定 (改名字不改 id): TCC 的输入监控/辅助功能授权是按 id 匹配的,
 # 换了 id 用户就得重新授权一遍。
 BUNDLE_ID="io.github.inyvn.xiaomi-dptouch"
-VER="2.0.1-beta"
+VER="2.1.0-beta"
 ICON="AppIcon.icns"
 
 if [ ! -x "$VENV/bin/python" ]; then
@@ -57,7 +57,7 @@ echo "    构建解释器: Python $PYV"
 
 echo "==> 语法检查"
 "$VENV/bin/python" -m py_compile src/dptouch.py src/dptouch_engine.py src/dptouch_display.py \
-  src/dptouch_mode.py src/dptouch_edid.py src/dptouch_window.py src/hid_bridge.py src/dptouch_autostart.py src/dptouch_update.py
+  src/dptouch_mode.py src/dptouch_edid.py src/dptouch_calibration.py src/dptouch_window.py src/hid_bridge.py src/dptouch_autostart.py src/dptouch_update.py src/dptouch_plugin.py
 
 # 原生 EDID 助手: 必须编译成功且自检通过, 否则直接失败 —— 不能静默吞掉。
 # 助手派生自 github.com/arlint/vedid (MIT, tools/native/LICENSE), 职责:
@@ -79,7 +79,7 @@ if ! "$NATIVE_OUT/vedid" selftest; then
   exit 1
 fi
 # 384B EDID 校验路径也当场验一遍 (面板 EDID = 基础块 + 2 扩展)
-if ! "$NATIVE_OUT/vedid" validate --edid tools/fixtures/checksum-valid-384.edid; then
+if ! "$NATIVE_OUT/vedid" validate --edid tools/edid-ab-evidence/ab-1793854557/mi-display-original.edid; then
   echo "!! vedid 拒绝 384B 面板 EDID (multiples128/扩展数/校验和校验回退)" >&2
   exit 1
 fi
@@ -89,7 +89,7 @@ echo "==> import 检查 (打之前先能导入)"
 "$VENV/bin/python" - <<'PYEOF'
 import sys
 sys.path.insert(0, "src")
-import dptouch, dptouch_edid, dptouch_engine, dptouch_display, dptouch_window
+import dptouch, dptouch_edid, dptouch_calibration, dptouch_engine, dptouch_display, dptouch_window
 import dptouch_autostart, dptouch_update, dptouch_mode, hid_bridge
 import dptouch_edid as ED
 # 模块能导入 + 纯逻辑可用 (不碰显示器): 非法 EDID 必须被拒
@@ -138,6 +138,7 @@ echo "==> PyInstaller 打包"
   --hidden-import dptouch_update \
   --hidden-import dptouch_edid \
   --hidden-import dptouch_mode \
+  --hidden-import dptouch_plugin \
   --hidden-import ssl --hidden-import _ssl --hidden-import _hashlib \
   --paths src \
   --add-data "$PWD/docs/logo.png:." \

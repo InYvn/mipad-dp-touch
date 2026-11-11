@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """EDID 几何修正 (B) —— 纯 Python 校验/几何 + 原生助手控制器。
 
-背景与依据 (生产几何校正策略):
+背景与依据 (见 tools/edid-ab-evidence/ab-1793854557/REPORT.md):
   小米平板 9 Pro Max 以 DP-in 当外接屏时, EDID 报的物理尺寸 (590×340 mm) 与
   macOS 27.3 原生直接触摸的坐标系不一致, 手指落点系统性偏移 (5 点平均 305.4pt)。
   只把 EDID 的物理几何改成 DTD=282×188 mm / 基础块 28×19 cm 并重算校验和
