@@ -9,9 +9,21 @@ typedef struct {uint64_t generation;int explicit_release,active,poison,pending,f
 static void rx_reset(RX*s){int m=s->explicit_release;uint64_t g=s->generation;memset(s,0,sizeof(*s));s->explicit_release=m;s->generation=g;}
 static void rx_begin_session(RX*s,uint64_t g){rx_reset(s);s->generation=g;}
 static int parse(const unsigned char*b,int*single){unsigned seen=0;int active=0;if(b[61]>10)return -1;for(int i=0;i<b[61];i++){int o=1+6*i,id=b[o+1];if(id>9||(seen&(1u<<id)))return -1;seen|=1u<<id;if(b[o]&3){active++;*single=i;}}return active;}
+/* A report-ID-1 frame with no contacts down. The host has no contact state to
+ * contradict, so writing it whole is always safe: it is the only way back from a
+ * poisoned gate, where the host-side state is unknown. */
+static int rx_release_all(const unsigned char*b,size_t n){return n==62&&b[0]==1&&b[61]==0;}
 static ssize_t rx_send(RX*s,int target,int fd,const void*buf,size_t n,writer fn){
  const unsigned char*b=buf;if(!target)return fn(fd,buf,n);
- if(s->poison && !(n==62&&b[0]==3)){errno=EIO;return -1;}
+ if(s->poison&&!((n==62&&b[0]==3)||rx_release_all(b,n))){errno=EIO;return -1;}
+ if(s->poison){
+  if(b[0]==3)return fn(fd,buf,n);/* pen frames keep their pass-through semantics */
+  /* Release-all while poisoned: try the whole 62B packet once. A short/failed write
+   * leaves the poison in place (fail-closed); a full write proves the host has no
+   * contacts, which is exactly the state a fresh session assumes. */
+  ssize_t rc=fn(fd,buf,n);int e=errno;if(rc!=62){errno=e;return rc;}
+  rx_reset(s);memcpy(s->prior,b,62);s->active=0;return 62;
+ }
  if(!n||b[0]!=1)return fn(fd,buf,n);
  int single=0,a=n==62?parse(b,&single):-1;
  if(s->pending){if(fd!=s->fd||n!=62||memcmp(b,s->input,62)){s->poison=1;errno=EIO;return -1;}}
@@ -24,7 +36,12 @@ static ssize_t rx_send(RX*s,int target,int fd,const void*buf,size_t n,writer fn)
   }s->pending=1;
  }
  while(s->next<s->total){ssize_t rc=fn(fd,s->out[s->next],62);int e=errno;
-  if(rc!=62){if(rc<0&&(e==EINTR||e==EAGAIN)&&++s->retries<8){errno=e;return rc;}s->poison=1;s->pending=0;/* emitted prefix cannot be rolled back */errno=e;return rc;}
+  if(rc!=62){if(rc<0&&(e==EINTR||e==EAGAIN)&&++s->retries<8){errno=e;return rc;}
+   /* Nothing has been written for this transaction yet (next==0): the host is still
+    * in the state prior/active describes, so drop the attempt and let the next frame
+    * start over instead of poisoning. */
+   if(rc<0&&s->next==0){s->pending=0;s->retries=0;errno=e;return rc;}
+   s->poison=1;s->pending=0;/* emitted prefix cannot be rolled back */errno=e;return rc;}
   s->next++;
  }
  s->pending=0;s->active=a;memcpy(s->prior,b,62);return 62;
