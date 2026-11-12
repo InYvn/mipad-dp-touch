@@ -418,7 +418,8 @@ class Engine(object):
         self._live_on = False
         self._live_lk = threading.Lock()
         self._live_fingers = []
-        self._live_pen = {"x": None, "y": None, "down": False, "pres": 0, "t": 0.0}
+        self._live_pen = {"x": None, "y": None, "px": None, "py": None,
+                          "down": False, "pres": 0, "t": 0.0}
         self._multi = False           # 是否正在双指手势
         self._two_prev = None         # 双指质心 (归一化)
         self._two_pend = [0.0, 0.0]   # 待发送的滚动量 (px)
@@ -1221,7 +1222,8 @@ class Engine(object):
             self._live_on = bool(on)
             if not on:
                 self._live_fingers = []
-                self._live_pen = {"x": None, "y": None, "down": False, "pres": 0, "t": 0.0}
+                self._live_pen = {"x": None, "y": None, "px": None, "py": None,
+                                  "down": False, "pres": 0, "t": 0.0}
 
     def live_snapshot(self):
         with self._live_lk:
@@ -1236,37 +1238,63 @@ class Engine(object):
                          if self.b is not None else None),
             }
 
+    def _live_commit(self, st, nx, ny, now):
+        """落位前挡掉固件的「归零对」。
+
+        实测报告顺序（触摸与笔都一样）：抬手先发 Y=0、X=0（笔是 Y 顶到 max），
+        再发 InRange=0 / TipSwitch=0。不挡的话轨迹会被甩到角上，画出一条到角的直线。
+        """
+        ox, oy = st["x"], st["y"]
+        if ox is not None and oy is not None:
+            corner = (nx <= 0.01 or nx >= 0.99) and (ny <= 0.01 or ny >= 0.99)
+            far = abs(nx - ox) > 0.15 or abs(ny - oy) > 0.15
+            if corner and far:
+                return
+        st["x"], st["y"], st["t"] = nx, ny, now
+
     def _live_feed(self, page, usage, v, lo, hi, rid, cookie):
         """把原始报告抄一份归一化坐标出来。只读：不改桥接状态、不合成事件。"""
         now = time.time()
         with self._live_lk:
             if rid == TOUCH_REPORT_ID:
                 if len(self._live_fingers) != len(self._finger_map):
-                    self._live_fingers = [{"x": None, "y": None, "down": False, "t": 0.0}
+                    self._live_fingers = [{"x": None, "y": None, "px": None, "py": None,
+                                            "down": False, "t": 0.0}
                                           for _ in self._finger_map]
                 for i, m in enumerate(self._finger_map):
+                    st = self._live_fingers[i]
                     if cookie == m.get("x") and hi > lo:
-                        self._live_fingers[i]["x"] = (v - lo) / float(hi - lo)
+                        st["px"] = (v - lo) / float(hi - lo)
                     elif cookie == m.get("y") and hi > lo:
-                        self._live_fingers[i]["y"] = (v - lo) / float(hi - lo)
+                        st["py"] = (v - lo) / float(hi - lo)
                     elif cookie == m.get("tip"):
-                        self._live_fingers[i]["down"] = bool(v)
+                        st["down"] = bool(v)
+                        st["t"] = now
+                        continue
                     else:
                         continue
-                    self._live_fingers[i]["t"] = now
+                    if st.get("px") is not None and st.get("py") is not None:
+                        self._live_commit(st, st["px"], st["py"], now)
+                        st["px"] = st["py"] = None
             elif rid == PEN_REPORT_ID:
                 p = self._live_pen
                 if page == 0x01 and usage == 0x30 and hi > lo:
-                    p["x"] = (v - lo) / float(hi - lo)
+                    p["px"] = (v - lo) / float(hi - lo)
                 elif page == 0x01 and usage == 0x31 and hi > lo:
-                    p["y"] = (v - lo) / float(hi - lo)
+                    p["py"] = (v - lo) / float(hi - lo)
                 elif page == 0x0D and usage == 0x42:
                     p["down"] = bool(v)
+                    p["t"] = now
+                    return
                 elif page == 0x0D and usage == 0x30:
                     p["pres"] = v
+                    p["t"] = now
+                    return
                 else:
                     return
-                p["t"] = now
+                if p.get("px") is not None and p.get("py") is not None:
+                    self._live_commit(p, p["px"], p["py"], now)
+                    p["px"] = p["py"] = None
 
     # ---------------- 状态 ----------------
 

@@ -21,7 +21,7 @@ from AppKit import (
     NSWindowCollectionBehaviorStationary,
 )
 
-TRAIL_SEC = 0.55          # 轨迹保留时长
+TRAIL_SEC = 1.0          # 轨迹保留时长
 STALE_SEC = 0.35          # 抬手后点还留多久
 FPS = 30.0
 
@@ -192,13 +192,13 @@ class TouchOverlay:
                 age = now - t2
                 if age > TRAIL_SEC:
                     continue
-                a = max(0.0, 1.0 - age / TRAIL_SEC) * 0.55
+                a = max(0.0, 1.0 - age / TRAIL_SEC) * 0.70
                 lx1, ly1 = self._to_local(scr, x1, y1, main_h)
                 lx2, ly2 = self._to_local(scr, x2, y2, main_h)
                 p = NSBezierPath.bezierPath()
                 p.moveToPoint_((lx1, ly1))
                 p.lineToPoint_((lx2, ly2))
-                p.setLineWidth_(4.0 if is_pen else 6.0)
+                p.setLineWidth_(5.0 if is_pen else 8.0)
                 p.setLineCapStyle_(1)
                 NSColor.colorWithCalibratedRed_green_blue_alpha_(col[0], col[1], col[2], a).set()
                 p.stroke()
