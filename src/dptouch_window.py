@@ -1543,21 +1543,13 @@ class SettingsWindow(_Pane):
                 btn.addSubview_(ic)
             v.addSubview_(btn)
             self.c["tb_%s" % icon.replace(".", "_")] = btn
-        # 触控可视化：放在这一排最左边，开关状态用实心/空心图标表示
+        # 触控可视化：文字开关（图标容易被当成「手指触控」的开关）
         _viz_on = bool(getattr(self.app, "_viz", None) is not None and self.app._viz.is_on)
-        vbtn = _IconButton.alloc().initWithFrame_(
-            self._r(x + w - 32 - 3 * 36, y - 30, 32, 30))
-        vbtn.setBordered_(False)
-        vbtn.setTitle_("")
-        vbtn.setToolTip_("触控可视化：在屏幕上实时显示触点与笔的落点")
-        vbtn.setTarget_(self)
-        vbtn.setAction_("onTouchViz:")
-        vic = _icon("hand.tap.fill" if _viz_on else "hand.tap", 16.0)
-        if vic is not None:
-            vic.setFrame_(NSMakeRect(8, 7, 16, 16))
-            vbtn.addSubview_(vic)
-        v.addSubview_(vbtn)
-        self.c["viz"] = vbtn
+        self.c["viz"] = _button(
+            "触控可视化", self._r(x + w - 32 - 3 * 36 - 122, y - 25, 116, 22),
+            self, "onTouchViz:", switch=True, state=1 if _viz_on else 0, small=True)
+        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点")
+        v.addSubview_(self.c["viz"])
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
         self.c["ov_hero"] = _label("设备概览", self._r(x, y, w - 40, 40), size=30, bold=True)
@@ -2841,14 +2833,8 @@ class SettingsWindow(_Pane):
 
     def set_viz_state(self, on):
         btn = self.c.get("viz")
-        if btn is None:
-            return
-        for sub in list(btn.subviews()):
-            sub.removeFromSuperview()
-        ic = _icon("hand.tap.fill" if on else "hand.tap", 16.0)
-        if ic is not None:
-            ic.setFrame_(NSMakeRect(8, 7, 16, 16))
-            btn.addSubview_(ic)
+        if btn is not None:
+            btn.setState_(1 if on else 0)
 
     def onHoldMs_(self, sender):
         if self._syncing:

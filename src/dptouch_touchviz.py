@@ -29,6 +29,23 @@ FINGER = (1.00, 0.45, 0.10)
 PEN = (0.35, 0.65, 1.00)
 
 
+def _union(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    x1 = min(a.origin.x, b.origin.x)
+    y1 = min(a.origin.y, b.origin.y)
+    x2 = max(a.origin.x + a.size.width, b.origin.x + b.size.width)
+    y2 = max(a.origin.y + a.size.height, b.origin.y + b.size.height)
+    return NSMakeRect(x1, y1, x2 - x1, y2 - y1)
+
+
+def _dot_rect(pt, is_pen):
+    pad = 34.0 if is_pen else 26.0
+    return NSMakeRect(pt[0] - pad, pt[1] - pad, pad * 2, pad * 2)
+
+
 class OverlayView(NSView):
     """一块屏一个；翻转为左上原点。"""
 
@@ -57,6 +74,7 @@ class TouchOverlay:
         self._wins = []                 # [(NSScreen, NSPanel, OverlayView)]
         self._trails = {}               # key -> deque[(gx, gy, t)]
         self._points = []
+        self._boxes = {}                # id(view) -> 上一帧画过的区域
         self._timer = None
 
     # ---------------- 生命周期 ----------------
@@ -84,6 +102,7 @@ class TouchOverlay:
         self._wins = []
         self._trails = {}
         self._points = []
+        self._boxes = {}
 
     def toggle(self):
         self.hide() if self.is_on else self.show()
@@ -166,9 +185,26 @@ class TouchOverlay:
 
         had = bool(self._points) or bool(self._trails)
         self._points = points
-        if points or had:                 # 空闲时不重画整块透明屏
-            for _s, _w, v in self._wins:
-                v.setNeedsDisplay_(True)
+        if points or had:                 # 空闲时不重画
+            self._redraw()
+
+    # ---------------- 重绘区域 ----------------
+    def _redraw(self):
+        """只失效有内容的区域。整块 1704×1136 透明窗每帧全量重绘会把主线程拖住。"""
+        main_h = self._main_h()
+        for scr, _w, v in self._wins:
+            box = None
+            for _k, gx, gy, _d, is_pen, _p in self._points:
+                box = _union(box, _dot_rect(self._to_local(scr, gx, gy, main_h), is_pen))
+            for _k, tr in self._trails.items():
+                for x1, y1, _t in list(tr):
+                    box = _union(box, _dot_rect(self._to_local(scr, x1, y1, main_h), False))
+            prev = self._boxes.get(id(v))
+            if prev is not None:
+                box = _union(box, prev)
+            self._boxes[id(v)] = box
+            if box is not None:
+                v.setNeedsDisplayInRect_(box)
 
     # ---------------- 绘制 ----------------
     def draw_in_view(self, view):
