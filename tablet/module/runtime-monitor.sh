@@ -20,6 +20,7 @@ failures=0
 window=${MIPAD_MONITOR_DISABLE_WINDOW:-30}
 first_failure=0
 epoch=
+no_hal_seen=
 identity_key() {
  # BusyBox/Android stat first; BSD fallback keeps the host test exact.
  stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1" 2>/dev/null || printf unknown
@@ -112,6 +113,10 @@ if [ "$verify_limit" -lt 1 ]; then verify_limit=1; fi
 dp_absent_since=0
 dp_disabled_since=0
 dp_unverified_since=0
+# 2.1.4: HID-function teardown is direct session-end evidence, unlike a generic
+# verify failure that can also be a stale configfs race. Track it so the release
+# can use the single verify window even while Type-C/UDC still report present.
+dp_desc_ended=0
 dp_last_state=
 wlog() { printf '%s WATCHDOG %s\n' "$(date +%s)" "$*" >> "$WLOG"; }
 # External DP-in session presence: present|absent|unknown.
@@ -317,7 +322,7 @@ restore_stock_hal() {
 # Every attempt restarts the streak counters, so a refused/failed release is
 # retried once per threshold window instead of on every 2s tick (no log storm,
 # no tight kill loop). Success is the only path that needs no backoff.
-reset_timers() { dp_absent_since=0; dp_disabled_since=0; dp_unverified_since=0; }
+reset_timers() { dp_absent_since=0; dp_disabled_since=0; dp_unverified_since=0; dp_desc_ended=0; }
 # The only release path. Caller has already decided the session is over; this
 # function re-proves the identity from the journal before any signal and is
 # safe to call repeatedly (a stale/absent journal only ever cleans journals it
@@ -376,6 +381,70 @@ if [ "${3:-}" = --release-now ]; then
  watchdog_release module_removed
  exit 0
 fi
+# 2.1.4: a soft reboot keeps boot_id, so journals left by the previous framework
+# generation would otherwise be adopted by recover() and a fresh grabber would be
+# launched for a session that is already over. A userspace restart cannot leave a
+# live prepare owner behind, so drop the journal only when every recorded owner is
+# provably dead. A normal monitor reentry with a live session keeps its journals.
+session_owner_alive() {
+ [ -e "$S/candidate" ] && "$T" same "$S/candidate" >/dev/null 2>&1 && return 0
+ [ -e "$S/candidate-owner" ] && "$T" same "$S/candidate-owner" >/dev/null 2>&1 && return 0
+ [ -e "$S/recovery-owner" ] && "$T" same "$S/recovery-owner" >/dev/null 2>&1 && return 0
+ return 1
+}
+cleanup_stale_epoch() {
+ [ -e "$S/pending" ] || [ -e "$S/candidate" ] || [ -e "$S/candidate-owner" ] || return 0
+ if session_owner_alive; then return 0; fi
+ # Fail-closed: a journal that is neither authenticated nor provably gone is
+ # diagnostics, never something to delete (S4). Only records platform-tool
+ # "gone" proves dead may be dropped; then the soft-reboot journal is inert.
+ if [ -e "$S/candidate" ] && ! "$T" gone "$S/candidate" >/dev/null 2>&1; then return 0; fi
+ if [ -e "$S/candidate-owner" ] && ! "$T" gone "$S/candidate-owner" >/dev/null 2>&1; then return 0; fi
+ if [ -e "$S/recovery-owner" ] && ! "$T" gone "$S/recovery-owner" >/dev/null 2>&1; then return 0; fi
+ rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" \
+       "$S/candidate-owner.new" "$S/recovery-owner-replacement" \
+       "$S/recovery-owner-replacement.new"
+ sync 2>/dev/null || true
+ wlog "CLEANED reason=stale-epoch detail=no-live-session"
+}
+cleanup_stale_epoch
+# 2.1.4 F8: bound every controller invocation. 2.1.2 could wedge the whole
+# monitor (and therefore the watchdog) in a controller child that never returned
+# after a DP session teardown; the panel grab then outlived the session. A
+# bounded call keeps the watchdog ticking; the deadline is a wait, never a
+# failure, and the next tick retries.
+controller_run() {
+ if command -v setsid >/dev/null 2>&1; then
+  setsid "$S/module-controller" run "$M" "$S" "$S/platform.sh" >> "$S/supervisor.log" 2>&1 &
+ else
+  "$S/module-controller" run "$M" "$S" "$S/platform.sh" >> "$S/supervisor.log" 2>&1 &
+ fi
+ cpid=$!
+ n=0
+ while [ "$n" -lt 100 ]; do
+  kill -0 "$cpid" 2>/dev/null || break
+  sleep 0.2
+  n=$((n+1))
+ done
+ if kill -0 "$cpid" 2>/dev/null; then
+  wlog "CONTROLLER_TIMEOUT pid=$cpid"
+  kill -TERM "-$cpid" 2>/dev/null || kill -TERM "$cpid" 2>/dev/null || true
+  n=0
+  while [ "$n" -lt 10 ]; do
+   kill -0 "$cpid" 2>/dev/null || break
+   sleep 0.2
+   n=$((n+1))
+  done
+  if kill -0 "$cpid" 2>/dev/null; then
+   kill -KILL "-$cpid" 2>/dev/null || kill -KILL "$cpid" 2>/dev/null || true
+  fi
+  wait "$cpid" 2>/dev/null || true
+  return 79
+ fi
+ rc=0
+ wait "$cpid" 2>/dev/null || rc=$?
+ return "$rc"
+}
 # Sample the session state and release only after the corresponding streak.
 # Three independent, evidence-backed gates:
 #   dp_absent       no present evidence, configfs HID gone and UDC detached,
@@ -409,10 +478,14 @@ watchdog_tick() {
  why=
  if [ -f "$S/candidate" ]; then
   if "$T" same "$S/candidate" >/dev/null 2>&1; then
-   if ! "$T" verify "$S/candidate" "$S/candidate-owner" hooked "$DSO" >/dev/null 2>&1; then
-    unverified=1; why=verify
-   elif session_lost_evidence; then
+   # 2.1.4: the reviewed HID shape is checked independently of verify. A DP
+   # teardown commonly invalidates the hooked-owner verify first (hidg fds are
+   # gone), and that must still resolve to the single-window descriptor evidence
+   # instead of the doubled present window meant for stale configfs races.
+   if session_lost_evidence; then
     unverified=1; why=descriptors
+   elif ! "$T" verify "$S/candidate" "$S/candidate-owner" hooked "$DSO" >/dev/null 2>&1; then
+    unverified=1; why=verify
    fi
   fi
  fi
@@ -420,18 +493,26 @@ watchdog_tick() {
   if [ "$dp_unverified_since" = 0 ]; then
    dp_unverified_since=$now
    case "$why" in
-    descriptors) wlog "PROBE session=ended evidence=descriptors state=$st";;
+    descriptors) dp_desc_ended=1; wlog "PROBE session=ended evidence=descriptors state=$st";;
     *) wlog "PROBE verify=failed state=$st";;
    esac
   fi
  else
   dp_unverified_since=0
+  dp_desc_ended=0
  fi
  reason=
  if [ "$dp_absent_since" -gt 0 ] && [ $((now-dp_absent_since)) -ge "$absent_limit" ]; then
   reason=dp_absent
  elif [ "$dp_disabled_since" -gt 0 ] && [ $((now-dp_disabled_since)) -ge "$disabled_limit" ]; then
   reason=module_disabled
+ elif [ "$dp_unverified_since" -gt 0 ] && [ "$dp_desc_ended" = 1 ] && [ $((now-dp_unverified_since)) -ge "$verify_limit" ]; then
+  # 2.1.4: the reviewed 9/62 HID shape is gone while Type-C/UDC still look
+  # present. That is the panel-switched-back teardown, not a transient: the
+  # gadget functions only exist while the candidate serves a DP-in session.
+  # One verify window is enough; the doubled present window stays for verify-only
+  # failures where stale configfs evidence is still plausible.
+  reason=session_lost
  elif [ "$dp_unverified_since" -gt 0 ] && [ $((now-dp_unverified_since)) -ge "$verify_limit" ] && [ "$st" != present ]; then
   reason=session_lost
  elif [ "$dp_unverified_since" -gt 0 ] && [ $((now-dp_unverified_since)) -ge $((verify_limit*2)) ]; then
@@ -459,8 +540,23 @@ while :; do
   if { [ ! -d "$M" ] || [ -e "$M/remove" ]; } && [ ! -e "$S/pending" ] && [ ! -e "$S/recovery-owner" ]; then exit 0; fi
   sleep 2; continue
  fi
+ # 2.1.4: no OEM DP HAL means no DP-in session has started yet. In tablet mode
+ # with the cable attached the UDC is configured, so dp_state reports present and
+ # reconcile cannot find a HAL; counting that as a failure would self-disable the
+ # module before the user ever enters DP-in. Wait for the stock HAL instead.
+ hal_rc=0; "$T" find "$HAL" >/dev/null 2>&1 || hal_rc=$?
+ if [ "$hal_rc" = 2 ]; then
+  if [ "$no_hal_seen" != 2 ]; then
+   no_hal_seen=2
+   printf '%s MONITOR_WAIT monitor=%s rc=78 failures=0 reason=no_dp_hal\n' "$(date +%s)" "$$" >> "$S/supervisor.log"
+  fi
+  failures=0; first_failure=0
+  sleep 2; continue
+ fi
+ if [ "$no_hal_seen" != 0 ]; then no_hal_seen=0; fi
  run_epoch=$epoch
- "$S/module-controller" run "$M" "$S" "$S/platform.sh" >> "$S/supervisor.log" 2>&1 && rc=0 || rc=$?
+ rc=0
+ controller_run || rc=$?
  refresh_epoch
  # A result belongs to the epoch that launched it, not the one visible now.
  # Poll-invisible same-inode disable/enable remains outside this contract.
@@ -477,6 +573,14 @@ while :; do
   # It breaks a consecutive-failure streak, including a pre-disable streak.
   failures=0; first_failure=0
   printf '%s MONITOR_WAIT monitor=%s rc=78 failures=0 reason=authenticated_wait\n' "$(date +%s)" "$$" >> "$S/supervisor.log"
+  sleep 2; continue
+ fi
+ if [ "$rc" = 79 ]; then
+  # 2.1.4 F8: a bounded controller deadline is a wait, not a fault. The watchdog
+  # already ticked before this call; counting the timeout as a failure would
+  # disable the module exactly when a helper is merely slow.
+  failures=0; first_failure=0
+  printf '%s MONITOR_CONTROLLER_TIMEOUT monitor=%s rc=79 failures=0\n' "$(date +%s)" "$$" >> "$S/supervisor.log"
   sleep 2; continue
  fi
  if [ "$epoch" = disabled ]; then
