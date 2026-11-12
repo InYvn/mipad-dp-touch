@@ -1244,23 +1244,29 @@ class Engine(object):
                          if self.b is not None else None),
             }
 
-    def _live_commit(self, st, nx, ny, now, label=""):
-        """落位前挡掉固件的「归零对」与异常跳变。
+    @staticmethod
+    def _live_axis(st, key, val):
+        """单轴采样。归零/顶满的突然跳变是抬手标记，不采信。
 
-        实测报告顺序（触摸与笔都一样）：抬手先发 Y=0、X=0（笔是 Y 顶到 max），
-        再发 InRange=0 / TipSwitch=0。不挡的话轨迹会被甩到角上，画出一条到角的直线。
-        另外未激活的触点槽也会送坐标，只有 down（触摸）/ in-range（笔）时才落位。
+        实测：抬手先发 Y=0、X=0（笔是 X=0、Y=max），之后才来 InRange/TipSwitch=0。
+        只看单轴就能认出来 —— 从非边缘值突然跳到 0 或 1，就是复位标记，不是真实位置。
         """
+        prev = st.get(key)
+        if prev is not None:
+            if val <= 0.002 and prev > 0.05:
+                return False
+            if val >= 0.998 and prev < 0.95:
+                return False
+        st[key] = val
+        return True
+
+    def _live_commit(self, st, nx, ny, now, label=""):
         ox, oy = st["x"], st["y"]
-        if ox is not None and oy is not None:
-            corner = (nx <= 0.01 or nx >= 0.99) and (ny <= 0.01 or ny >= 0.99)
-            far = abs(nx - ox) > 0.15 or abs(ny - oy) > 0.15
-            if corner and far:
-                return
-            if (abs(nx - ox) > 0.35 or abs(ny - oy) > 0.35) and self._live_jumps < 20:
-                self._live_jumps += 1
-                self.log("LIVE jump %s: (%.2f,%.2f) -> (%.2f,%.2f)"
-                         % (label or "?", ox, oy, nx, ny))
+        if (ox is not None and oy is not None
+                and (abs(nx - ox) > 0.35 or abs(ny - oy) > 0.35) and self._live_jumps < 20):
+            self._live_jumps += 1
+            self.log("LIVE jump %s: (%.2f,%.2f) -> (%.2f,%.2f)"
+                     % (label or "?", ox, oy, nx, ny))
         st["x"], st["y"], st["t"] = nx, ny, now
 
     def _live_feed(self, page, usage, v, lo, hi, rid, cookie):
@@ -1269,53 +1275,46 @@ class Engine(object):
         with self._live_lk:
             if rid == TOUCH_REPORT_ID:
                 if len(self._live_fingers) != len(self._finger_map):
-                    self._live_fingers = [{"x": None, "y": None, "px": None, "py": None,
-                                           "down": False, "t": 0.0}
+                    self._live_fingers = [{"x": None, "y": None, "down": False, "t": 0.0}
                                           for _ in self._finger_map]
                 for i, m in enumerate(self._finger_map):
                     st = self._live_fingers[i]
+                    label = "f%d" % i
                     if cookie == m.get("x") and hi > lo:
-                        st["px"] = (v - lo) / float(hi - lo)
+                        if self._live_axis(st, "x", (v - lo) / float(hi - lo)) \
+                                and st["y"] is not None and st["down"]:
+                            self._live_commit(st, st["x"], st["y"], now, label)
                     elif cookie == m.get("y") and hi > lo:
-                        st["py"] = (v - lo) / float(hi - lo)
+                        if self._live_axis(st, "y", (v - lo) / float(hi - lo)) \
+                                and st["x"] is not None and st["down"]:
+                            self._live_commit(st, st["x"], st["y"], now, label)
                     elif cookie == m.get("tip"):
                         st["down"] = bool(v)
                         st["t"] = now
-                        if v and st["px"] is not None and st["py"] is not None:
-                            self._live_commit(st, st["px"], st["py"], now, "f%d" % i)
-                        st["px"] = st["py"] = None      # 落位后必须清缓冲
-                        return
+                        if v and st["x"] is not None and st["y"] is not None:
+                            self._live_commit(st, st["x"], st["y"], now, label)
                     else:
                         continue
-                    if st["down"] and st["px"] is not None and st["py"] is not None:
-                        self._live_commit(st, st["px"], st["py"], now, "f%d" % i)
-                        st["px"] = st["py"] = None
                     return
             elif rid == PEN_REPORT_ID:
                 p = self._live_pen
                 if page == 0x01 and usage == 0x30 and hi > lo:
-                    p["px"] = (v - lo) / float(hi - lo)
+                    if self._live_axis(p, "x", (v - lo) / float(hi - lo)) and p["y"] is not None:
+                        self._live_commit(p, p["x"], p["y"], now, "pen")
                 elif page == 0x01 and usage == 0x31 and hi > lo:
-                    p["py"] = (v - lo) / float(hi - lo)
-                elif page == 0x0D and usage == 0x32:      # InRange
+                    if self._live_axis(p, "y", (v - lo) / float(hi - lo)) and p["x"] is not None:
+                        self._live_commit(p, p["x"], p["y"], now, "pen")
+                elif page == 0x0D and usage == 0x32:      # InRange（这个笔接口没有，留兼容）
                     p["inr"] = bool(v)
-                    if not v:
-                        p["px"] = p["py"] = None
                     p["t"] = now
-                    return
                 elif page == 0x0D and usage == 0x42:      # TipSwitch
                     p["down"] = bool(v)
                     p["t"] = now
-                    return
+                    if v and p["x"] is not None and p["y"] is not None:
+                        self._live_commit(p, p["x"], p["y"], now, "pen")
                 elif page == 0x0D and usage == 0x30:      # TipPressure
                     p["pres"] = v
                     p["t"] = now
-                    return
-                else:
-                    return
-                if (p["down"] or p["inr"]) and p["px"] is not None and p["py"] is not None:
-                    self._live_commit(p, p["px"], p["py"], now, "pen")
-                    p["px"] = p["py"] = None
 
     # ---------------- 状态 ----------------
 

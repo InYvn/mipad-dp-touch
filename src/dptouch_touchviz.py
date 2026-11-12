@@ -23,7 +23,7 @@ from AppKit import (
 
 TRAIL_SEC = 1.0          # 轨迹保留时长
 STALE_SEC = 0.35          # 抬手后点还留多久
-FPS = 30.0
+FPS = 60.0
 
 FINGER = (1.00, 0.45, 0.10)
 PEN = (0.35, 0.65, 1.00)
