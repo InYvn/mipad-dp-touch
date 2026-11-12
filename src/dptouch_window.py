@@ -1839,8 +1839,8 @@ class SettingsWindow(_Pane):
         return y
 
     @objc.python_method
-    def _plugin_icon(self, pid, size=64.0):
-        """插件图片：优先用打包进来的 PNG，取不到退回 SF Symbol。"""
+    def _plugin_icon(self, pid, w=96.0, h=64.0):
+        """插件图片：优先用打包进来的真实预览图，取不到退回 SF Symbol。"""
         try:
             import base64
             import plugin_icons
@@ -1848,8 +1848,9 @@ class SettingsWindow(_Pane):
             if raw:
                 img = NSImage.alloc().initWithData_(base64.b64decode(raw))
                 if img is not None:
-                    iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, size, size))
+                    iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
                     iv.setImage_(img)
+                    iv.setImageScaling_(3)      # 3 = 按比例填满
                     return iv
         except Exception:
             pass
@@ -1858,7 +1859,7 @@ class SettingsWindow(_Pane):
             meta = PLUG.get(pid)
         except Exception:
             meta = {}
-        return _icon(meta.get("symbol") or "puzzlepiece.extension", size * 0.62)
+        return _icon(meta.get("symbol") or "puzzlepiece.extension", h * 0.62)
 
     @objc.python_method
     def _page_plugins(self, v, x, w, y):
@@ -1880,12 +1881,12 @@ class SettingsWindow(_Pane):
             card_h = 104.0
             self._card(v, y, card_h, x, w)
 
-            icon = self._plugin_icon(pid, 64.0)
+            icon = self._plugin_icon(pid, 96.0, 64.0)
             if icon is not None:
-                icon.setFrame_(self._r(x + 20, y + 20, 64, 64))
+                icon.setFrame_(self._r(x + 20, y + 20, 96, 64))
                 v.addSubview_(icon)
 
-            tx = x + 20 + 64 + 16
+            tx = x + 20 + 96 + 16
             tw = x + w - 20 - tx
 
             v.addSubview_(_label("%s · %s" % (meta["name"], meta["brand"]),

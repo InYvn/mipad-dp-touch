@@ -1,77 +1,76 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成插件市场用的插件图片，写进 src/plugin_icons.py（base64 PNG）。
+"""生成插件市场用的**真实预览图**，写进 src/plugin_icons.py（base64 PNG）。
 
-市场页按 id 取图；取不到就退回 SF Symbol。这样不需要处理 App 资源路径。
+源图放在 assets/plugin-previews/：
+    touchkeys.png  键盘的实际渲染图
+    touchbar.png   工具条的实际渲染图
+
+键盘用「完整放进画布」(fit)；工具条太扁，用「填满后裁中间」(cover)，
+否则缩到卡片宽度只剩一条线。输出 192×128（卡片里按 96×64 显示）。
 """
 import base64
-import io
 import os
 
 from AppKit import (
     NSBitmapImageFileTypePNG, NSBitmapImageRep, NSBezierPath, NSColor,
-    NSDeviceRGBColorSpace, NSGraphicsContext, NSMakeRect,
+    NSDeviceRGBColorSpace, NSGraphicsContext, NSImage, NSMakeRect,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(os.path.dirname(HERE), "src", "plugin_icons.py")
-SIZE = 128
+ROOT = os.path.dirname(HERE)
+SRC = os.path.join(ROOT, "assets", "plugin-previews")
+OUT = os.path.join(ROOT, "src", "plugin_icons.py")
+
+W, H = 192, 128
+PAD = 8
+
+SPECS = {
+    "touchkeys": {"file": "touchkeys.png", "mode": "fit", "pad": 4, "bg": (0.95, 0.95, 0.96, 1.0)},
+    "touchbar": {"file": "touchbar.png", "mode": "fit", "pad": 8, "bg": (0.10, 0.10, 0.12, 1.0)},
+}
 
 
-def _canvas():
+def render(spec):
     rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
-        None, SIZE, SIZE, 8, 4, True, False, NSDeviceRGBColorSpace, 0, 0)
+        None, W, H, 8, 4, True, False, NSDeviceRGBColorSpace, 0, 0)
     ctx = NSGraphicsContext.graphicsContextWithBitmapImageRep_(rep)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.setCurrentContext_(ctx)
-    return rep
 
+    bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(0, 0, W, H), 14, 14)
+    r, g, b, a = spec["bg"]
+    NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, a).set()
+    bg.fill()
+    bg.addClip()
 
-def _finish(rep):
+    path = os.path.join(SRC, spec["file"])
+    img = NSImage.alloc().initWithContentsOfFile_(path)
+    if img is None:
+        raise SystemExit("missing " + path)
+    iw, ih = img.size().width, img.size().height
+
+    pad = spec.get("pad", PAD)
+    if spec["mode"] == "fit":
+        scale = min((W - 2 * pad) / iw, (H - 2 * pad) / ih)
+    else:
+        scale = max(W / iw, H / ih)
+    dw, dh = iw * scale, ih * scale
+    dx, dy = (W - dw) / 2, (H - dh) / 2
+
+    img.drawInRect_fromRect_operation_fraction_(
+        NSMakeRect(dx, dy, dw, dh), NSMakeRect(0, 0, 0, 0), 2, 1.0)   # 2 = sourceOver
+
     NSGraphicsContext.restoreGraphicsState()
     data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
     return base64.b64encode(bytes(data)).decode("ascii")
 
 
-def _rounded(x, y, w, h, r, color):
-    p = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(x, y, w, h), r, r)
-    color.set()
-    p.fill()
-
-
-def touchkeys_icon():
-    rep = _canvas()
-    _rounded(0, 0, SIZE, SIZE, 28, NSColor.colorWithCalibratedRed_green_blue_alpha_(0.16, 0.42, 0.92, 1))
-    # 键盘底板
-    _rounded(18, 34, 92, 60, 12, NSColor.colorWithCalibratedWhite_alpha_(1, 0.16))
-    # 键位 3x2 + 空格
-    for row in range(3):
-        for col in range(4):
-            _rounded(26 + col * 20, 86 - row * 16, 14, 11, 3,
-                     NSColor.colorWithCalibratedWhite_alpha_(1, 0.92))
-    _rounded(46, 42, 36, 9, 3, NSColor.colorWithCalibratedWhite_alpha_(1, 0.92))
-    return _finish(rep)
-
-
-def touchbar_icon():
-    rep = _canvas()
-    _rounded(0, 0, SIZE, SIZE, 28, NSColor.colorWithCalibratedRed_green_blue_alpha_(0.12, 0.12, 0.14, 1))
-    # 一条工具栏
-    _rounded(14, 48, 100, 32, 10, NSColor.colorWithCalibratedWhite_alpha_(1, 0.12))
-    n, pad, cell = 5, 6, 20
-    step = (100 - 2 * pad - cell) / (n - 1)
-    for i in range(n):
-        c = (NSColor.colorWithCalibratedRed_green_blue_alpha_(0.16, 0.52, 0.98, 1) if i == 1
-             else NSColor.colorWithCalibratedWhite_alpha_(1, 0.88))
-        _rounded(14 + pad + i * step, 48 + pad, cell, cell, 6, c)
-    return _finish(rep)
-
-
 def main():
-    icons = {"touchkeys": touchkeys_icon(), "touchbar": touchbar_icon()}
+    icons = {k: render(v) for k, v in SPECS.items()}
     with open(OUT, "w", encoding="utf-8") as f:
         f.write('#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n')
-        f.write('"""插件市场图标（128×128 PNG, base64）。由 tools/make_plugin_icons.py 生成。"""\n\n')
+        f.write('"""插件市场预览图（192×128 PNG, base64）。由 tools/make_plugin_icons.py 生成，勿手改。"""\n\n')
         f.write("ICONS = {\n")
         for k, v in icons.items():
             f.write('    "%s": (\n' % k)
