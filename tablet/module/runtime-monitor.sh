@@ -18,6 +18,17 @@ failures=0
 # seconds so a transient can never disable the module, while a genuine fault
 # still trips the breaker. Tests narrow it; production keeps the default.
 window=${MIPAD_MONITOR_DISABLE_WINDOW:-30}
+# native-touch lab gate (experimental): read the same root-owned env file the
+# platform script uses. LAB_DESC_SHA pins the selected variant's report
+# descriptor; empty means the factory hash applies (probe/V0 sessions).
+LAB_DESC_SHA=
+for _lab_env in "$S/native-lab.env" "$M/native-lab.env"; do
+ [ -e "$_lab_env" ] || continue
+ { [ -f "$_lab_env" ] && [ ! -L "$_lab_env" ]; } || exit 78
+ . "$_lab_env"
+ break
+done
+if [ "${MIPAD_NATIVE_LAB:-0}" = 1 ]; then LAB_DESC_SHA=${MIPAD_LAB_DESC_SHA:-}; fi
 first_failure=0
 epoch=
 no_hal_seen=
@@ -382,7 +393,7 @@ candidate_descriptors_check() {
  desc1=$(sha256sum "$GADGET/hid.usb1/report_desc" 2>/dev/null | cut -d ' ' -f1) || return 2
  [ -n "$desc0" ] && [ -n "$desc1" ] || return 2
  [ "$desc0" = 0ac38b057ec9608b20557ce069c520e1789bf8a597059126dc76d464f7599755 ] || return 1
- [ "$desc1" = 2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25 ] || return 1
+ [ "$desc1" = "${LAB_DESC_SHA:-2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25}" ] || return 1
  return 0
 }
 session_lost_evidence() {

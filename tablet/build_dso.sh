@@ -12,6 +12,12 @@
 #   默认输出到 tablet/native/build/fullsplit-bounded-v2.so；脚本不会改动
 #   tablet/module/ 里的模块载荷，换不换由打包步骤决定。
 #
+#   实验分支（native-touch lab）:
+#     MIPAD_DSO_LAB=1 tablet/build_dso.sh /tmp/fullsplit-lab.so
+#   额外编译 fullsplit-lab.h 的 probe/variant/no-grab 钩子（导出 ioctl、
+#   openat），但所有钩子在 candidate 环境没有 MIPAD_NATIVE_LAB=1 时都按
+#   syscall 原样透传；不设 MIPAD_DSO_LAB 时产物与生产 DSO 完全相同。
+#
 # 编译参数刻意与 2.2.0-beta 里那份 .so 对齐：NDK r27c（clang 18.0.3 / LLD 18.0.3）、
 # API 35、-O2、-shared -fPIC、FULLSPLIT_EXPLICIT=1、RX_TARGET_PATH=/dev/hidg1。
 # 不加 -s / --strip-all：保留 .symtab 与 8 个导出符号（write/close/open/dup2/dup3/…），
@@ -21,6 +27,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC="$HERE/native/fullsplit-bounded-interposer.c"
 OUT=${1:-$HERE/native/build/fullsplit-bounded-v2.so}
+LAB=${MIPAD_DSO_LAB:-0}
 
 if [ ! -f "$SRC" ]; then
 	echo "找不到源码: $SRC" >&2
@@ -63,7 +70,9 @@ CC="$BIN/aarch64-linux-android35-clang"
 mkdir -p "$(dirname "$OUT")"
 echo "NDK : $NDK"
 echo "CC  : $CC"
-"$CC" --target=aarch64-linux-android35 -shared -fPIC -O2 -pthread \
+LAB_DEFS=
+if [ "$LAB" = 1 ]; then LAB_DEFS='-DFULLSPLIT_LAB=1'; fi
+"$CC" --target=aarch64-linux-android35 -shared -fPIC -O2 -pthread $LAB_DEFS \
 	-DFULLSPLIT_EXPLICIT=1 '-DRX_TARGET_PATH="/dev/hidg1"' \
 	-o "$OUT" "$SRC" -llog
 
@@ -71,7 +80,11 @@ echo "CC  : $CC"
 # 拦截不到 write/close/open/dup*。
 if [ -x "$BIN/llvm-nm" ]; then
 	got=$("$BIN/llvm-nm" -D --defined-only "$OUT" | awk 'NF==3{print $3}' | LC_ALL=C sort | tr '\n' ' ')
-	want='__open_2 __write_chk close dup2 dup3 open open64 write '
+	if [ "$LAB" = 1 ]; then
+		want='__open_2 __write_chk close dup2 dup3 ioctl open open64 openat write '
+	else
+		want='__open_2 __write_chk close dup2 dup3 open open64 write '
+	fi
 	if [ "$got" != "$want" ]; then
 		echo "导出符号不符合预期: $got" >&2
 		exit 1
@@ -95,4 +108,8 @@ if command -v shasum >/dev/null 2>&1; then
 else
 	echo "  SHA256: $(sha256sum "$OUT" | awk '{print $1}')"
 fi
-echo "  导出符号: write close open open64 __open_2 __write_chk dup2 dup3（not stripped）"
+if [ "$LAB" = 1 ]; then
+	echo "  导出符号: write close open open64 openat ioctl __open_2 __write_chk dup2 dup3（lab, not stripped）"
+else
+	echo "  导出符号: write close open open64 __open_2 __write_chk dup2 dup3（not stripped）"
+fi
