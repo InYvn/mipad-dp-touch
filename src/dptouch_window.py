@@ -1252,7 +1252,6 @@ class SettingsWindow(_Pane):
         self._disp_name = ""           # 「详情」开关: 计数行默认收起
         self._laid_perm_done = None     # 上次排版时权限齐没齐 (变了要整页重排)
         self._last_st = None            # 最后一次刷新看到的状态 (排版也用这份)
-        self._viz = None                # 触控可视化面板 (懒建)
         self._build()
         return self
 
@@ -1544,6 +1543,21 @@ class SettingsWindow(_Pane):
                 btn.addSubview_(ic)
             v.addSubview_(btn)
             self.c["tb_%s" % icon.replace(".", "_")] = btn
+        # 触控可视化：放在这一排最左边，开关状态用实心/空心图标表示
+        _viz_on = bool(getattr(self.app, "_viz", None) is not None and self.app._viz.is_on)
+        vbtn = _IconButton.alloc().initWithFrame_(
+            self._r(x + w - 32 - 3 * 36, y - 30, 32, 30))
+        vbtn.setBordered_(False)
+        vbtn.setTitle_("")
+        vbtn.setToolTip_("触控可视化：在屏幕上实时显示触点与笔的落点")
+        vbtn.setTarget_(self)
+        vbtn.setAction_("onTouchViz:")
+        vic = _icon("hand.tap.fill" if _viz_on else "hand.tap", 16.0)
+        if vic is not None:
+            vic.setFrame_(NSMakeRect(8, 7, 16, 16))
+            vbtn.addSubview_(vic)
+        v.addSubview_(vbtn)
+        self.c["viz"] = vbtn
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
         self.c["ov_hero"] = _label("设备概览", self._r(x, y, w - 40, 40), size=30, bold=True)
@@ -1986,9 +2000,6 @@ class SettingsWindow(_Pane):
         v.addSubview_(_label("触控屏接口", self._r(x, y + 16, 300, 18), size=13, bold=True))
         self.c["diag_touch"] = _label("", self._r(x, y + 36, 420, 15), size=11, dim=True)
         v.addSubview_(self.c["diag_touch"])
-        self.c["viz"] = _button("可视化…", self._r(x + w - 108, y + 16, 108, 26),
-                                self, "onTouchViz:")
-        v.addSubview_(self.c["viz"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60
         v.addSubview_(_label("高级诊断", self._r(x, y + 16, 300, 18), size=13, bold=True))
@@ -2825,8 +2836,19 @@ class SettingsWindow(_Pane):
         self.refresh_all()
 
     def onTouchViz_(self, sender):
-        """开/关系统级触控覆盖层（按钮标题由 App 侧一起更新）。"""
+        """开/关系统级触控覆盖层。"""
         self.app.toggle_viz()
+
+    def set_viz_state(self, on):
+        btn = self.c.get("viz")
+        if btn is None:
+            return
+        for sub in list(btn.subviews()):
+            sub.removeFromSuperview()
+        ic = _icon("hand.tap.fill" if on else "hand.tap", 16.0)
+        if ic is not None:
+            ic.setFrame_(NSMakeRect(8, 7, 16, 16))
+            btn.addSubview_(ic)
 
     def onHoldMs_(self, sender):
         if self._syncing:

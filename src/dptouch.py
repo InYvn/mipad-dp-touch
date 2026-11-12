@@ -2276,8 +2276,8 @@ class DPApp(NSObject):
         log("触控可视化: %s" % ("开" if on else "关"))
         try:
             self._reflect()
-            if self.win is not None and "viz" in self.win.c:
-                self.win.c["viz"].setTitle_("关闭可视化" if on else "可视化…")
+            if self.win is not None:
+                self.win.set_viz_state(on)
         except Exception:
             pass
         return on
