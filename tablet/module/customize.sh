@@ -71,11 +71,15 @@ profile_check || { profile_diagnostics; abort "Unknown hardware/HAL/init contrac
 S=/data/adb/mipad_fullsplit_local
 [ ! -L "$S" ] || abort "Unsafe runtime path."
 PREV_RUNTIME_SHA256=f0282236188b796a0ca8c1ffb37d369f1809dff5b9a9bd18ac6d7e87e1935f7a
+# 2.0.1 shipped this manifest; it differs from the current one only in profile.sh
+# (the audited HAL allowlist), so it is a known predecessor worth migrating.
+PREV_RUNTIME_SHA256_201=acb2c42bacf44409ae569eea3ce34f7186e72233b4bfb22c3212107d5a16a307
 SVID_TARGET=/sys/devices/platform/mca_strategy_pd_auth/adapter_svid
 MOUNTINFO=${MIPAD_TEST_MOUNTINFO:-/proc/self/mountinfo}
 migrate_known_generation() {
  [ -f "$S/runtime.sha256" ] && [ ! -L "$S/runtime.sha256" ] || return 1
- [ "$(sha256sum "$S/runtime.sha256" | cut -d' ' -f1)" = "$PREV_RUNTIME_SHA256" ] || return 1
+ _prev=$(sha256sum "$S/runtime.sha256" | cut -d' ' -f1)
+ [ "$_prev" = "$PREV_RUNTIME_SHA256" ] || [ "$_prev" = "$PREV_RUNTIME_SHA256_201" ] || return 1
  (cd "$S" && sha256sum -c runtime.sha256) >/dev/null 2>&1 || return 1
  # A live hook owns the gadget and its journals; never migrate under it.
  for f in pending candidate candidate-owner; do
