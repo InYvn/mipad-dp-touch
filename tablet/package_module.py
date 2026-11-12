@@ -8,8 +8,8 @@ import zipfile
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / 'module'
-NAME = 'mipad-dp-touch-module-v2.1.0.zip'
-EXPECTED_SHA256 = '31dba7888ea7afae69c41d6ace0da83a3a9180d8e9fe3530cbcd633820258711'
+NAME = 'mipad-dp-touch-module-v2.2.1.zip'
+EXPECTED_SHA256 = '6f2961ae614699eb08c8d925a5aa6f23e9dc744ee0b2aee20abb2d1744ece518'
 MEMBERS = [
     'module.prop', 'customize.sh', 'post-fs-data.sh', 'service.sh',
     'uninstall.sh', 'action.sh', 'profile.sh', 'common.sh', 'platform.sh',
