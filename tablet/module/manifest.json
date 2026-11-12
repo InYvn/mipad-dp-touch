@@ -1,5 +1,5 @@
 {
-  "version": "2.0.1",
+  "version": "2.1.0",
   "module_id": "mipad_dptouch_fullsplit_local",
   "installation_enabled": true,
   "manager_installation_tested": false,
@@ -20,6 +20,18 @@
     "abi": "arm64-v8a",
     "minimum_sdk": 35,
     "HAL_SHA256": "44efbe22de46196246c9dbf96bceba8444e5f53aea2400b8101b1b0b0d79c5c3",
+    "HAL_SHA256_ACCEPTED": [
+      {
+        "sha256": "44efbe22de46196246c9dbf96bceba8444e5f53aea2400b8101b1b0b0d79c5c3",
+        "firmware": "OS4.0.10.0.XBMCNXM",
+        "size": 102552
+      },
+      {
+        "sha256": "17b70644c4cd1ed8421616704eb72641aad5b7c00d94ecf029d324ce02d5a922",
+        "firmware": "OS4.0.16.0.XBMCNXM",
+        "size": 102568
+      }
+    ],
     "init_SHA256": "24c8b3714ae98e813017b8944483fafdb2fa398cc46003efac8c3295480dcd0a",
     "original_svid_sha256": "3d1da549cf326dddc07c8684becda1c25aa58f9306f03431fa5d4ed8a5e0a92f",
     "original_node_owner_mode": "0:0:440",
