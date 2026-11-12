@@ -136,6 +136,7 @@ dpin_state=
 dpin_logged_state=
 dpin_last_sample=0
 dpin_lost_since=0
+dpin_lost_reason=
 # 2.1.8: dp_absent must not fire while a take-over sequence is running, or in
 # the guard window right after it finished (USB re-enumeration looks like an
 # absent link for a few seconds). platform.sh writes $S/handover.window.
@@ -198,7 +199,7 @@ dp_state() {
  if [ "$present" = 1 ]; then printf present; return 0; fi
  printf unknown
 }
-# --- 2.1.7 shared DP-in display-mode probe ---------------------------------
+# --- 2.1.7 shared DP-in display-mode probe (2.1.9 screen/lock release) ------
 # This block is byte-identical in platform.sh and runtime-monitor.sh (the
 # package check asserts equality) so the take-over gate and the watchdog use
 # exactly the same evidence. The stock OEM DP HAL appearing only means the
@@ -207,71 +208,118 @@ dp_state() {
 # showed com.miui.home/.launcher.Launcher, UDC was configured and the module
 # grabbed event11 anyway. The only signal measured to separate the two modes is
 # the miLink DP-in UI being the top resumed activity:
-#   active:   bounded `dumpsys activity activities` succeeds and
-#             topResumedActivity is com.milink.dpin.ui.display.DisplayModeActivity;
-#   inactive: it succeeds and names a different resolved activity;
-#   unknown:  dumpsys/timeout missing or failed/timed out, empty output, no
-#             topResumedActivity line, or topResumedActivity=null (screen off).
-# unknown is a hard fail-safe: the take-over gate never takes over on unknown
-# and the watchdog never releases on unknown. The reason of an unknown sample is
-# written to $S/dpin-mode.reason (one line, e.g. "timeout rc=124",
-# "dumpsys rc=1", "dumpsys_missing", "empty", "no_top_activity", "top_null",
-# "fallback_timeout") so the device runbook can tell why.
+#   active:     bounded `dumpsys activity activities` succeeds and
+#               topResumedActivity is com.milink.dpin.ui.display.DisplayModeActivity;
+#   inactive:   it succeeds and names a different resolved activity;
+#   screen_off: there is no concrete top activity (missing line or null) AND
+#               `dumpsys display` reports mState=OFF;
+#   locked:     no concrete top activity, the screen is ON and `dumpsys window`
+#               reports a dreaming/lockscreen or keyguard being shown;
+#   unknown:    dumpsys/timeout missing or failed/timed out, or neither the top
+#               activity nor the screen/lock state is decidable.
+# 2.1.9 (2026-11-13 real use): after leaving DP-in the tablet was locked/screen
+# off, `dumpsys activity activities` had no topResumedActivity, so a locked
+# tablet was "unknown" forever and the candidate kept grabbing event11 (the
+# user could not touch the panel). screen_off/locked are therefore RELEASE
+# evidence (the DP-in UI cannot be on such a panel) but never take-over
+# evidence: the gate still requires `active`.
+# unknown stays a hard fail-safe for both directions. The reason of an unknown
+# sample is written to $S/dpin-mode.reason (one line, e.g. "timeout rc=124",
+# "dumpsys rc=1", "dumpsys_missing", "empty", "no_top_activity",
+# "top_missing,display_unknown", "fallback_timeout") so the runbook can tell why.
 # `persist.vendor.vcb.activity` is deliberately NOT used: its value is unstable
 # (it read "none" on both modes in the 01:5x snapshots).
-# The probe is hard-bounded to 3s: timeout(1) when present, otherwise a
-# background dumpsys with a 3s poll/TERM fallback. A cached wrapper keeps the
-# dumpsys cost to at most one run per DPIN_MODE_SAMPLE_SECONDS across the
-# monitor and the reconcile gate.
+# Every dumpsys call is hard-bounded to 3s: timeout(1) when present, otherwise a
+# background process with a 3s poll/TERM fallback. A cached wrapper keeps the
+# cost to at most one probe group per DPIN_MODE_SAMPLE_SECONDS across the
+# monitor and the reconcile gate; the screen/lock probes only run when the top
+# activity is undecidable.
 DPIN_MODE_TIMEOUT_SECONDS=3
 DPIN_MODE_SAMPLE_SECONDS=${MIPAD_DP_DPIN_SAMPLE_SECONDS:-5}
 case "$DPIN_MODE_SAMPLE_SECONDS" in ''|*[!0-9]*) DPIN_MODE_SAMPLE_SECONDS=5;; esac
 [ "$DPIN_MODE_SAMPLE_SECONDS" -ge 1 ] || DPIN_MODE_SAMPLE_SECONDS=1
+dpin_dumpsys() { # args... -> stdout; exit 0 when non-empty output
+ _o=
+ if command -v dumpsys >/dev/null 2>&1; then
+  if command -v timeout >/dev/null 2>&1; then
+   _o=$(timeout "$DPIN_MODE_TIMEOUT_SECONDS" dumpsys "$@" 2>/dev/null) || _o=
+  else
+   _dtmp=$S/.dpin-cmd.$$.tmp
+   rm -f "$_dtmp" 2>/dev/null || true
+   dumpsys "$@" > "$_dtmp" 2>/dev/null &
+   _dpid=$!
+   _dn=0
+   while [ "$_dn" -lt 30 ]; do
+    kill -0 "$_dpid" 2>/dev/null || break
+    sleep 0.1
+    _dn=$((_dn + 1))
+   done
+   if kill -0 "$_dpid" 2>/dev/null; then
+    kill -TERM "$_dpid" 2>/dev/null || true
+    _o=
+   else
+    _o=$(cat "$_dtmp" 2>/dev/null) || _o=
+   fi
+   wait "$_dpid" 2>/dev/null || true
+   rm -f "$_dtmp" 2>/dev/null || true
+  fi
+ fi
+ printf '%s' "$_o"
+ if [ -n "$_o" ]; then return 0; fi
+ return 1
+}
+dpin_screen_state() { # screen_off|locked|unknown
+ if ! command -v dumpsys >/dev/null 2>&1; then printf unknown; return 0; fi
+ _dpy=$(dpin_dumpsys display) || _dpy=
+ case "$_dpy" in
+  *mState=OFF*) printf screen_off; return 0;;
+  *mState=ON*) :;;
+  *) printf unknown; return 0;;
+ esac
+ _win=$(dpin_dumpsys window) || _win=
+ case "$_win" in
+  *mDreamingLockscreen=true*) printf locked; return 0;;
+  *mShowingLockscreen=true*) printf locked; return 0;;
+  *mKeyguardShowing=true*) printf locked; return 0;;
+  *mAwake=false*) printf screen_off; return 0;;
+ esac
+ printf unknown
+}
 dpin_display_mode() {
  _dout=
  _dwhy=
  if ! command -v dumpsys >/dev/null 2>&1; then
+  _dstate=unknown
   _dwhy=dumpsys_missing
- elif command -v timeout >/dev/null 2>&1; then
-  _drc=0
-  _dout=$(timeout "$DPIN_MODE_TIMEOUT_SECONDS" dumpsys activity activities 2>/dev/null) || _drc=$?
-  if [ "$_drc" != 0 ]; then
-   _dout=
-   _dwhy="timeout rc=$_drc"
-  fi
  else
-  _dtmp=$S/.dpin-activity.$$.tmp
-  rm -f "$_dtmp" 2>/dev/null || true
-  dumpsys activity activities > "$_dtmp" 2>/dev/null &
-  _dpid=$!
-  _dn=0
-  while [ "$_dn" -lt 30 ]; do
-   kill -0 "$_dpid" 2>/dev/null || break
-   sleep 0.1
-   _dn=$((_dn + 1))
-  done
-  if kill -0 "$_dpid" 2>/dev/null; then
-   kill -TERM "$_dpid" 2>/dev/null || true
-   _dout=
-   _dwhy=fallback_timeout
+  _dout=$(dpin_dumpsys activity activities) || _dout=
+  _dstate=unknown
+  if [ -z "$_dout" ]; then
+   # dumpsys failed/timed out/empty: never guess from the screen state alone.
+   _dwhy=activity_probe_failed
   else
-   _dout=$(cat "$_dtmp" 2>/dev/null) || _dout=
-   if [ -z "$_dout" ]; then _dwhy=empty; fi
+   _dtop=$(printf '%s\n' "$_dout" | grep -m1 'topResumedActivity=' 2>/dev/null) || _dtop=
+   case "$_dtop" in
+    '')
+     _dwhy=no_top_activity;;
+    *'topResumedActivity=null'*)
+     _dwhy=top_null;;
+    *com.milink.dpin.ui.display.DisplayModeActivity*)
+     _dstate=active;;
+    *)
+     _dstate=inactive;;
+   esac
+   if [ "$_dstate" = unknown ]; then
+    # 2.1.9: no concrete top activity (lock screen / screen off) is release
+    # evidence; the screen/lock probe disambiguates it from a broken dumpsys.
+    _dscreen=$(dpin_screen_state) || _dscreen=unknown
+    case "$_dscreen" in
+     screen_off) _dstate=screen_off; _dwhy=;;
+     locked) _dstate=locked; _dwhy=;;
+     *) _dwhy="$_dwhy,screen=unknown";;
+    esac
+   fi
   fi
-  wait "$_dpid" 2>/dev/null || true
-  rm -f "$_dtmp" 2>/dev/null || true
- fi
- _dstate=unknown
- if [ -n "$_dout" ]; then
-  _dtop=$(printf '%s\n' "$_dout" | grep -m1 'topResumedActivity=' 2>/dev/null) || _dtop=
-  case "$_dtop" in
-   '') _dwhy=no_top_activity;;
-   *'topResumedActivity=null'*) _dwhy=top_null;;
-   *com.milink.dpin.ui.display.DisplayModeActivity*) _dstate=active;;
-   *) _dstate=inactive;;
-  esac
- elif [ -z "$_dwhy" ]; then
-  _dwhy=empty
  fi
  if [ "$_dstate" = unknown ]; then
   [ -n "$_dwhy" ] || _dwhy=unknown
@@ -289,7 +337,7 @@ dpin_display_mode_cached() {
  if [ -f "$S/dpin-mode.cache" ] && [ ! -L "$S/dpin-mode.cache" ]; then
   { IFS= read -r _dstate || true; IFS= read -r _dwhen || true; } < "$S/dpin-mode.cache"
   case "$_dwhen" in ''|*[!0-9]*) _dwhen=0;; esac
-  case "$_dstate" in active|inactive|unknown) :;; *) _dstate=;; esac
+  case "$_dstate" in active|inactive|screen_off|locked|unknown) :;; *) _dstate=;; esac
   if [ -n "$_dstate" ] && [ $((_dnow - _dwhen)) -ge 0 ] &&
      [ $((_dnow - _dwhen)) -lt "$DPIN_MODE_SAMPLE_SECONDS" ]; then
    printf '%s' "$_dstate"
@@ -743,10 +791,18 @@ watchdog_tick() {
    dpin_last_sample=$now
   fi
   case "$dpin_state" in
-   inactive)
+   inactive|screen_off|locked)
+    # 2.1.9: the DP-in UI cannot be on a locked/screen-off panel, so both are
+    # release evidence. inactive (another concrete activity) keeps the old
+    # dpin_mode_lost reason; screen_off/locked use session_ended_screen_off so
+    # the device runbook can tell the two paths apart.
     if [ "$dpin_lost_since" = 0 ]; then
      dpin_lost_since=$now
-     wlog "PROBE dpin_mode=inactive; release window ${dpin_lost_limit}s"
+     case "$dpin_state" in
+      inactive) dpin_lost_reason=dpin_mode_lost;;
+      *) dpin_lost_reason=session_ended_screen_off;;
+     esac
+     wlog "PROBE dpin_mode=$dpin_state reason=$dpin_lost_reason; release window ${dpin_lost_limit}s"
     fi;;
    unknown)
     # 2.1.7: unknown is fail-safe for release too. Log the transition once with
@@ -755,13 +811,16 @@ watchdog_tick() {
      dpin_why=$(cat "$S/dpin-mode.reason" 2>/dev/null) || dpin_why=unknown
      wlog "PROBE dpin_mode=unknown reason=$dpin_why"
     fi
-    dpin_lost_since=0;;
+    dpin_lost_since=0
+    dpin_lost_reason=;;
    *)
-    dpin_lost_since=0;;
+    dpin_lost_since=0
+    dpin_lost_reason=;;
   esac
   dpin_logged_state=$dpin_state
  else
   dpin_lost_since=0
+  dpin_lost_reason=
   dpin_last_sample=0
   dpin_state=
   dpin_logged_state=
@@ -786,11 +845,11 @@ watchdog_tick() {
   # a candidate that outlived its DP session leaves behind). Panel safety wins.
   reason=session_lost
  elif [ "$dpin_lost_since" -gt 0 ] && [ $((now-dpin_lost_since)) -ge "$dpin_lost_limit" ]; then
-  # 2.1.7: the DP-in display UI has not been the top activity for the whole
-  # window while our candidate still authenticates: the user left DP-in display
-  # mode without unplugging. Release the panel as for a real cable pull.
-  # unknown is not inactive and never reaches this arm.
-  reason=dpin_mode_lost
+  # 2.1.7/2.1.9: the DP-in display UI has not been the top activity for the
+  # whole window while our candidate still authenticates: the user left DP-in
+  # display mode without unplugging, or the panel went to lock/screen-off.
+  # Release the panel as for a real cable pull. unknown never reaches this arm.
+  reason=${dpin_lost_reason:-dpin_mode_lost}
  fi
  if [ -n "$reason" ]; then
   # 2.1.7 release dedup: the elif chain above selects exactly ONE reason per
@@ -802,6 +861,7 @@ watchdog_tick() {
   # Reset the display-mode window before releasing so a stale window cannot
   # re-fire after the helper returns.
   dpin_lost_since=0
+  dpin_lost_reason=
   dpin_last_sample=0
   dpin_state=
   dpin_logged_state=
