@@ -452,7 +452,8 @@ class DPApp(NSObject):
         self._plug_busy = ""             # "" / "check" / "install"
         self._plug_progress = None
         self._plug_mod = None            # 已加载的插件模块
-        self._plug_ctl = None            # 插件控制器（键盘面板）
+        self._plug_ctl = None            # 插件控制器（键盘面板，兼容旧路径）
+        self._plug_ctls = {}             # pid -> 控制器
         self._plug_pending = None        # 后台查到的发行信息
         self.kb_item = None              # 状态栏键盘图标（装了插件才有）
         if not self._hold_instance_lock():
@@ -2526,20 +2527,22 @@ class DPApp(NSObject):
             self.kb_item.button().setTitle_("⌨")
 
     @objc.python_method
-    def _plug_ensure(self, force=False):
+    def _plug_ensure(self, pid="touchkeys", force=False):
         """加载插件包并建控制器（主线程）。"""
-        if self._plug_ctl is not None and not force:
-            return self._plug_ctl
-        if self._plug_ctl is not None and force:
+        ctl = self._plug_ctls.get(pid)
+        if ctl is not None and not force:
+            return ctl
+        if ctl is not None and force:
             try:
-                self._plug_ctl.close()
+                ctl.close()
             except Exception:
                 pass
-        mod = PLUG.load()
+        mod = PLUG.load(pid)
         ctl = mod.create(on_hide=self._plug_on_hide, log=log)
-        self._plug_mod, self._plug_ctl = mod, ctl
-        log("插件已加载: %s %s" % (getattr(mod, "PLUGIN_ID", "?"),
-                                  getattr(mod, "VERSION", "?")))
+        self._plug_ctls[pid] = ctl
+        if pid == "touchkeys":
+            self._plug_mod, self._plug_ctl = mod, ctl
+        log("插件已加载: %s %s" % (pid, getattr(mod, "VERSION", "?")))
         return ctl
 
     @objc.python_method
@@ -2580,6 +2583,61 @@ class DPApp(NSObject):
         self._plug_busy = "check"
         self._plug_sync()
         threading.Thread(target=self._plug_worker_check, daemon=True).start()
+
+    def actPluginToggle_(self, pid):
+        if not pid or self._plug_busy:
+            return
+        try:
+            ctl = self._plug_ensure(pid)
+        except Exception as e:
+            log("插件加载失败(%s): %r" % (pid, e))
+            self._warn("插件加载失败", "%s\n\n可以在插件市场里卸载后重装。" % e)
+            return
+        ctl.toggle()
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
+
+    def actPluginInstall_(self, pid):
+        if not pid or self._plug_busy:
+            return
+        self._plug_busy = "check"
+        self._plug_pending = {"pid": pid}
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
+        threading.Thread(target=self._plug_worker_check, args=(pid,), daemon=True).start()
+
+    def actPluginUninstall_(self, pid):
+        if not pid or self._plug_busy:
+            return
+        rec = PLUG.installed(pid)
+        if not rec:
+            return
+        meta = PLUG.get(pid)
+        if self._ask("卸载%s插件？" % meta["name"],
+                     "会删除 %s 下的插件文件。App 的其它功能不受影响，随时可以重装。"
+                     % PLUG.plugin_root(pid), ["卸载", "取消"]) != 0:
+            return
+        ctl = self._plug_ctls.pop(pid, None)
+        try:
+            if ctl is not None:
+                ctl.close()
+        except Exception:
+            pass
+        ok = PLUG.uninstall(pid)
+        if pid == "touchkeys":
+            self._plug_mod = self._plug_ctl = None
+        log("插件卸载(%s): %s" % (pid, "成功" if ok else "失败"))
+        if not ok:
+            self._warn("卸载失败", "没能删除插件目录，可能被占用：\n%s" % PLUG.plugin_root(pid))
+        self._plug_sync()
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
 
     def actPluginCheck_(self, sender):
         """手动检查插件更新（市场页 / 菜单都走这里）。"""
@@ -2626,72 +2684,74 @@ class DPApp(NSObject):
             pass
 
     @objc.python_method
-    def _plug_worker_check(self):
+    def _plug_worker_check(self, pid="touchkeys"):
         try:
-            res = PLUG.check()
+            res = PLUG.check(pid)
         except Exception as e:
             res = {"ok": False, "why": "查询出错（%s: %s）" % (e.__class__.__name__, e)}
-        self._plug_in = ("check", res)
+        self._plug_in = ("check", res, pid)
 
     @objc.python_method
-    def _plug_worker_install(self, res):
+    def _plug_worker_install(self, res, pid="touchkeys"):
         try:
             cache = os.path.expanduser("~/Library/Caches/MipadDPTouch")
             os.makedirs(cache, exist_ok=True)
             dest = os.path.join(cache, res["asset"])
             PLUG.download(res["url"], dest, sha256=res.get("sha256"))
             rec = PLUG.install_from_zip(dest,
-                                        source=res.get("page") or PLUG.RELEASES_PAGE,
+                                        source=res.get("page") or PLUG.releases_page(pid),
                                         host_version=APP_VERSION,
-                                        sha256=res.get("sha256"))
+                                        sha256=res.get("sha256"), pid=pid)
             out = {"ok": True, "rec": rec}
         except Exception as e:
             out = {"ok": False, "why": str(e)}
-        self._plug_in = ("install", out)
+        self._plug_in = ("install", out, pid)
 
     @objc.python_method
-    def _plug_after_check(self, res):
+    def _plug_after_check(self, res, pid="touchkeys"):
+        meta = PLUG.get(pid)
         if not res.get("ok"):
             self._warn("插件信息查询失败", res.get("why") or "原因不明。")
             return
-        rec = PLUG.installed()
+        rec = PLUG.installed(pid)
         if rec is not None:
             if PLUG.is_newer(res.get("version", ""), rec.get("version", "")):
                 body = ("已安装 %s，仓库里有 %s。\n\n来源：%s\n大小：%s"
                         % (rec.get("version"), res.get("version"),
                            res.get("page"), UPD.human_size(res.get("size") or 0)))
-                if self._ask("更新屏幕键盘插件？", body, ["下载并更新", "取消"]) != 0:
+                if self._ask("更新%s插件？" % meta["name"], body, ["下载并更新", "取消"]) != 0:
                     return
                 self._plug_busy = "install"
                 self._plug_sync()
-                threading.Thread(target=self._plug_worker_install, args=(res,),
+                threading.Thread(target=self._plug_worker_install, args=(res, pid),
                                  daemon=True).start()
                 return
-            self._warn("已是最新", "已安装的屏幕键盘插件就是最新版（%s）。" % rec.get("version"))
+            self._warn("已是最新", "已安装的%s插件就是最新版（%s）。" % (meta["name"], rec.get("version")))
             return
-        body = ("这会把屏幕键盘装到本机（不会随 App 分发）：\n\n"
+        body = ("这会把%s装到本机（不会随 App 分发）：\n\n" % meta["name"] +
                 "来源：%s\n版本：%s\n大小：%s\n安装位置：%s\n\n"
                 "安装后会在 dptouch 进程内运行，共用它的「设备控制和数据访问」权限。"
                 % (res.get("page"), res.get("version"),
-                   UPD.human_size(res.get("size") or 0), PLUG.plugin_root()))
-        if self._ask("安装屏幕键盘插件？", body, ["下载并安装", "取消"]) != 0:
+                   UPD.human_size(res.get("size") or 0), PLUG.plugin_root(pid)))
+        if self._ask("安装%s插件？" % meta["name"], body, ["下载并安装", "取消"]) != 0:
             return
         self._plug_pending = res
         self._plug_busy = "install"
         self._plug_sync()
-        threading.Thread(target=self._plug_worker_install, args=(res,), daemon=True).start()
+        threading.Thread(target=self._plug_worker_install, args=(res, pid), daemon=True).start()
 
     @objc.python_method
-    def _plug_after_install(self, out):
+    def _plug_after_install(self, out, pid="touchkeys"):
         if not out.get("ok"):
             self._warn("插件安装失败", out.get("why") or "原因不明。")
             return
         rec = out.get("rec") or {}
         log("插件安装完成: %s %s" % (rec.get("version"), rec.get("dir")))
         try:
-            ctl = self._plug_ensure(force=True)
+            ctl = self._plug_ensure(pid, force=True)
             ctl.show()
-            self._plug_warn_perm()
+            if pid == "touchkeys":
+                self._plug_warn_perm()
         except Exception as e:
             log("插件安装后加载失败: %r" % (e,))
             self._warn("插件已下载但加载失败", str(e))
@@ -2707,12 +2767,12 @@ class DPApp(NSObject):
         p = self._plug_in
         if p:
             self._plug_in = None
-            kind, data = p
+            kind, data, pid = p
             self._plug_busy = ""
             if kind == "check":
-                self._plug_after_check(data)
+                self._plug_after_check(data, pid)
             else:
-                self._plug_after_install(data)
+                self._plug_after_install(data, pid)
         if self._plug_ctl is not None:
             try:
                 self._plug_ctl.tick()

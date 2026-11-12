@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""可选插件：下载 / 校验 / 安装 / 加载（目前只有「屏幕键盘 TouchKeys」）。
+"""可选插件：注册表 / 下载 / 校验 / 安装 / 加载。
 
 设计约束（用户定过的）
 ----------------------
@@ -10,14 +10,16 @@
 * 进程内加载：插件跑在 dptouch 进程里，共用它的「设备控制和数据访问」授权，
   不额外产生 Dock / 菜单栏图标。
 
+注册表
+------
+`PLUGINS` 是唯一的事实来源：id / 仓库 / 资产名规则 / 入口包名 / 最低宿主版本。
+新增插件只需在这里加一条，UI 与安装流程都按 id 走。
+
 目录布局::
 
     ~/Library/Application Support/MipadDPTouch/plugins/
-        touchkeys/
-            installed.json          # 当前生效版本与来源
-            0.1.0/                  # 解压出来的插件包
-                plugin.json
-                touchkeys_plugin/…
+        touchkeys/installed.json + 0.1.0/…
+        touchbar/installed.json + 0.1.0/…
 
 这一层不 import AppKit，纯函数 + 文件操作，便于离线自检。
 """
@@ -34,20 +36,67 @@ import time
 import urllib.request
 import zipfile
 
-REPO = "InYvn/TouchKeys"
-API_LATEST = "https://api.github.com/repos/%s/releases/latest" % REPO
-RELEASES_PAGE = "https://github.com/%s/releases" % REPO
-
-PLUGIN_ID = "touchkeys"
-PLUGIN_NAME = "屏幕键盘（TouchKeys）"
-ASSET_RE = re.compile(r"^touchkeys-plugin-(.+)\.zip$", re.I)
-API_TIMEOUT = 15
 UA = "MipadDPTouch"
+API_TIMEOUT = 15
 MAX_ZIP_BYTES = 20 << 20          # 插件包不该超过 20MB
+
+PLUGINS = (
+    {
+        "id": "touchkeys",
+        "name": "屏幕键盘",
+        "brand": "TouchKeys",
+        "blurb": "触屏副屏用的浮动键盘：点按合成真实按键，支持中英切换与焦点跟随。",
+        "repo": "InYvn/TouchKeys",
+        "asset_re": r"^touchkeys-plugin-(.+)\.zip$",
+        "entry": "touchkeys_plugin",
+        "min_host": "2.0.0",
+        "symbol": "keyboard",
+    },
+    {
+        "id": "touchbar",
+        "name": "浮动工具栏",
+        "brand": "TouchBar",
+        "blurb": "跟随前台 App 的浮动工具条：按钮来自它自己的工具栏，点按即执行；可拖动、吸附侧边、调透明度。",
+        "repo": "InYvn/TouchBar",
+        "asset_re": r"^touchbar-plugin-(.+)\.zip$",
+        "entry": "touchbar_plugin",
+        "min_host": "2.1.0",
+        "symbol": "rectangle.topthird.inset.filled",
+    },
+)
+
+DEFAULT_ID = "touchkeys"
+
+# 旧代码兼容别名
+PLUGIN_ID = DEFAULT_ID
+PLUGIN_NAME = "屏幕键盘（TouchKeys）"
+REPO = PLUGINS[0]["repo"]
+RELEASES_PAGE = "https://github.com/%s/releases" % REPO
 
 
 class PluginError(Exception):
     """带可读理由的失败。"""
+
+
+# ---------------------------------------------------------------- 注册表
+
+def registry():
+    return [dict(p) for p in PLUGINS]
+
+
+def get(pid):
+    for p in PLUGINS:
+        if p["id"] == pid:
+            return dict(p)
+    raise PluginError("未知插件 id：%r" % (pid,))
+
+
+def plugin_ids():
+    return [p["id"] for p in PLUGINS]
+
+
+def releases_page(pid=DEFAULT_ID):
+    return "https://github.com/%s/releases" % get(pid)["repo"]
 
 
 # ---------------------------------------------------------------- 纯函数
@@ -65,18 +114,11 @@ def is_newer(remote, local):
 
 
 def parse_asset_sha256(body, asset_name):
-    """从发版正文里抓该资产的 SHA256。
-
-    允许两种写法（都要求同一行出现资产名或紧邻上下文）：
-        touchkeys-plugin-0.1.0.zip  sha256: <64hex>
-        SHA256(touchkeys-plugin-0.1.0.zip) = <64hex>
-    找不到就返回 None —— 调用方必须拒绝安装。
-    """
+    """从发版正文里抓该资产的 SHA256；找不到返回 None（调用方必须拒绝安装）。"""
     if not body:
         return None
-    lines = str(body).splitlines()
     hexre = re.compile(r"\b([0-9a-fA-F]{64})\b")
-    for line in lines:
+    for line in str(body).splitlines():
         if asset_name and asset_name.lower() not in line.lower():
             continue
         m = hexre.search(line)
@@ -85,11 +127,12 @@ def parse_asset_sha256(body, asset_name):
     return None
 
 
-def pick_asset(release):
-    """从 release JSON 里挑插件 zip；返回 (name, url, size) 或 None。"""
+def pick_asset(release, pid=DEFAULT_ID):
+    """从 release JSON 里挑该插件的 zip；返回 (name, url, size) 或 None。"""
+    pat = re.compile(get(pid)["asset_re"], re.I)
     for a in release.get("assets") or []:
         name = a.get("name") or ""
-        if ASSET_RE.match(name):
+        if pat.match(name):
             return (name, a.get("browser_download_url") or "", int(a.get("size") or 0))
     return None
 
@@ -103,24 +146,27 @@ def _open(url, timeout=API_TIMEOUT, opener=None):
         return r.read()
 
 
-def check(opener=None):
-    """读 latest release。返回 dict：ok/why/version/url/size/sha256/notes/asset。"""
+def check(pid=DEFAULT_ID, opener=None):
+    """读该插件仓库的 latest release。返回 ok/why/version/url/size/sha256/notes/asset/page。"""
+    meta = get(pid)
+    api = "https://api.github.com/repos/%s/releases/latest" % meta["repo"]
+    page = releases_page(pid)
     out = {"ok": False, "why": "", "version": "", "url": "", "size": 0,
-           "sha256": None, "notes": "", "asset": "", "page": RELEASES_PAGE}
+           "sha256": None, "notes": "", "asset": "", "page": page, "id": pid}
     try:
-        raw = _open(API_LATEST, opener=opener)
+        raw = _open(api, opener=opener)
         rel = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
     except Exception as e:
         out["why"] = "取插件发版信息失败：%r" % (e,)
         return out
-    ver = rel.get("tag_name") or rel.get("name") or ""
-    picked = pick_asset(rel)
+    picked = pick_asset(rel, pid)
     if picked is None:
-        out["why"] = "这个发版里没有 touchkeys-plugin-*.zip 资产"
+        out["why"] = "这个发版里没有匹配 %s 的资产" % meta["asset_re"]
         return out
     name, url, size = picked
-    out.update({"ok": True, "version": ver, "url": url, "size": size,
-                "asset": name, "notes": (rel.get("body") or "")[:800],
+    out.update({"ok": True, "version": rel.get("tag_name") or rel.get("name") or "",
+                "url": url, "size": size, "asset": name,
+                "notes": (rel.get("body") or "")[:800],
                 "sha256": parse_asset_sha256(rel.get("body") or "", name)})
     return out
 
@@ -171,13 +217,13 @@ def read_manifest(path):
         return json.load(f)
 
 
-def validate_manifest(meta, host_version):
+def validate_manifest(meta, host_version, pid=DEFAULT_ID):
     """检查 id / api / min_host；不通过抛 PluginError。"""
-    if meta.get("id") != PLUGIN_ID:
-        raise PluginError("插件 id 不符：%r" % (meta.get("id"),))
+    if meta.get("id") != pid:
+        raise PluginError("插件 id 不符：%r（期望 %r）" % (meta.get("id"), pid))
     if int(meta.get("api", 0)) != 1:
         raise PluginError("插件 API 版本 %r 不受支持" % (meta.get("api"),))
-    mh = meta.get("min_host") or "0.0.0"
+    mh = meta.get("min_host") or get(pid).get("min_host") or "0.0.0"
     if parse_version(host_version) < parse_version(mh):
         raise PluginError("需要 App ≥ %s，当前 %s" % (mh, host_version))
     if not meta.get("version"):
@@ -201,38 +247,39 @@ def plugins_dir():
     return os.path.expanduser("~/Library/Application Support/MipadDPTouch/plugins")
 
 
-def plugin_root(base=None):
-    return os.path.join(base or plugins_dir(), PLUGIN_ID)
+def plugin_root(pid=DEFAULT_ID, base=None):
+    return os.path.join(base or plugins_dir(), pid)
 
 
-def installed(base=None):
+def installed(pid=DEFAULT_ID, base=None):
     """读 installed.json；没装或坏了返回 None。"""
-    p = os.path.join(plugin_root(base), "installed.json")
+    root = plugin_root(pid, base)
+    p = os.path.join(root, "installed.json")
     try:
         with open(p, encoding="utf-8") as f:
             d = json.load(f)
-        if d.get("version") and os.path.isdir(os.path.join(plugin_root(base), d["version"])):
+        if d.get("version") and os.path.isdir(os.path.join(root, d["version"])):
             return d
     except Exception:
         pass
     return None
 
 
-def install_from_zip(zip_path, source, host_version, base=None, sha256=None):
+def install_from_zip(zip_path, source, host_version, base=None, sha256=None, pid=DEFAULT_ID):
     """校验 → 解压到 <root>/<version> → 写 installed.json（原子替换）。"""
-    root = plugin_root(base)
+    root = plugin_root(pid, base)
     os.makedirs(root, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix=".install-", dir=root)
     try:
         safe_extract(zip_path, tmp)
         meta = read_manifest(os.path.join(tmp, "plugin.json"))
-        validate_manifest(meta, host_version)
+        validate_manifest(meta, host_version, pid)
         ver = str(meta["version"])
         final = os.path.join(root, ver)
         if os.path.isdir(final):
             shutil.rmtree(final)
         os.replace(tmp, final)
-        rec = {"id": PLUGIN_ID, "version": ver, "dir": ver, "source": source,
+        rec = {"id": pid, "version": ver, "dir": ver, "source": source,
                "sha256": sha256 or sha256_file(zip_path),
                "installed_at": time.strftime("%Y-%m-%d %H:%M:%S")}
         with open(os.path.join(root, "installed.json"), "w", encoding="utf-8") as f:
@@ -247,22 +294,21 @@ def install_from_zip(zip_path, source, host_version, base=None, sha256=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def uninstall(base=None):
-    root = plugin_root(base)
+def uninstall(pid=DEFAULT_ID, base=None):
+    root = plugin_root(pid, base)
     shutil.rmtree(root, ignore_errors=True)
     return not os.path.exists(root)
 
 
-def load(base=None):
+def load(pid=DEFAULT_ID, base=None):
     """import 已安装的插件包，返回 module。"""
-    rec = installed(base)
+    rec = installed(pid, base)
     if rec is None:
         raise PluginError("插件尚未安装")
-    pkg_dir = os.path.join(plugin_root(base), rec["version"])
-    entry = "touchkeys_plugin"
+    entry = get(pid)["entry"]
+    pkg_dir = os.path.join(plugin_root(pid, base), rec["version"])
     if pkg_dir not in sys.path:
         sys.path.insert(0, pkg_dir)
-    # 覆盖旧模块（升级后重载）
     for mod in list(sys.modules):
         if mod == entry or mod.startswith(entry + "."):
             del sys.modules[mod]
@@ -290,20 +336,35 @@ def selftest_offline():
         else:
             bad.append("%s %s" % (name, extra))
 
+    ck("注册表含两个插件", plugin_ids() == ["touchkeys", "touchbar"], plugin_ids())
+    ck("按 id 取元数据", get("touchbar")["repo"] == "InYvn/TouchBar")
+    try:
+        get("nope")
+        ck("未知 id 报错", False)
+    except PluginError:
+        ck("未知 id 报错", True)
+
     body = ("## 插件\n"
             "touchkeys-plugin-0.1.0.zip  sha256: %s\n" % ("a1" * 32))
     ck("抓 SHA256", parse_asset_sha256(body, "touchkeys-plugin-0.1.0.zip") == "a1" * 32)
     ck("没有 SHA256", parse_asset_sha256("随便写写", "x.zip") is None)
     ck("版本比较", is_newer("v0.2.0", "0.1.0") and not is_newer("v0.1.0", "0.1.0"))
-    rel = {"tag_name": "v0.1.0",
-           "body": body,
+
+    rel = {"tag_name": "v0.1.0", "body": body,
            "assets": [{"name": "touchkeys-plugin-0.1.0.zip",
                        "browser_download_url": "https://example.invalid/t.zip",
                        "size": 1234}]}
-    r = check(opener=lambda u, t: json.dumps(rel).encode())
+    r = check("touchkeys", opener=lambda u, t: json.dumps(rel).encode())
     ck("check 成功", r["ok"], r.get("why"))
     ck("check 取到地址", r["url"].endswith("t.zip"))
     ck("check 取到 sha", r["sha256"] == "a1" * 32)
+
+    rel2 = {"tag_name": "v0.1.0", "body": "touchbar-plugin-0.1.0.zip sha256: " + "b2" * 32,
+            "assets": [{"name": "touchbar-plugin-0.1.0.zip",
+                        "browser_download_url": "https://example.invalid/tb.zip", "size": 99}]}
+    r2 = check("touchbar", opener=lambda u, t: json.dumps(rel2).encode())
+    ck("第二个插件按自己的资产名匹配",
+       r2["ok"] and r2["asset"] == "touchbar-plugin-0.1.0.zip", r2.get("why"))
 
     try:
         download("https://example.invalid/t.zip", os.path.join(tempfile.gettempdir(), "x.zip"),

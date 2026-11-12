@@ -139,6 +139,7 @@ echo "==> PyInstaller 打包"
   --hidden-import dptouch_edid \
   --hidden-import dptouch_mode \
   --hidden-import dptouch_plugin \
+  --hidden-import plugin_icons \
   --hidden-import ssl --hidden-import _ssl --hidden-import _hashlib \
   --paths src \
   --add-data "$PWD/docs/logo.png:." \

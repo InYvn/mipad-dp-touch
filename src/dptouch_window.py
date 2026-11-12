@@ -1839,68 +1839,97 @@ class SettingsWindow(_Pane):
         return y
 
     @objc.python_method
+    def _plugin_icon(self, pid, size=64.0):
+        """插件图片：优先用打包进来的 PNG，取不到退回 SF Symbol。"""
+        try:
+            import base64
+            import plugin_icons
+            raw = plugin_icons.ICONS.get(pid)
+            if raw:
+                img = NSImage.alloc().initWithData_(base64.b64decode(raw))
+                if img is not None:
+                    iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, size, size))
+                    iv.setImage_(img)
+                    return iv
+        except Exception:
+            pass
+        try:
+            import dptouch_plugin as PLUG
+            meta = PLUG.get(pid)
+        except Exception:
+            meta = {}
+        return _icon(meta.get("symbol") or "puzzlepiece.extension", size * 0.62)
+
+    @objc.python_method
     def _page_plugins(self, v, x, w, y):
-        """插件市场：只列可选插件，安装动作交给 App（下载/校验/加载都在那边）。"""
+        """插件市场：按注册表列出全部插件，安装动作交给 App。"""
         import dptouch_plugin as PLUG
-        rec = PLUG.installed()
-        ctl = getattr(self.app, "_plug_ctl", None)
         busy = getattr(self.app, "_plug_busy", "") or ""
-        shown = ctl is not None and ctl.is_visible
-        auto_on = ctl is not None and bool(getattr(ctl, "auto", False))
+        ctls = getattr(self.app, "_plug_ctls", {}) or {}
 
         y = self._eyebrow(v, x, y, "PLUGIN MARKET / 05")
         y = self._page_head(v, x, w, y, "插件市场",
                             "可选功能按需安装：App 本体不打包它们，点安装时才从发行源下载并校验。",
                             "检查更新", "onMarketCheck:")
 
-        card_h = 152
-        self._card(v, y, card_h, x, w)
-        px, pw = x + 24, w - 48
-        self.c["mk_name"] = _label("屏幕键盘 · TouchKeys", self._r(px, y + 20, pw - 190, 20),
-                                   size=15, bold=True)
-        v.addSubview_(self.c["mk_name"])
+        for meta in PLUG.registry():
+            pid = meta["id"]
+            rec = PLUG.installed(pid)
+            ctl = ctls.get(pid)
+            shown = ctl is not None and bool(getattr(ctl, "is_visible", False))
+            card_h = 104.0
+            self._card(v, y, card_h, x, w)
 
-        if busy == "check":
-            st, col = "正在检查更新…", _color("secondaryLabelColor")
-        elif busy == "install":
-            st, col = "正在安装…", brand_color()
-        elif rec:
-            st, col = "已安装 %s" % rec.get("version", "?"), _color("systemGreenColor")
-        else:
-            st, col = "未安装", _color("secondaryLabelColor")
-        self.c["mk_state"] = _label(st, self._r(x + w - 24 - 180, y + 22, 180, 18),
-                                    size=12, color=col, right=True)
-        v.addSubview_(self.c["mk_state"])
+            icon = self._plugin_icon(pid, 64.0)
+            if icon is not None:
+                icon.setFrame_(self._r(x + 20, y + 20, 64, 64))
+                v.addSubview_(icon)
 
-        self.c["mk_desc"] = _label("触屏副屏用的浮动键盘：点按合成真实按键，支持中英切换与焦点跟随。",
-                                   self._r(px, y + 48, pw, 17), size=12, dim=True)
-        v.addSubview_(self.c["mk_desc"])
-        src = "来源 %s · 安装前校验发版正文里的 SHA256" % PLUG.REPO
-        self.c["mk_src"] = _label(src, self._r(px, y + 72, pw, 15), size=11, dim=True)
-        v.addSubview_(self.c["mk_src"])
+            tx = x + 20 + 64 + 16
+            tw = x + w - 20 - tx
 
-        by = y + 104
-        if rec:
-            self.c["mk_main"] = _button("收起键盘" if shown else "显示键盘",
-                                        self._r(px, by, 108, 28), self, "onMarketToggle:")
-        else:
-            self.c["mk_main"] = _button("安装…", self._r(px, by, 108, 28), self, "onMarketInstall:")
-        v.addSubview_(self.c["mk_main"])
+            v.addSubview_(_label("%s · %s" % (meta["name"], meta["brand"]),
+                                 self._r(tx, y + 14, tw - 150, 20), size=15, bold=True))
 
-        if rec:
-            self.c["mk_uninstall"] = _button("卸载…", self._r(px + 116, by, 84, 28),
-                                             self, "onMarketUninstall:")
-            v.addSubview_(self.c["mk_uninstall"])
-            self.c["mk_auto"] = _button("自动跟随输入框", self._r(px + 208, by, 138, 28),
-                                        self, "onMarketAuto:", switch=True, state=auto_on)
-            self.c["mk_auto"].setEnabled_(True)
-            v.addSubview_(self.c["mk_auto"])
+            if busy == "check":
+                st, col = "正在检查…", _color("secondaryLabelColor")
+            elif busy == "install":
+                st, col = "正在安装…", brand_color()
+            elif rec:
+                st, col = "已安装 %s" % rec.get("version", "?"), _color("systemGreenColor")
+            else:
+                st, col = "未安装", _color("secondaryLabelColor")
+            v.addSubview_(_label(st, self._r(x + w - 20 - 150, y + 16, 150, 18),
+                                 size=12, color=col, right=True))
 
-        self.c["mk_open"] = _button("发行页 ↗", self._r(x + w - 24 - 92, by, 92, 28),
-                                    self, "onMarketOpen:")
-        v.addSubview_(self.c["mk_open"])
+            v.addSubview_(_label(meta["blurb"], self._r(tx, y + 38, tw, 16), size=11, dim=True))
+            v.addSubview_(_label("来源 %s · 安装前校验发版正文里的 SHA256" % meta["repo"],
+                                 self._r(tx, y + 57, tw, 14), size=10, dim=True))
 
-        y += card_h + 26
+            by = y + 72
+            if rec:
+                self.c["mk_%s_main" % pid] = _button(
+                    "收起" if shown else "显示", self._r(tx, by, 84, 26), self, "onMarketTogglePid:")
+                self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
+                v.addSubview_(self.c["mk_%s_main" % pid])
+                self.c["mk_%s_del" % pid] = _button(
+                    "卸载…", self._r(tx + 92, by, 84, 26), self, "onMarketUninstallPid:")
+                self.c["mk_%s_del" % pid].setRepresentedObject_(pid)
+                v.addSubview_(self.c["mk_%s_del" % pid])
+            else:
+                self.c["mk_%s_main" % pid] = _button(
+                    "安装…", self._r(tx, by, 96, 26), self, "onMarketInstallPid:")
+                self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
+                v.addSubview_(self.c["mk_%s_main" % pid])
+
+            self.c["mk_%s_open" % pid] = _button(
+                "发行页 ↗", self._r(x + w - 20 - 92, by, 92, 26), self, "onMarketOpenPid:")
+            self.c["mk_%s_open" % pid].setRepresentedObject_(pid)
+            v.addSubview_(self.c["mk_%s_open" % pid])
+
+            y += card_h + 10
+
+        y += 8
         v.addSubview_(_label("插件机制", self._r(x, y, w, 18), size=13, bold=True))
         y += 24
         v.addSubview_(_label("· 安装包从 GitHub Release 现场下载，校验通过才落到本机；卸载会删除插件目录。",
@@ -1959,6 +1988,24 @@ class SettingsWindow(_Pane):
 
     # ---------------- 交互: 切页 / 外观 / 详情 / 提示条 ----------------
     # ---------------- 插件市场 ----------------
+    def onMarketInstallPid_(self, sender):
+        self.app.actPluginInstall_(sender.representedObject())
+        self._market_later_()
+
+    def onMarketTogglePid_(self, sender):
+        self.app.actPluginToggle_(sender.representedObject())
+        self._market_later_()
+
+    def onMarketUninstallPid_(self, sender):
+        self.app.actPluginUninstall_(sender.representedObject())
+        self._market_later_()
+
+    def onMarketOpenPid_(self, sender):
+        import dptouch_plugin as PLUG
+        from Foundation import NSURL
+        NSWorkspace.sharedWorkspace().openURL_(
+            NSURL.URLWithString_(PLUG.releases_page(sender.representedObject())))
+
     def onMarketInstall_(self, sender):
         self.app.actKeyboardPlugin_(None)
         self._market_later_()
