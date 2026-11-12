@@ -24,6 +24,7 @@ OUT = os.path.join(ROOT, "src", "plugin_icons.py")
 
 W, H = 192, 128
 PAD = 8
+SCALE = 3                      # 放大预览用 576×384
 
 SPECS = {
     "touchkeys": {"file": "touchkeys.png", "mode": "fit", "pad": 4,
@@ -34,14 +35,16 @@ SPECS = {
 }
 
 
-def render(spec):
+def render(spec, scale=1):
+    W, H = 192 * scale, 128 * scale
+    PAD = 8 * scale
     rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
         None, W, H, 8, 4, True, False, NSDeviceRGBColorSpace, 0, 0)
     ctx = NSGraphicsContext.graphicsContextWithBitmapImageRep_(rep)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.setCurrentContext_(ctx)
 
-    bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(0, 0, W, H), 14, 14)
+    bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(0, 0, W, H), 14 * scale, 14 * scale)
     r, g, b, a = spec["bg"]
     NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, a).set()
     bg.fill()
@@ -84,12 +87,20 @@ def render(spec):
 
 
 def main():
-    icons = {k: render(v) for k, v in SPECS.items()}
+    icons = {k: render(v, 1) for k, v in SPECS.items()}
+    large = {k: render(v, SCALE) for k, v in SPECS.items()}
     with open(OUT, "w", encoding="utf-8") as f:
         f.write('#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n')
         f.write('"""插件市场预览图（192×128 PNG, base64）。由 tools/make_plugin_icons.py 生成，勿手改。"""\n\n')
         f.write("ICONS = {\n")
         for k, v in icons.items():
+            f.write('    "%s": (\n' % k)
+            for i in range(0, len(v), 76):
+                f.write('        "%s"\n' % v[i:i + 76])
+            f.write("    ),\n")
+        f.write("}\n\n")
+        f.write("LARGE = {\n")
+        for k, v in large.items():
             f.write('    "%s": (\n' % k)
             for i in range(0, len(v), 76):
                 f.write('        "%s"\n' % v[i:i + 76])

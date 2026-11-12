@@ -1848,10 +1848,16 @@ class SettingsWindow(_Pane):
             if raw:
                 img = NSImage.alloc().initWithData_(base64.b64decode(raw))
                 if img is not None:
-                    iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
-                    iv.setImage_(img)
-                    iv.setImageScaling_(3)      # 3 = 按比例填满
-                    return iv
+                    b = _FirstMouseButton.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+                    b.setImage_(img)
+                    b.setImagePosition_(1)      # 只显示图片
+                    b.setBordered_(False)
+                    b.setTitle_("")
+                    b.setToolTip_("点击放大预览")
+                    b.setTarget_(self)
+                    b.setAction_("onPluginPreview:")
+                    b.setRepresentedObject_(pid)
+                    return b
         except Exception:
             pass
         try:
@@ -1989,6 +1995,29 @@ class SettingsWindow(_Pane):
 
     # ---------------- 交互: 切页 / 外观 / 详情 / 提示条 ----------------
     # ---------------- 插件市场 ----------------
+    def onPluginPreview_(self, sender):
+        import base64
+        import plugin_icons
+        pid = sender.representedObject()
+        raw = plugin_icons.LARGE.get(pid)
+        if not raw:
+            return
+        img = NSImage.alloc().initWithData_(base64.b64decode(raw))
+        if img is None:
+            return
+        w, h = img.size().width, img.size().height
+        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, w, h),
+            NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
+            NSBackingStoreBuffered, False)
+        win.setTitle_("插件预览")
+        iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+        iv.setImage_(img)
+        win.setContentView_(iv)
+        win.center()
+        win.makeKeyAndOrderFront_(None)
+        self._preview_win = win
+
     def onMarketInstallPid_(self, sender):
         self.app.actPluginInstall_(sender.representedObject())
         self._market_later_()
