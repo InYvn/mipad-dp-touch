@@ -1920,8 +1920,12 @@ class SettingsWindow(_Pane):
                     "收起" if shown else "显示", self._r(tx, by, 84, 26), self, "onMarketTogglePid:")
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
+                self.c["mk_%s_upd" % pid] = _button(
+                    "更新…", self._r(tx + 92, by, 84, 26), self, "onMarketUpdatePid:")
+                self.c["mk_%s_upd" % pid].setRepresentedObject_(pid)
+                v.addSubview_(self.c["mk_%s_upd" % pid])
                 self.c["mk_%s_del" % pid] = _button(
-                    "卸载…", self._r(tx + 92, by, 84, 26), self, "onMarketUninstallPid:")
+                    "卸载…", self._r(tx + 184, by, 84, 26), self, "onMarketUninstallPid:")
                 self.c["mk_%s_del" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_del" % pid])
             else:
@@ -2021,6 +2025,10 @@ class SettingsWindow(_Pane):
 
     def onMarketInstallPid_(self, sender):
         self.app.actPluginInstall_(sender.representedObject())
+        self._market_later_()
+
+    def onMarketUpdatePid_(self, sender):
+        self.app.actPluginUpdate_(sender.representedObject())
         self._market_later_()
 
     def onMarketTogglePid_(self, sender):

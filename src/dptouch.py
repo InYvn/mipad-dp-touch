@@ -2610,6 +2610,10 @@ class DPApp(NSObject):
             pass
         threading.Thread(target=self._plug_worker_check, args=(pid,), daemon=True).start()
 
+    def actPluginUpdate_(self, pid):
+        """检查该插件是否有新版；有就走安装流程，没有就提示已是最新。"""
+        self.actPluginInstall_(pid)
+
     def actPluginUninstall_(self, pid):
         if not pid or self._plug_busy:
             return
