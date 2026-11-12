@@ -19,7 +19,8 @@
 - 原生 controller 的 flock 序列化 staging、guardian、worker；常驻 monitor 自动重建 supervisor。没有固定 HAL PID、临时 owner 路径、外部试验目录或试验截止时间依赖。
 - 完整包 `files.sha256`、管理器保留输入 `installed.sha256`、持久运行时 `runtime.sha256` 分别验完整性；管理器可删除 customize/README 而不破坏启动。
 - 自有 `/dev` tmpfs backing 使用精确已验证标签；write-ahead journal 留在 `/data/adb/mipad_fullsplit_local`。不改原 sysfs 标签、不放宽 SELinux。
-- 按真实原厂 Binder 生命周期 `release → stop → quiesce → candidate → persistent prepare` 重建 gadget：stop 后有界等待 init 确认停止、hidg 消失与静默窗口，再挂 SVID 并 launch；HAL 被重新拉起即中止接管并恢复 stock。恢复时必要的 `prepare → release → prepare` 由持续客户端完成，不写 UDC/configfs。
+- 按真实原厂 Binder 生命周期 `release → stop → quiesce → candidate → persistent prepare` 重建 gadget：stop 后先有界等待 init 确认停止与旧 PID 消失（hidg 节点消失只做 grace 观察，不阻断），再经静默窗口后挂 SVID 并 launch；HAL 被重新拉起即中止接管并恢复 stock。恢复时必要的 `prepare → release → prepare` 由持续客户端完成，不写 UDC/configfs。
+- recover 安全边界（2.1.5，依据 2026-11-13 00:54 真机证据）：跨 boot 的 stale pending/journal 直接清理且不触碰 HAL/SVID/owner；已认证的健康 candidate 是 no-op（不 release/terminate/rebuild）；owner-rebuild 对健康会话跳过并按 30s 窗口节流，避免每 tick 触发 OEM HAL releaseGadget 拆 gadget。
 - 核对真实 HAL 的 PID/starttime/exe、域、uid/gid/groups、AT_SECURE=0、精确可执行 DSO mapping、双 hidg、活 pidfd owner 和 descriptor。新 owner 真正接管后才退休旧自有 owner；已删除 exe 的完整身份字符串仍严格保留。
 - 崩溃、disable/remove 走同一恢复事务。禁用/卸载后不再启动 sender；原厂 HAL 仍依赖自有 prepare client 时保留最小恢复监控，直到系统 owner 接管。不要删除活动 owner 所依赖的持久目录。
 

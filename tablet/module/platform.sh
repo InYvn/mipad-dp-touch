@@ -247,8 +247,74 @@ handover_abort() { # reason svid_applied launched detail
  log "HANDOVER_ABORT reason=$_reason detail=$_detail svid_rollback=$_svid launched=$_launched pending=retained"
  return 0
 }
+# --- 2.1.5 T1 evidence: recover() must never tear down a live session -------
+# INCIDENT-0054 (2026-11-13 00:54): with a stale pending journal from a previous
+# boot, recover()'s new-boot branch dropped candidate/candidate-owner/
+# recovery-owner but kept `pending`, then still ran svid disable / HAL start /
+# baseline / owner-rebuild. The owner-rebuild drives the OEM HAL AIDL
+# prepareGadget()/releaseGadget(), which tore the USB gadget down on every
+# 8s tick (host removed the device; cold reboot ~01:01). A second, healthy
+# session had the same signature (two `recovery begin` after `candidate ready`).
+# Three guards below: cross-boot journals are discarded without touching
+# HAL/SVID/owner; a healthy journaled candidate is a no-op; owner-rebuild is
+# skipped for healthy candidates and throttled to one attempt per 30s window.
+candidate_healthy() {
+ [ -f "$S/candidate" ] && [ ! -L "$S/candidate" ] &&
+  "$T" same "$S/candidate" >/dev/null 2>&1 &&
+  "$T" verify "$S/candidate" "$S/candidate-owner" hooked "$DSO" >/dev/null 2>&1
+}
+# An owner-rebuild is the only recover() step that makes the OEM HAL release the
+# gadget. One attempt per boot per window; repeats are logged and fail closed
+# instead of hammering the HAL every tick.
+OWNER_REBUILD_WINDOW=30
+owner_rebuild_allowed() {
+ _stamp=$S/owner-rebuild.stamp
+ _now=$(date +%s)
+ if [ -f "$_stamp" ] && [ ! -L "$_stamp" ]; then
+  _sboot=; _ssec=0
+  { IFS= read -r _sboot || true; IFS= read -r _ssec || true; } < "$_stamp"
+  case "$_ssec" in ''|*[!0-9]*) _ssec=0;; esac
+  if [ "$_sboot" = "$(boot)" ] && [ $((_now - _ssec)) -lt "$OWNER_REBUILD_WINDOW" ]; then
+   return 1
+  fi
+ fi
+ printf '%s\n%s\n' "$(boot)" "$_now" > "$_stamp.new" && mv "$_stamp.new" "$_stamp" && sync || return 1
+ return 0
+}
 recover() {
  [ -e "$S/pending" ] || [ -f "$S/recovery-owner" ] || return 0
+ # 2.1.5 T1 fix: a journal from a previous boot describes identities that are
+ # void now. Drop the whole stale set and return without any HAL/SVID/owner
+ # action. (The 2.1.4 new-boot branch did exactly the teardown that rebooted
+ # the device.) A stale owner-boot with no pending is handled the same way.
+ _curboot=$(boot)
+ _stale=0
+ _journal_boot=
+ if [ -e "$S/pending" ]; then
+  _journal_boot=$(cat "$S/pending" 2>/dev/null) || _journal_boot=
+  [ "$_journal_boot" = "$_curboot" ] || _stale=1
+ elif [ -f "$S/owner-boot" ] && [ ! -L "$S/owner-boot" ]; then
+  _journal_boot=$(cat "$S/owner-boot" 2>/dev/null) || _journal_boot=
+  [ "$_journal_boot" = "$_curboot" ] || _stale=1
+ fi
+ if [ "$_stale" = 1 ]; then
+  rm -f "$S/pending" "$S/pending.new" \
+        "$S/candidate" "$S/candidate.new" \
+        "$S/candidate-owner" "$S/candidate-owner.new" \
+        "$S/recovery-owner" "$S/recovery-owner-replacement" \
+        "$S/recovery-owner-replacement.new" "$S/owner-boot"
+  sync
+  log "RECOVER_STALE_BOOT_CLEANED journal_boot=$_journal_boot current_boot=$_curboot detail=no HAL/SVID/owner action"
+  return 0
+ fi
+ # 2.1.5 T1 fix: a candidate that still authenticates as our hooked HAL is a
+ # live DP session, not a recovery target. Never release/terminate/rebuild it.
+ # Only trust this while the module itself is enabled: disable/remove must be
+ # allowed to restore the stock owner.
+ if [ -d "$M" ] && [ ! -e "$M/disable" ] && [ ! -e "$M/remove" ] && candidate_healthy; then
+  log 'RECOVER_HEALTHY_NOOP candidate still authenticates as hooked HAL; no release/terminate/rebuild'
+  return 0
+ fi
  # Probe BEFORE candidate termination, SVID changes or owner replacement.
  if [ -e "$S/pending" ]; then oldboot=$(cat "$S/pending"); else oldboot=$(cat "$S/owner-boot"); fi
  if [ "$oldboot" = "$(boot)" ]; then
@@ -308,9 +374,19 @@ recover() {
      wait_verify "$S/hal" "$S/recovery-owner" original; then
    :
   else
+   # 2.1.5 T1 fix: never drive an owner-rebuild over a live hooked candidate,
+   # and never repeat the releaseGadget-triggering rebuild every tick.
+   if candidate_healthy; then
+    log 'RECOVER_HEALTHY_NOOP candidate still authenticates as hooked HAL; owner-rebuild skipped'
+    return 0
+   fi
    replacement=$S/recovery-owner-replacement
    if [ -f "$replacement" ]; then "$T" terminate "$replacement" || return 1; fi
    rm -f "$replacement" "$replacement.new"
+   if ! owner_rebuild_allowed; then
+    log "OWNER_REBUILD_THROTTLED window=${OWNER_REBUILD_WINDOW}s; no HAL action; pending retained"
+    return 1
+   fi
    boot > "$S/owner-boot"; sync
    launch_owner "$replacement" owner-rebuild || return 1
    wait_verify "$S/hal" "$replacement" original || return 1
@@ -368,20 +444,22 @@ reconcile() {
  # mount -> unique-absence check -> candidate launch. See the block comment on
  # handover_abort() for why the SVID mount moved behind the stop.
  ht_stop=$(handover_tenths "${MIPAD_DP_HANDOVER_STOP_MS:-}" 4000 5000)
+ ht_hidg=$(handover_tenths "${MIPAD_DP_HANDOVER_HIDG_MS:-}" 500 1000)
  ht_quiet=$(handover_tenths "${MIPAD_DP_HANDOVER_QUIET_MS:-}" 800 2000)
  ht_total=$(handover_tenths "${MIPAD_DP_HANDOVER_TOTAL_MS:-}" 8000 8000)
- [ $((ht_stop + ht_quiet)) -le "$ht_total" ] || ht_total=$((ht_stop + ht_quiet))
+ [ $((ht_stop + ht_hidg + ht_quiet)) -le "$ht_total" ] || ht_total=$((ht_stop + ht_hidg + ht_quiet))
  hticks=0
  svc=unknown
- log "HANDOVER_START stop_tenths=$ht_stop quiet_tenths=$ht_quiet total_tenths=$ht_total"
+ log "HANDOVER_START stop_tenths=$ht_stop hidg_tenths=$ht_hidg quiet_tenths=$ht_quiet total_tenths=$ht_total"
  if ! setprop ctl.stop vendor.usb.dp.hal; then
   handover_abort stop_rejected 0 0 ctl_stop
   return 1
  fi
- # Bounded stop wait: init must report stopped, the authenticated old PID must
- # be gone and both hidg endpoints must disappear. A HAL that comes back after
- # the stop was acknowledged is a restart, not a slow teardown: abort once,
- # never issue a second stop.
+ # Bounded stop wait. Hard quiescence conditions: init reports the service
+ # stopped and the authenticated old PID is gone. A HAL that comes back after
+ # it was seen stopped is a restart, not a slow teardown: abort once, never
+ # issue a second stop. (2.1.5 T1 fix: hidg node existence is NOT a hard
+ # condition here; see the grace below.)
  stop_seen=0
  stop_ok=0
  ht_limit=$ht_stop
@@ -396,7 +474,7 @@ reconcile() {
      return 1
     fi;;
   esac
-  if [ "$stop_seen" = 1 ] && [ ! -e /dev/hidg0 ] && [ ! -e /dev/hidg1 ] && "$T" gone "$S/hal"; then
+  if [ "$stop_seen" = 1 ] && "$T" gone "$S/hal"; then
    stop_ok=1
    break
   fi
@@ -409,10 +487,39 @@ reconcile() {
   handover_abort stop_timeout 0 0 "svc=$svc,hidg0=$hidg0,hidg1=$hidg1"
   return 1
  fi
+ # 2.1.5 T1 fix: hidg character nodes belong to the bound gadget function, not
+ # to the HAL process, and have been observed to outlive a stopped HAL
+ # (11-12 13:12: hidg1 inode 1999 from 12:41 while init.svc=stopped).
+ # Waiting for them as a hard condition made the take-over fail-closed on
+ # devices where they merely persist. Give them a bounded grace: disappearance
+ # is logged as tidiness, persistence is logged and does NOT abort.
+ hidg_gone=0
+ [ -e /dev/hidg0 ] || [ -e /dev/hidg1 ] || hidg_gone=1
+ ht_limit=$ht_hidg
+ [ "$ht_limit" -le "$((ht_total - hticks))" ] || ht_limit=$((ht_total - hticks))
+ gticks=0
+ while [ "$gticks" -lt "$ht_limit" ] && [ "$hidg_gone" = 0 ]; do
+  svc=$(getprop init.svc.vendor.usb.dp.hal) || svc=unknown
+  if [ "$svc" = running ]; then
+   handover_abort hal_restarted 0 0 init.svc=running-during-hidg-grace
+   return 1
+  fi
+  sleep 0.1
+  gticks=$((gticks + 1))
+  hticks=$((hticks + 1))
+  if [ ! -e /dev/hidg0 ] && [ ! -e /dev/hidg1 ]; then hidg_gone=1; fi
+ done
+ hidg0=present; [ -e /dev/hidg0 ] || hidg0=gone
+ hidg1=present; [ -e /dev/hidg1 ] || hidg1=gone
+ if [ "$hidg_gone" = 1 ]; then
+  log "HANDOVER_HIDG_GONE after_tenths=$gticks"
+ else
+  log "HANDOVER_HIDG_RETAINED hidg0=$hidg0 hidg1=$hidg1 after_grace_tenths=$gticks hard=init.svc=stopped+pid-gone detail=log-only; continuing"
+ fi
  # Quiet window: hold the quiescent state for a bounded interval so init's
  # post-stop teardown and the USB controller deconfiguration settle before
  # the SVID mount and the candidate exec (0.1s granularity). The whole
- # stop+quiet pre-launch window stays inside the total cap.
+ # stop+hidg-grace+quiet pre-launch window stays inside the total cap.
  ht_limit=$ht_quiet
  [ "$ht_limit" -le "$((ht_total - hticks))" ] || ht_limit=$((ht_total - hticks))
  qticks=0
@@ -426,9 +533,11 @@ reconcile() {
   qticks=$((qticks + 1))
   hticks=$((hticks + 1))
  done
- # A gadget that reappeared in the quiet window means something reconfigured
- # USB after init claimed the service stopped: treat it exactly like a restart.
- if [ -e /dev/hidg0 ] || [ -e /dev/hidg1 ]; then
+ # A hidg endpoint that had disappeared and then reappeared means something
+ # reconfigured USB after init claimed the service stopped: treat it like a
+ # restart. Persistently present endpoints (hidg_gone=0) are the known log-only
+ # residue and are not treated as a restart.
+ if [ "$hidg_gone" = 1 ] && { [ -e /dev/hidg0 ] || [ -e /dev/hidg1 ]; }; then
   handover_abort hal_restarted 0 0 hidg_reappeared
   return 1
  fi
@@ -476,7 +585,7 @@ reconcile() {
   "$T" terminate "$S/recovery-owner" || return 1
   rm -f "$S/recovery-owner" "$S/owner-boot"
  fi
- log "HANDOVER_DONE stop_tenths=$ht_stop quiet_tenths=$ht_quiet elapsed_tenths=$hticks"
+ log "HANDOVER_DONE stop_tenths=$ht_stop hidg_tenths=$ht_hidg quiet_tenths=$ht_quiet elapsed_tenths=$hticks"
  log 'candidate ready; dynamic PID+starttime, HAL domain, AT_SECURE=0, DSO maps, two FDs and live prepare owner verified'
 }
 guard || { log 'profile/domain/namespace guard rejected; no mutation'; exit 70; }
