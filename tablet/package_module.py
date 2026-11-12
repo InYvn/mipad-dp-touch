@@ -8,10 +8,10 @@ import zipfile
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / 'module'
-NAME = 'mipad-dp-touch-module-v2.1.7-os4.0.16.zip'
+NAME = 'mipad-dp-touch-module-v2.1.8-os4.0.16.zip'
 # Pinned after the deterministic build; --expect overrides it for the first
 # build / for verifying an artifact captured out of band.
-EXPECTED_SHA256 = '719275e8f3f403479195ecd3272969a2ad6ce6ffbb3a7c9c8e38ee51d52c8d11'
+EXPECTED_SHA256 = '0e0bd87371a1b717bf5e10f7c1f9d9c8779dbfef9d9f0e27c5d656b7052f807a'
 MEMBERS = [
     'module.prop', 'customize.sh', 'post-fs-data.sh', 'service.sh',
     'uninstall.sh', 'action.sh', 'profile.sh', 'common.sh', 'platform.sh',

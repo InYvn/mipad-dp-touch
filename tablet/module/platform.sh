@@ -244,6 +244,7 @@ handover_abort() { # reason svid_applied launched detail
   _n=$((_n + 1))
  done
  if [ "$_restored" = 1 ]; then _detail="$_detail,stock=restored"; else _detail="$_detail,stock=unverified"; fi
+ handover_mark abort
  log "HANDOVER_ABORT reason=$_reason detail=$_detail svid_rollback=$_svid launched=$_launched pending=retained"
  return 0
 }
@@ -412,6 +413,42 @@ recover() {
  sync
  log 'recovery verified; original identity, two hidg FDs, live pidfd owner, descriptors; owner retained'
 }
+# --- 2.1.8 release-clean: SVID rollback for the watchdog release path -------
+# 2.1.7's watchdog released the candidate and restarted the stock HAL, but the
+# fake SVID bind mount stayed behind: the stock HAL then ran while
+# /sys/.../adapter_svid read 0 instead of the original 05ac. recover() only
+# cleans SVID when a pending/recovery-owner journal exists, and watchdog_release
+# removes those journals itself, so nothing ever called svid_action disable.
+# The monitor never writes SVID/sysfs itself; it invokes this op from the same
+# pinned runtime (single owner of the mount-safety logic). Only the exact owned
+# override may be removed (remove_owned refuses foreign/changed mounts), and
+# the op verifies the mount really disappeared before reporting success: the
+# caller may only restart the stock HAL after a zero return.
+release_clean() {
+ log 'SVID_RELEASE_BEGIN'
+ rc=0
+ svid_action disable || rc=$?
+ if [ "$rc" != 0 ]; then
+  log "SVID_RELEASE_INCOMPLETE rc=$rc step=svid_action_disable"
+  return 1
+ fi
+ mid=$(entry) || mid=
+ if [ -n "$mid" ]; then
+  log 'SVID_RELEASE_INCOMPLETE rc=0 step=mount-still-present'
+  return 1
+ fi
+ if [ -e "$OWNER" ] || [ -L "$OWNER" ] || [ -e "$STATE/mount-intent" ] || [ -L "$STATE/mount-intent" ]; then
+  log 'SVID_RELEASE_INCOMPLETE rc=0 step=owner-record-remains'
+  return 1
+ fi
+ tgt=$(sha256sum "$TARGET" 2>/dev/null | cut -d ' ' -f1) || tgt=
+ if [ "$tgt" = 3d1da549cf326dddc07c8684becda1c25aa58f9306f03431fa5d4ed8a5e0a92f ]; then
+  log 'SVID_RELEASED mount=cleared target=original'
+ else
+  log "SVID_RELEASED mount=cleared target=unverified sha=$tgt"
+ fi
+ return 0
+}
 # --- 2.1.7 shared DP-in display-mode probe ---------------------------------
 # This block is byte-identical in platform.sh and runtime-monitor.sh (the
 # package check asserts equality) so the take-over gate and the watchdog use
@@ -516,6 +553,80 @@ dpin_display_mode_cached() {
  printf '%s' "$_dstate"
 }
 # --- end 2.1.7 shared DP-in display-mode probe -----------------------------
+# --- 2.1.8 take-over stability + gadget-up windows --------------------------
+# Round 2 (2026-11-13 02:13) took over ~4s after the user entered DP-in display
+# mode: the gate was active but the DPIN/USB stack was still initializing, the
+# candidate's first frames were all ESHUTDOWN and the host never enumerated the
+# gadget. Two windows harden that:
+#   * dpin_stable(): the DP-in display mode must have been continuously active
+#     for DPIN_STABLE_SECONDS (default 4, the observed safe settle) with a
+#     readable UDC in "configured" at every sample; anything else restarts the
+#     window and reconcile waits (rc 78) without any mutation.
+#   * gadget-up window: after the candidate verifies, the gadget must be
+#     enumerated (a readable UDC reaching "configured") within
+#     GADGET_UP_SECONDS (default 4); otherwise the handover aborts actively
+#     (HANDOVER_ABORT reason=gadget_never_up) instead of waiting for the 15s
+#     dp_absent window.
+DPIN_STABLE_SECONDS=${MIPAD_DP_DPIN_STABLE_SECONDS:-4}
+case "$DPIN_STABLE_SECONDS" in ''|*[!0-9]*) DPIN_STABLE_SECONDS=4;; esac
+[ "$DPIN_STABLE_SECONDS" -ge 1 ] || DPIN_STABLE_SECONDS=1
+[ "$DPIN_STABLE_SECONDS" -le 10 ] || DPIN_STABLE_SECONDS=10
+GADGET_UP_SECONDS=${MIPAD_DP_GADGET_UP_SECONDS:-4}
+case "$GADGET_UP_SECONDS" in ''|*[!0-9]*) GADGET_UP_SECONDS=4;; esac
+[ "$GADGET_UP_SECONDS" -ge 1 ] || GADGET_UP_SECONDS=1
+[ "$GADGET_UP_SECONDS" -le 10 ] || GADGET_UP_SECONDS=10
+# Any readable UDC "configured" means the host link is enumerated. The stock
+# HAL owning the link (before stop) and the launched candidate (after) both
+# report configured when their gadget is live; "not attached"/unreadable is not
+# enumeration evidence. This is deliberately local to platform.sh: the monitor
+# only needs the handover marker below for its dp_absent guard.
+udc_link_configured() {
+ _uany=0
+ for f in "${MIPAD_DP_SYSFS_ROOT:-/sys}"/class/udc/*/state; do
+  [ -r "$f" ] || continue
+  _uany=1
+  case "$(cat "$f" 2>/dev/null)" in
+   configured) printf yes; return 0;;
+  esac
+ done
+ if [ "$_uany" = 1 ]; then printf no; else printf unknown; fi
+}
+# Take-over marker consumed by the watchdog: run = sequence in progress,
+# done/abort = finished at that epoch (the watchdog suppresses dp_absent for
+# MIPAD_DP_HANDOVER_GUARD_SECONDS afterwards so USB re-enumeration is not read
+# as "DP gone").
+handover_mark() { # run|done|abort
+ printf '%s\n%s\n' "$1" "$(date +%s)" > "$S/handover.window.new" 2>/dev/null &&
+  mv "$S/handover.window.new" "$S/handover.window" 2>/dev/null || true
+}
+dpin_stable() {
+ _st=$S/dpin-active.stamp
+ _snow=$(date +%s)
+ _sboot=$(boot)
+ _ssince=0
+ _sstamp_boot=
+ if [ -f "$_st" ] && [ ! -L "$_st" ]; then
+  { IFS= read -r _sstamp_boot || true; IFS= read -r _ssince || true; } < "$_st"
+ fi
+ case "$_ssince" in ''|*[!0-9]*) _ssince=0;; esac
+ _sudc=$(udc_link_configured)
+ if [ "$_sudc" != yes ]; then
+  rm -f "$_st" "$_st.new" 2>/dev/null || true
+  log "DPIN_MODE_STABILIZING state=active udc=$_sudc elapsed=0 wait=${DPIN_STABLE_SECONDS}s; wait"
+  return 1
+ fi
+ if [ "$_sstamp_boot" != "$_sboot" ] || [ "$_ssince" = 0 ]; then
+  printf '%s\n%s\n' "$_sboot" "$_snow" > "$_st.new" 2>/dev/null &&
+   mv "$_st.new" "$_st" 2>/dev/null || true
+  log "DPIN_MODE_STABILIZING state=active udc=configured elapsed=0 wait=${DPIN_STABLE_SECONDS}s; wait"
+  return 1
+ fi
+ if [ $((_snow - _ssince)) -lt "$DPIN_STABLE_SECONDS" ]; then
+  log "DPIN_MODE_STABILIZING state=active udc=configured elapsed=$((_snow - _ssince))s wait=${DPIN_STABLE_SECONDS}s; wait"
+  return 1
+ fi
+ return 0
+}
 reconcile() {
  [ -d "$M" ] && [ ! -e "$M/disable" ] && [ ! -e "$M/remove" ] || return 1
  # 2.1.7 take-over gate: the OEM DP HAL appearing is NOT DP-in display mode.
@@ -523,6 +634,7 @@ reconcile() {
  # the miLink DP-in UI is the top resumed activity. inactive/unknown wait.
  dpin=$(dpin_display_mode_cached)
  if [ "$dpin" != active ]; then
+  rm -f "$S/dpin-active.stamp" "$S/dpin-active.stamp.new" 2>/dev/null || true
   if [ "$dpin" = unknown ]; then
    # 2.1.7: unknown is a hard fail-safe (no take-over). Record why so the
    # device runbook can distinguish "dumpsys not executable/denied" from a
@@ -534,6 +646,9 @@ reconcile() {
   log "DPIN_MODE_INACTIVE state=$dpin; wait"
   return 78
  fi
+ # 2.1.8: sustained stability gate -- never start the destructive sequence in
+ # the first seconds of DPIN entry or while the UDC link is not enumerated.
+ if ! dpin_stable; then return 78; fi
  if [ -e "$S/pending" ]; then verify_candidate || return 1; return 0; fi
  # No destructive action before dynamic baseline and an armed guardian exist.
  record_hal || return 1
@@ -555,6 +670,7 @@ reconcile() {
  fi
  descriptors_save && stage || return 1
  boot > "$S/pending.new" && mv "$S/pending.new" "$S/pending" && sync || return 1
+ handover_mark run
  # The recorded factory HAL must still be the authenticated original before
  # anything is torn down.
  "$T" same "$S/hal" && "$T" original "$S/hal" || return 1
@@ -700,6 +816,27 @@ reconcile() {
   handover_abort candidate_verify 1 1 verify_timeout
   return 1
  fi
+ # 2.1.8: the candidate verifies, but the host must actually enumerate it. A
+ # take-over inside the DPIN init window produced only ESHUTDOWN/ETIMEDOUT
+ # frames with a gadget that never came up; abort actively and roll back
+ # instead of leaving the journal for the 15s dp_absent window.
+ gticks=0
+ glimit=$((GADGET_UP_SECONDS * 10))
+ gadget_up=0
+ while [ "$gticks" -lt "$glimit" ]; do
+  if [ "$(udc_link_configured)" = yes ]; then
+   gadget_up=1
+   break
+  fi
+  sleep 0.1
+  gticks=$((gticks + 1))
+ done
+ if [ "$gadget_up" != 1 ]; then
+  handover_abort gadget_never_up 1 1 "udc_not_configured,after_tenths=$gticks"
+  return 1
+ fi
+ log "GADGET_UP after_tenths=$gticks"
+ handover_mark done
  if [ -f "$S/recovery-owner" ]; then
   [ "$(cat "$S/owner-boot")" = "$(boot)" ] || return 1
   "$T" terminate "$S/recovery-owner" || return 1
@@ -709,4 +846,4 @@ reconcile() {
  log 'candidate ready; dynamic PID+starttime, HAL domain, AT_SECURE=0, DSO maps, two FDs and live prepare owner verified'
 }
 guard || { log 'profile/domain/namespace guard rejected; no mutation'; exit 70; }
-case "$OP" in recover) recover;; reconcile) reconcile;; *) exit 64;; esac
+case "$OP" in recover) recover;; reconcile) reconcile;; release-clean) release_clean;; *) exit 64;; esac

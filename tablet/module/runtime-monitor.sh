@@ -82,8 +82,10 @@ refresh_epoch() {
 #   * A remove marker or a missing module directory is itself disabled evidence,
 #     and --release-now gives uninstall a direct, fail-closed release hook (2.1.1
 #     F4). Both reuse the same identity-bound release below; neither guesses.
-#   * Never touch recovery-owner/owner-boot/svid/init services: the normal
-#     recover/reconcile paths keep owning those.
+#   * Never write recovery-owner/owner-boot/svid/init state from this script.
+#     The SVID override is removed only through the shipped platform.sh
+#     `release-clean` op (2.1.8), which owns the mount-safety logic and
+#     verifies the bind mount is gone before the stock HAL is restarted.
 #   * Be idempotent: after a release the journals are gone, so the next sample
 #     is a no-op, and the stock HAL path is handed back so DP-in can come back
 #     through the same reconcile the module always used.
@@ -134,6 +136,14 @@ dpin_state=
 dpin_logged_state=
 dpin_last_sample=0
 dpin_lost_since=0
+# 2.1.8: dp_absent must not fire while a take-over sequence is running, or in
+# the guard window right after it finished (USB re-enumeration looks like an
+# absent link for a few seconds). platform.sh writes $S/handover.window.
+handover_guard_limit=${MIPAD_DP_HANDOVER_GUARD_SECONDS:-10}
+case "$handover_guard_limit" in ''|*[!0-9]*) handover_guard_limit=10;; esac
+if [ "$handover_guard_limit" -lt 1 ]; then handover_guard_limit=1; fi
+if [ "$handover_guard_limit" -gt 60 ]; then handover_guard_limit=60; fi
+dp_absent_suppressed=0
 wlog() { printf '%s WATCHDOG %s\n' "$(date +%s)" "$*" >> "$WLOG"; }
 # External DP-in session presence: present|absent|unknown.
 # 2.1.6: UDC wins.
@@ -440,6 +450,54 @@ restore_stock_hal() {
 # retried once per threshold window instead of on every 2s tick (no log storm,
 # no tight kill loop). Success is the only path that needs no backoff.
 reset_timers() { dp_absent_since=0; dp_disabled_since=0; dp_unverified_since=0; dp_desc_ended=0; }
+# --- 2.1.8 release cleanup: owner retirement + SVID rollback -----------------
+# A release must leave no orphan: the persistent prepare-owner client journaled
+# in $S/candidate-owner stays alive after the candidate exits (the graceful
+# helper only asks the HAL to release its gadget; it does not reap the client).
+# Terminate it identity-bound, bounded, before journals are dropped.
+release_owner() { # reason -> 0 when no journaled owner remains live
+ reason=$1
+ if [ ! -f "$S/candidate-owner" ]; then return 0; fi
+ if ! "$T" same "$S/candidate-owner" >/dev/null 2>&1; then
+  wlog "RELEASE_OWNER_STALE reason=$reason"
+  return 0
+ fi
+ if ! "$T" terminate "$S/candidate-owner" >/dev/null 2>&1; then
+  wlog "RELEASE_OWNER_TERMINATE_FAILED reason=$reason"
+  return 1
+ fi
+ n=0
+ while [ "$n" -lt 50 ]; do
+  "$T" same "$S/candidate-owner" >/dev/null 2>&1 || break
+  sleep 0.1
+  n=$((n+1))
+ done
+ if "$T" same "$S/candidate-owner" >/dev/null 2>&1; then
+  wlog "RELEASE_OWNER_TERMINATE_TIMEOUT reason=$reason"
+  return 1
+ fi
+ wlog "RELEASE_OWNER_TERMINATED reason=$reason"
+ return 0
+}
+# 2.1.8: remove the fake SVID bind mount BEFORE the stock HAL may run again.
+# The mount logic lives in platform.sh (pinned runtime) and is not duplicated
+# here: the op refuses foreign/changed mounts and verifies the mount and owner
+# record are gone. The watchdog never writes sysfs itself.
+release_svid_override() { # reason -> 0 only when the override is provably gone
+ reason=$1
+ if [ ! -f "$S/platform.sh" ] || [ -L "$S/platform.sh" ]; then
+  wlog "SVID_RELEASE_SKIPPED reason=$reason detail=platform.sh-missing"
+  return 1
+ fi
+ rc=0
+ sh "$S/platform.sh" release-clean "$S" "$M" >> "$WLOG" 2>&1 || rc=$?
+ if [ "$rc" != 0 ]; then
+  wlog "SVID_RELEASE_FAILED reason=$reason rc=$rc"
+  return 1
+ fi
+ wlog "SVID_RELEASE_OK reason=$reason"
+ return 0
+}
 # The only release path. Caller has already decided the session is over; this
 # function re-proves the identity from the journal before any signal and is
 # safe to call repeatedly (a stale/absent journal only ever cleans journals it
@@ -449,10 +507,17 @@ watchdog_release() {
  cand=$S/candidate
  if [ ! -e "$cand" ]; then
   if [ "$reason" = dp_absent ] && { [ -e "$S/pending" ] || [ -e "$S/candidate-owner" ] || [ -e "$S/candidate.new" ] || [ -e "$S/candidate-owner.new" ]; }; then
+   # 2.1.8: a leaked SVID override / prepare-owner from an earlier release is
+   # cleaned here too (same order: owner, SVID, journals), then stock HAL.
+   owner_ok=0
+   if release_owner "$reason"; then owner_ok=1; fi
+   svid_ok=0
+   if release_svid_override "$reason"; then svid_ok=1; fi
    rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" "$S/candidate-owner.new"
    sync 2>/dev/null || true
-   wlog "CLEANED reason=$reason detail=no-candidate-journal"
+   wlog "CLEANED reason=$reason detail=no-candidate-journal svid=$svid_ok owner=$owner_ok"
    reset_timers
+   if [ "$svid_ok" = 1 ]; then restore_stock_hal "$reason"; else wlog "STOCK_HAL_DEFERRED reason=$reason detail=cleanup-incomplete"; fi
   fi
   return 0
  fi
@@ -460,10 +525,15 @@ watchdog_release() {
   # Not the journaled live candidate: never signal it. Only drop records that
   # platform-tool proves are dead (exited or starttime changed).
   if "$T" gone "$cand" >/dev/null 2>&1; then
+   owner_ok=0
+   if release_owner "$reason"; then owner_ok=1; fi
+   svid_ok=0
+   if release_svid_override "$reason"; then svid_ok=1; fi
    rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" "$S/candidate-owner.new"
    sync 2>/dev/null || true
-   wlog "CLEANED reason=$reason detail=stale-candidate-journal"
+   wlog "CLEANED reason=$reason detail=stale-candidate-journal svid=$svid_ok owner=$owner_ok"
    reset_timers
+   if [ "$svid_ok" = 1 ]; then restore_stock_hal "$reason"; else wlog "STOCK_HAL_DEFERRED reason=$reason detail=cleanup-incomplete"; fi
   else
    wlog "REFUSED reason=$reason detail=candidate-not-live-not-provably-gone"
    reset_timers
@@ -483,11 +553,31 @@ watchdog_release() {
   n=$((n+1))
  done
  if "$T" same "$cand" >/dev/null 2>&1; then wlog "TERMINATE_TIMEOUT reason=$reason"; reset_timers; return 0; fi
- rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" "$S/candidate-owner.new"
- sync 2>/dev/null || true
- wlog "RELEASED reason=$reason candidate=journaled grab=released"
- reset_timers
- restore_stock_hal "$reason"
+ # 2.1.8: retire the journaled prepare-owner client (orphan PID after 2.1.7)
+ # and roll the fake SVID override back BEFORE the stock HAL is restarted, so
+ # the stock HAL never runs against adapter_svid=0. Fail-closed: an incomplete
+ # cleanup keeps the pending journal for recover() and defers the stock HAL.
+ owner_ok=0
+ if release_owner "$reason"; then owner_ok=1; fi
+ svid_ok=0
+ if release_svid_override "$reason"; then svid_ok=1; fi
+ rm -f "$S/candidate" "$S/candidate.new"
+ if [ "$owner_ok" = 1 ]; then
+  rm -f "$S/candidate-owner" "$S/candidate-owner.new"
+ fi
+ if [ "$svid_ok" = 1 ] && [ "$owner_ok" = 1 ]; then
+  rm -f "$S/pending" "$S/pending.new"
+  sync 2>/dev/null || true
+  wlog "RELEASED reason=$reason candidate=journaled grab=released svid=restored owner=retired"
+  reset_timers
+  restore_stock_hal "$reason"
+ else
+  sync 2>/dev/null || true
+  wlog "RELEASED reason=$reason candidate=journaled grab=released svid=$svid_ok owner=$owner_ok"
+  wlog "CLEANUP_INCOMPLETE reason=$reason svid=$svid_ok owner=$owner_ok pending=retained"
+  wlog "STOCK_HAL_DEFERRED reason=$reason detail=cleanup-incomplete"
+  reset_timers
+ fi
 }
 # F4: deterministic uninstall hook. Runs even with the watchdog disabled and
 # bypasses the controller (uninstall may hold the monitor lock). The release
@@ -585,6 +675,32 @@ watchdog_tick() {
   if [ "$dp_absent_since" = 0 ]; then dp_absent_since=$now; fi
  else
   dp_absent_since=0
+ fi
+ # 2.1.8: suppress/reset dp_absent inside a take-over window. The marker is
+ # written by platform.sh: run = handover running, done/abort = finished at the
+ # recorded epoch. Only dp_absent is gated; session_lost/module_disabled keep
+ # their own evidence.
+ hphase=
+ hwhen=0
+ if [ -f "$S/handover.window" ] && [ ! -L "$S/handover.window" ]; then
+  { IFS= read -r hphase || true; IFS= read -r hwhen || true; } < "$S/handover.window"
+  case "$hwhen" in ''|*[!0-9]*) hwhen=0;; esac
+ fi
+ suppress=0
+ if [ "$hphase" = run ]; then
+  suppress=1
+ elif { [ "$hphase" = done ] || [ "$hphase" = abort ]; } && [ "$hwhen" -gt 0 ] &&
+      [ $((now - hwhen)) -ge 0 ] && [ $((now - hwhen)) -lt "$handover_guard_limit" ]; then
+  suppress=1
+ fi
+ if [ "$suppress" = 1 ]; then
+  if [ "$dp_absent_suppressed" = 0 ]; then
+   wlog "PROBE dp_absent=suppressed reason=handover_window phase=$hphase state=$st"
+  fi
+  dp_absent_since=0
+  dp_absent_suppressed=1
+ else
+  dp_absent_suppressed=0
  fi
  if [ -e "$M/disable" ] || [ -e "$M/remove" ] || [ ! -d "$M" ]; then
   if [ "$dp_disabled_since" = 0 ]; then dp_disabled_since=$now; fi
