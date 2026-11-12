@@ -1983,20 +1983,20 @@ class SettingsWindow(_Pane):
         v.addSubview_(_line_view(self._r(x, y, w, 1)))
         y += 1
         v.addSubview_(_label("触控屏接口", self._r(x, y + 16, 300, 18), size=13, bold=True))
-        self.c["diag_touch"] = _label("", self._r(x, y + 36, 420, 15), size=11, dim=True)
+        self.c["diag_touch"] = _label("", self._r(x, y + 36, 310, 15), size=11, dim=True)
         v.addSubview_(self.c["diag_touch"])
         _viz_on = bool(getattr(self.app, "_viz", None) is not None and self.app._viz.is_on)
-        v.addSubview_(_label("触控可视化", self._r(x + w - 36 - 96, y + 23, 90, 18),
+        v.addSubview_(_label("触控可视化", self._r(x + w - 36 - 96, y + 17, 90, 18),
                              size=13, bold=True, right=True))
-        self.c["viz"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 20, 36, 22))
+        self.c["viz"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 14, 36, 22))
         self.c["viz"].setBordered_(False)
         self.c["viz"].setTitle_("")
         self.c["viz"].setState_(1 if _viz_on else 0)
         self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点")
         self.c["viz"].setAccessibilityLabel_("触控可视化")
-        v.addSubview_(_label("覆盖层在所有窗口之上显示（含本应用）",
-                             self._r(x + w - 214, y + 44, 208, 14),
-                             size=10.5, dim=True, right=True))
+        v.addSubview_(_label("由于本应用与覆盖层共用主线程，本应用内轨迹可能滞后；切到其他应用正常",
+                             self._r(x + 320, y + 40, w - 320, 15),
+                             size=10, dim=True, right=True))
         self.c["viz"].setTarget_(self)
         self.c["viz"].setAction_("onTouchViz:")
         v.addSubview_(self.c["viz"])
