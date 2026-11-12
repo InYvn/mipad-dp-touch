@@ -566,8 +566,20 @@ class Engine(object):
         return resolve(self.cfg.get("touch_mode", "auto"), self.touch_iface,
                        legacy_ack=self.cfg.get("legacy_touch_ack", False))
 
+    def _seize_wanted(self):
+        """是否独占 HID：纯笔模式可选，兼容模拟必须独占（否则系统原生与 App 合成双落点）。
+
+        只看配置，不看运行时解析出的 selected_mode —— 启动时触摸设备还没接入，
+        selected_mode 会先落到 pen_only，等设备到了再解析就来不及改 open 选项了。
+        """
+        if self.cfg.get("seize_pen"):
+            return True
+        return (self.cfg.get("touch_mode") == "legacy"
+                and bool(self.cfg.get("legacy_touch_ack")))
+
     def _update_locked(self, kw):
         before_mode = self._mode["selected_mode"]
+        before_seize = self._seize_wanted()
         if "debug_log" in kw:
             self.debug = bool(kw["debug_log"])
         before = (tuple(sorted(H.binds_from_cfg(self.cfg).items())),
@@ -603,8 +615,9 @@ class Engine(object):
             self.b.reset_state()
         if before[:4] != after[:4] or (before != after and self.b.src_touch):
             self.b.reset_state()      # 绑定变了: 残留不能带到下一笔
-        if (after[1] != before[1] or after[3] != before[3]) and self.mgr is not None:
-            return self.restart()      # 匹配条件变了, 必须重建 manager
+        if (after[1] != before[1] or after[3] != before[3] or
+                self._seize_wanted() != before_seize) and self.mgr is not None:
+            return self.restart()      # 匹配条件或独占方式变了, 必须重建 manager
         return 0
 
     def set_debug(self, on):
@@ -722,7 +735,7 @@ class Engine(object):
             self._rl = H.cf.CFRunLoopGetCurrent()
             self._mode_str = H.cfstr(H.DEFAULT_MODE)
             H.iokit.IOHIDManagerScheduleWithRunLoop(self.mgr, self._rl, self._mode_str)
-            _opts = 1 if self.cfg.get("seize_pen") else 0   # 1 = kIOHIDOptionsTypeSeizeDevice
+            _opts = 1 if self._seize_wanted() else 0   # 1 = kIOHIDOptionsTypeSeizeDevice
             self.rc = H.iokit.IOHIDManagerOpen(self.mgr, _opts)
             if _opts:
                 self.log("HID 独占模式 (seize) rc=%d" % self.rc)

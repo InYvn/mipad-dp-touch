@@ -2942,9 +2942,9 @@ class SettingsWindow(_Pane):
         from AppKit import NSAlert, NSAlertFirstButtonReturn
         alert = NSAlert.alloc().init()
         alert.setMessageText_("兼容模拟 · 高级选项")
-        alert.setInformativeText_("请先在系统设置关闭触控手势，否则系统与桥接可能双重派发。确认已关闭后才能使用兼容模拟。")
+        alert.setInformativeText_("兼容模拟会独占触摸接口、由本应用合成鼠标事件；系统的原生触控会暂时收不到这支设备。")
         alert.addButtonWithTitle_("取消")
-        alert.addButtonWithTitle_("已关闭，使用兼容模拟")
+        alert.addButtonWithTitle_("使用兼容模拟")
         return alert.runModal() != NSAlertFirstButtonReturn
 
     def onCorr_(self, sender):
