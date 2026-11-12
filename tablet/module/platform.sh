@@ -88,7 +88,10 @@ stage() {
  if [ ! -e "$DSO" ]; then
   cp "$S/fullsplit-bounded-v2.so" "$DSO.new" && chmod 644 "$DSO.new" && chcon u:object_r:vendor_file:s0 "$DSO.new" && mv "$DSO.new" "$DSO" || return 1
  fi
- [ ! -L "$DSO" ] && [ "$(sha256sum "$DSO" | cut -d ' ' -f1)" = 053ee9593102f907aa48e6df9a7325b76059a398b1789f45d651c6481a26748e ] || return 1
+ # The staged DSO must be exactly the packaged runtime DSO; bootstrap.sh
+ # wrote and verified it through runtime.sha256 before this path runs.
+ # package_check.py cross-checks this pin against the packaged DSO.
+ [ ! -L "$DSO" ] && [ "$(sha256sum "$DSO" | cut -d ' ' -f1)" = 72757954666bcca58a022c546f81fefb1bb7ffef4a3250fcc9236982bc79c488 ] || return 1
  [ "$(ls -Z "$DSO" | awk '{print $1}')" = u:object_r:vendor_file:s0 ]
 }
 verify_candidate() { "$T" verify "$S/candidate" "$S/candidate-owner" hooked "$DSO" && candidate_descriptors_check; }
