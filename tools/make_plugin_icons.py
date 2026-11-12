@@ -26,8 +26,11 @@ W, H = 192, 128
 PAD = 8
 
 SPECS = {
-    "touchkeys": {"file": "touchkeys.png", "mode": "fit", "pad": 4, "bg": (0.95, 0.95, 0.96, 1.0)},
-    "touchbar": {"file": "touchbar.png", "mode": "fit", "pad": 8, "bg": (0.10, 0.10, 0.12, 1.0)},
+    "touchkeys": {"file": "touchkeys.png", "mode": "fit", "pad": 4,
+                  "bg": (0.95, 0.95, 0.96, 1.0)},
+    # 三条不同 App 的工具条，展示「跟着前台 App 变」
+    "touchbar": {"files": ["touchbar-finder.png", "touchbar-calendar.png", "touchbar-word.png"],
+                 "mode": "stack", "bg": (0.10, 0.10, 0.12, 1.0)},
 }
 
 
@@ -44,22 +47,36 @@ def render(spec):
     bg.fill()
     bg.addClip()
 
-    path = os.path.join(SRC, spec["file"])
-    img = NSImage.alloc().initWithContentsOfFile_(path)
-    if img is None:
-        raise SystemExit("missing " + path)
-    iw, ih = img.size().width, img.size().height
-
-    pad = spec.get("pad", PAD)
-    if spec["mode"] == "fit":
-        scale = min((W - 2 * pad) / iw, (H - 2 * pad) / ih)
+    if spec["mode"] == "stack":
+        files = spec["files"]
+        band = H / len(files)
+        for i, name in enumerate(files):
+            path = os.path.join(SRC, name)
+            img = NSImage.alloc().initWithContentsOfFile_(path)
+            if img is None:
+                raise SystemExit("missing " + path)
+            iw, ih = img.size().width, img.size().height
+            scale = (W - 2 * PAD) / iw
+            dw, dh = iw * scale, ih * scale
+            dx = (W - dw) / 2
+            dy = H - (i + 1) * band + (band - dh) / 2
+            img.drawInRect_fromRect_operation_fraction_(
+                NSMakeRect(dx, dy, dw, dh), NSMakeRect(0, 0, 0, 0), 2, 1.0)
     else:
-        scale = max(W / iw, H / ih)
-    dw, dh = iw * scale, ih * scale
-    dx, dy = (W - dw) / 2, (H - dh) / 2
-
-    img.drawInRect_fromRect_operation_fraction_(
-        NSMakeRect(dx, dy, dw, dh), NSMakeRect(0, 0, 0, 0), 2, 1.0)   # 2 = sourceOver
+        path = os.path.join(SRC, spec["file"])
+        img = NSImage.alloc().initWithContentsOfFile_(path)
+        if img is None:
+            raise SystemExit("missing " + path)
+        iw, ih = img.size().width, img.size().height
+        pad = spec.get("pad", PAD)
+        if spec["mode"] == "fit":
+            scale = min((W - 2 * pad) / iw, (H - 2 * pad) / ih)
+        else:
+            scale = max(W / iw, H / ih)
+        dw, dh = iw * scale, ih * scale
+        dx, dy = (W - dw) / 2, (H - dh) / 2
+        img.drawInRect_fromRect_operation_fraction_(
+            NSMakeRect(dx, dy, dw, dh), NSMakeRect(0, 0, 0, 0), 2, 1.0)
 
     NSGraphicsContext.restoreGraphicsState()
     data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
