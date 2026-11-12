@@ -157,37 +157,6 @@ class TouchOverlay:
         app = NSApplication.sharedApplication()
         return bool(app is not None and app.isActive())
 
-    def own_rects(self):
-        """本应用可见窗口的屏幕矩形（CG 全局，左上原点），覆盖层自己的窗除外。"""
-        app = NSApplication.sharedApplication()
-        if app is None:
-            return []
-        skip = set()
-        for _s, w, _v in self._wins:
-            try:
-                skip.add(w.windowNumber())
-            except Exception:
-                pass
-        main_h = self._main_h()
-        out = []
-        for w in app.windows():
-            try:
-                if not w.isVisible() or w.windowNumber() in skip:
-                    continue
-                f = w.frame()
-                out.append((f.origin.x, main_h - (f.origin.y + f.size.height),
-                            f.size.width, f.size.height))
-            except Exception:
-                continue
-        return out
-
-    @staticmethod
-    def _hit(rects, gx, gy):
-        for x, y, w, h in rects:
-            if x <= gx <= x + w and y <= gy <= y + h:
-                return True
-        return False
-
     def tick_(self, _timer):
         snap = self.engine.live_snapshot()
         now = snap["now"]
@@ -212,10 +181,6 @@ class TouchOverlay:
             if p["x"] is not None and p["y"] is not None and (p["down"] or now - p["t"] < 1.0):
                 points.append(("pen", ox + p["x"] * rw, oy + p["y"] * rh,
                                bool(p["down"]), True, float(p["pres"])))
-
-        own = self.own_rects()
-        if own:
-            points = [p for p in points if not self._hit(own, p[1], p[2])]
 
         alive = {k for k, *_ in points}
         for k in list(self._trails):

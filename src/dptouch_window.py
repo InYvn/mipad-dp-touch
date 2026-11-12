@@ -1992,8 +1992,11 @@ class SettingsWindow(_Pane):
         self.c["viz"].setBordered_(False)
         self.c["viz"].setTitle_("")
         self.c["viz"].setState_(1 if _viz_on else 0)
-        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点（落在本应用窗口上的不画）")
+        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点")
         self.c["viz"].setAccessibilityLabel_("触控可视化")
+        v.addSubview_(_label("覆盖层在所有窗口之上显示（含本应用）",
+                             self._r(x + w - 214, y + 44, 208, 14),
+                             size=10.5, dim=True, right=True))
         self.c["viz"].setTarget_(self)
         self.c["viz"].setAction_("onTouchViz:")
         v.addSubview_(self.c["viz"])
