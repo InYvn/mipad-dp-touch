@@ -426,6 +426,11 @@ recover() {
 #   inactive: it succeeds and names a different resolved activity;
 #   unknown:  dumpsys/timeout missing or failed/timed out, empty output, no
 #             topResumedActivity line, or topResumedActivity=null (screen off).
+# unknown is a hard fail-safe: the take-over gate never takes over on unknown
+# and the watchdog never releases on unknown. The reason of an unknown sample is
+# written to $S/dpin-mode.reason (one line, e.g. "timeout rc=124",
+# "dumpsys rc=1", "dumpsys_missing", "empty", "no_top_activity", "top_null",
+# "fallback_timeout") so the device runbook can tell why.
 # `persist.vendor.vcb.activity` is deliberately NOT used: its value is unstable
 # (it read "none" on both modes in the 01:5x snapshots).
 # The probe is hard-bounded to 3s: timeout(1) when present, otherwise a
@@ -438,38 +443,58 @@ case "$DPIN_MODE_SAMPLE_SECONDS" in ''|*[!0-9]*) DPIN_MODE_SAMPLE_SECONDS=5;; es
 [ "$DPIN_MODE_SAMPLE_SECONDS" -ge 1 ] || DPIN_MODE_SAMPLE_SECONDS=1
 dpin_display_mode() {
  _dout=
- if command -v dumpsys >/dev/null 2>&1; then
-  if command -v timeout >/dev/null 2>&1; then
-   _dout=$(timeout "$DPIN_MODE_TIMEOUT_SECONDS" dumpsys activity activities 2>/dev/null) || _dout=
-  else
-   _dtmp=$S/.dpin-activity.$$.tmp
-   rm -f "$_dtmp" 2>/dev/null || true
-   dumpsys activity activities > "$_dtmp" 2>/dev/null &
-   _dpid=$!
-   _dn=0
-   while [ "$_dn" -lt 30 ]; do
-    kill -0 "$_dpid" 2>/dev/null || break
-    sleep 0.1
-    _dn=$((_dn + 1))
-   done
-   if kill -0 "$_dpid" 2>/dev/null; then
-    kill -TERM "$_dpid" 2>/dev/null || true
-    _dout=
-   else
-    _dout=$(cat "$_dtmp" 2>/dev/null) || _dout=
-   fi
-   wait "$_dpid" 2>/dev/null || true
-   rm -f "$_dtmp" 2>/dev/null || true
+ _dwhy=
+ if ! command -v dumpsys >/dev/null 2>&1; then
+  _dwhy=dumpsys_missing
+ elif command -v timeout >/dev/null 2>&1; then
+  _drc=0
+  _dout=$(timeout "$DPIN_MODE_TIMEOUT_SECONDS" dumpsys activity activities 2>/dev/null) || _drc=$?
+  if [ "$_drc" != 0 ]; then
+   _dout=
+   _dwhy="timeout rc=$_drc"
   fi
+ else
+  _dtmp=$S/.dpin-activity.$$.tmp
+  rm -f "$_dtmp" 2>/dev/null || true
+  dumpsys activity activities > "$_dtmp" 2>/dev/null &
+  _dpid=$!
+  _dn=0
+  while [ "$_dn" -lt 30 ]; do
+   kill -0 "$_dpid" 2>/dev/null || break
+   sleep 0.1
+   _dn=$((_dn + 1))
+  done
+  if kill -0 "$_dpid" 2>/dev/null; then
+   kill -TERM "$_dpid" 2>/dev/null || true
+   _dout=
+   _dwhy=fallback_timeout
+  else
+   _dout=$(cat "$_dtmp" 2>/dev/null) || _dout=
+   if [ -z "$_dout" ]; then _dwhy=empty; fi
+  fi
+  wait "$_dpid" 2>/dev/null || true
+  rm -f "$_dtmp" 2>/dev/null || true
  fi
- if [ -z "$_dout" ]; then printf unknown; return 0; fi
- _dtop=$(printf '%s\n' "$_dout" | grep -m1 'topResumedActivity=' 2>/dev/null) || _dtop=
- case "$_dtop" in
-  '') printf unknown; return 0;;
-  *'topResumedActivity=null'*) printf unknown; return 0;;
-  *com.milink.dpin.ui.display.DisplayModeActivity*) printf active; return 0;;
-  *) printf inactive; return 0;;
- esac
+ _dstate=unknown
+ if [ -n "$_dout" ]; then
+  _dtop=$(printf '%s\n' "$_dout" | grep -m1 'topResumedActivity=' 2>/dev/null) || _dtop=
+  case "$_dtop" in
+   '') _dwhy=no_top_activity;;
+   *'topResumedActivity=null'*) _dwhy=top_null;;
+   *com.milink.dpin.ui.display.DisplayModeActivity*) _dstate=active;;
+   *) _dstate=inactive;;
+  esac
+ elif [ -z "$_dwhy" ]; then
+  _dwhy=empty
+ fi
+ if [ "$_dstate" = unknown ]; then
+  [ -n "$_dwhy" ] || _dwhy=unknown
+  printf '%s\n' "$_dwhy" > "$S/dpin-mode.reason.new" 2>/dev/null &&
+   mv "$S/dpin-mode.reason.new" "$S/dpin-mode.reason" 2>/dev/null || true
+ else
+  rm -f "$S/dpin-mode.reason" "$S/dpin-mode.reason.new" 2>/dev/null || true
+ fi
+ printf '%s' "$_dstate"
 }
 dpin_display_mode_cached() {
  _dnow=$(date +%s)
@@ -498,6 +523,14 @@ reconcile() {
  # the miLink DP-in UI is the top resumed activity. inactive/unknown wait.
  dpin=$(dpin_display_mode_cached)
  if [ "$dpin" != active ]; then
+  if [ "$dpin" = unknown ]; then
+   # 2.1.7: unknown is a hard fail-safe (no take-over). Record why so the
+   # device runbook can distinguish "dumpsys not executable/denied" from a
+   # transient timeout without guessing. Reasons: timeout rc=..., dumpsys rc=...,
+   # dumpsys_missing, empty, no_top_activity, top_null, fallback_timeout.
+   dpin_why=$(cat "$S/dpin-mode.reason" 2>/dev/null) || dpin_why=unknown
+   log "DPIN_MODE_UNKNOWN reason=$dpin_why"
+  fi
   log "DPIN_MODE_INACTIVE state=$dpin; wait"
   return 78
  fi
