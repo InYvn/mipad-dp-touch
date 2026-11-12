@@ -412,8 +412,95 @@ recover() {
  sync
  log 'recovery verified; original identity, two hidg FDs, live pidfd owner, descriptors; owner retained'
 }
+# --- 2.1.7 shared DP-in display-mode probe ---------------------------------
+# This block is byte-identical in platform.sh and runtime-monitor.sh (the
+# package check asserts equality) so the take-over gate and the watchdog use
+# exactly the same evidence. The stock OEM DP HAL appearing only means the
+# emulated session service started; it does NOT mean the user entered DP-in
+# display mode. On 2026-11-13 01:49 the HAL was up while the tablet still
+# showed com.miui.home/.launcher.Launcher, UDC was configured and the module
+# grabbed event11 anyway. The only signal measured to separate the two modes is
+# the miLink DP-in UI being the top resumed activity:
+#   active:   bounded `dumpsys activity activities` succeeds and
+#             topResumedActivity is com.milink.dpin.ui.display.DisplayModeActivity;
+#   inactive: it succeeds and names a different resolved activity;
+#   unknown:  dumpsys/timeout missing or failed/timed out, empty output, no
+#             topResumedActivity line, or topResumedActivity=null (screen off).
+# `persist.vendor.vcb.activity` is deliberately NOT used: its value is unstable
+# (it read "none" on both modes in the 01:5x snapshots).
+# The probe is hard-bounded to 3s: timeout(1) when present, otherwise a
+# background dumpsys with a 3s poll/TERM fallback. A cached wrapper keeps the
+# dumpsys cost to at most one run per DPIN_MODE_SAMPLE_SECONDS across the
+# monitor and the reconcile gate.
+DPIN_MODE_TIMEOUT_SECONDS=3
+DPIN_MODE_SAMPLE_SECONDS=${MIPAD_DP_DPIN_SAMPLE_SECONDS:-5}
+case "$DPIN_MODE_SAMPLE_SECONDS" in ''|*[!0-9]*) DPIN_MODE_SAMPLE_SECONDS=5;; esac
+[ "$DPIN_MODE_SAMPLE_SECONDS" -ge 1 ] || DPIN_MODE_SAMPLE_SECONDS=1
+dpin_display_mode() {
+ _dout=
+ if command -v dumpsys >/dev/null 2>&1; then
+  if command -v timeout >/dev/null 2>&1; then
+   _dout=$(timeout "$DPIN_MODE_TIMEOUT_SECONDS" dumpsys activity activities 2>/dev/null) || _dout=
+  else
+   _dtmp=$S/.dpin-activity.$$.tmp
+   rm -f "$_dtmp" 2>/dev/null || true
+   dumpsys activity activities > "$_dtmp" 2>/dev/null &
+   _dpid=$!
+   _dn=0
+   while [ "$_dn" -lt 30 ]; do
+    kill -0 "$_dpid" 2>/dev/null || break
+    sleep 0.1
+    _dn=$((_dn + 1))
+   done
+   if kill -0 "$_dpid" 2>/dev/null; then
+    kill -TERM "$_dpid" 2>/dev/null || true
+    _dout=
+   else
+    _dout=$(cat "$_dtmp" 2>/dev/null) || _dout=
+   fi
+   wait "$_dpid" 2>/dev/null || true
+   rm -f "$_dtmp" 2>/dev/null || true
+  fi
+ fi
+ if [ -z "$_dout" ]; then printf unknown; return 0; fi
+ _dtop=$(printf '%s\n' "$_dout" | grep -m1 'topResumedActivity=' 2>/dev/null) || _dtop=
+ case "$_dtop" in
+  '') printf unknown; return 0;;
+  *'topResumedActivity=null'*) printf unknown; return 0;;
+  *com.milink.dpin.ui.display.DisplayModeActivity*) printf active; return 0;;
+  *) printf inactive; return 0;;
+ esac
+}
+dpin_display_mode_cached() {
+ _dnow=$(date +%s)
+ _dstate=
+ _dwhen=0
+ if [ -f "$S/dpin-mode.cache" ] && [ ! -L "$S/dpin-mode.cache" ]; then
+  { IFS= read -r _dstate || true; IFS= read -r _dwhen || true; } < "$S/dpin-mode.cache"
+  case "$_dwhen" in ''|*[!0-9]*) _dwhen=0;; esac
+  case "$_dstate" in active|inactive|unknown) :;; *) _dstate=;; esac
+  if [ -n "$_dstate" ] && [ $((_dnow - _dwhen)) -ge 0 ] &&
+     [ $((_dnow - _dwhen)) -lt "$DPIN_MODE_SAMPLE_SECONDS" ]; then
+   printf '%s' "$_dstate"
+   return 0
+  fi
+ fi
+ _dstate=$(dpin_display_mode)
+ printf '%s\n%s\n' "$_dstate" "$_dnow" > "$S/dpin-mode.cache.new" 2>/dev/null &&
+  mv "$S/dpin-mode.cache.new" "$S/dpin-mode.cache" 2>/dev/null || true
+ printf '%s' "$_dstate"
+}
+# --- end 2.1.7 shared DP-in display-mode probe -----------------------------
 reconcile() {
  [ -d "$M" ] && [ ! -e "$M/disable" ] && [ ! -e "$M/remove" ] || return 1
+ # 2.1.7 take-over gate: the OEM DP HAL appearing is NOT DP-in display mode.
+ # Nothing may be mutated (stage journal, pending, SVID, OEM stop, owner) until
+ # the miLink DP-in UI is the top resumed activity. inactive/unknown wait.
+ dpin=$(dpin_display_mode_cached)
+ if [ "$dpin" != active ]; then
+  log "DPIN_MODE_INACTIVE state=$dpin; wait"
+  return 78
+ fi
  if [ -e "$S/pending" ]; then verify_candidate || return 1; return 0; fi
  # No destructive action before dynamic baseline and an armed guardian exist.
  record_hal || return 1
