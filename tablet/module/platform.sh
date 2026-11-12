@@ -26,6 +26,21 @@ FAKE=$STAGE/fake_svid
 OWNER=$STATE/owner
 LOCK=$STATE/lock
 log() { printf '%s %s\n' "$(date +%s)" "$*" >> "$S/lifecycle.log"; }
+# A live vendor bridge already owns the touchscreen. Restarting the HAL only to
+# re-assert our prepare ownership tears that bridge down and leaves Android
+# without touch, so never restart while the bridge is up and our fake SVID is
+# still the mounted one. The running HAL keeps whatever DSO it already loaded.
+bridge_alive() {
+ for p in $(pidof vendor.xiaomi.usb.dp-service); do
+  [ -d "/proc/$p" ] || continue
+  fds=$(ls -l "/proc/$p/fd" 2>/dev/null) || continue
+  case "$fds" in *hidg0*) ;; *) continue;; esac
+  case "$fds" in *hidg1*) ;; *) continue;; esac
+  case "$fds" in *event6*) return 0;; esac
+ done
+ return 1
+}
+bridge_keep() { bridge_alive && [ -n "$(entry)" ]; }
 guard() {
  [ "$(id -u)" = 0 ] && [ "$(id -Z)" = u:r:ksu:s0 ] || return 1
  [ "$(getenforce)" = Enforcing ] || return 1
@@ -190,6 +205,7 @@ wait_probe() {
 }
 recover() {
  [ -e "$S/pending" ] || [ -f "$S/recovery-owner" ] || return 0
+ if bridge_keep; then log 'bridge alive with owned SVID; keep vendor HAL (no restart)'; return 0; fi
  # Probe BEFORE candidate termination, SVID changes or owner replacement.
  if [ -e "$S/pending" ]; then oldboot=$(cat "$S/pending"); else oldboot=$(cat "$S/owner-boot"); fi
  if [ "$oldboot" = "$(boot)" ]; then
@@ -280,6 +296,7 @@ recover() {
 reconcile() {
  [ -d "$M" ] && [ ! -e "$M/disable" ] && [ ! -e "$M/remove" ] || return 1
  if [ -e "$S/pending" ]; then verify_candidate || return 1; return 0; fi
+ if bridge_keep; then log 'bridge alive with owned SVID; keep vendor HAL (no restart)'; return 0; fi
  # No destructive action before dynamic baseline and an armed guardian exist.
  record_hal || return 1
  baseline_rc=0; "$T" baseline "$S/hal" > "$S/baseline-owner" || baseline_rc=$?
