@@ -2825,11 +2825,8 @@ class SettingsWindow(_Pane):
         self.refresh_all()
 
     def onTouchViz_(self, sender):
-        """打开只读的触控可视化面板（30fps，关掉即停）。"""
-        if self._viz is None:
-            import dptouch_touchviz as TV
-            self._viz = TV.TouchViz(self.app.engine, log=self.app.log)
-        self._viz.show()
+        """开/关系统级触控覆盖层（按钮标题由 App 侧一起更新）。"""
+        self.app.toggle_viz()
 
     def onHoldMs_(self, sender):
         if self._syncing:

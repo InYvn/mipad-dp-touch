@@ -1232,6 +1232,8 @@ class Engine(object):
                 "touch_iface": bool(self.touch_iface),
                 "native": bool(self._mode.get("native_touch")),
                 "running": bool(self.running),
+                "rect": ((self.b.ox, self.b.oy, self.b.w, self.b.h)
+                         if self.b is not None else None),
             }
 
     def _live_feed(self, page, usage, v, lo, hi, rid, cookie):

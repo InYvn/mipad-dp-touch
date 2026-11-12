@@ -390,6 +390,7 @@ class DPApp(NSObject):
                                         helper=EDID.find_helper())
         self._build_status_item()
         self._build_menu()
+        self._viz = None              # 触控可视化覆盖层 (懒建)
         # 设置窗口: 菜单栏应用也有一个看得见的主界面(状态 / 分步权限引导 / 全部选项)
         self.win = UI.SettingsWindow.alloc().initWithApp_appName_version_(
             self, APP_NAME, APP_VERSION)
@@ -1653,6 +1654,7 @@ class DPApp(NSObject):
 
         self._mk(m, "打开主界面…", "actOpenWindow:", key=",")
         self._mk(m, "打开日志", "actOpenLog:")
+        self.mi_viz = self._mk(m, "触控可视化", "actToggleViz:")
         self._mk(m, "无障碍键盘设置…", "actOpenKeyboardSettings:")
 
         # --- 插件: 默认不装, 用户点了才从 GitHub 现场拉 ---
@@ -1679,6 +1681,9 @@ class DPApp(NSObject):
     def _reflect(self):
         """状态 -> 菜单。**只动菜单里真有的项** —— 设置项都在窗口里, 窗口自己刷。"""
         self.mi_enable.setState_(1 if self.enabled else 0)
+        if getattr(self, "mi_viz", None) is not None:
+            _v = getattr(self, "_viz", None)
+            self.mi_viz.setState_(1 if (_v is not None and _v.is_on) else 0)
         try:
             self.mi_enhanced.setState_(
                 1 if str(self.cfg.get("input_mode", "auto")) in ("auto", "touch") else 0)
@@ -2257,6 +2262,25 @@ class DPApp(NSObject):
     @objc.python_method
     def open_settings(self):
         self.win.show()
+
+    def actToggleViz_(self, sender):
+        self.toggle_viz()
+
+    @objc.python_method
+    def toggle_viz(self):
+        """开/关系统级触控覆盖层；返回新状态。"""
+        if self._viz is None:
+            import dptouch_touchviz as TV
+            self._viz = TV.TouchOverlay(self.engine, log=log)
+        on = self._viz.toggle()
+        log("触控可视化: %s" % ("开" if on else "关"))
+        try:
+            self._reflect()
+            if self.win is not None and "viz" in self.win.c:
+                self.win.c["viz"].setTitle_("关闭可视化" if on else "可视化…")
+        except Exception:
+            pass
+        return on
 
     def actOpenWindow_(self, sender):
         self.open_settings()

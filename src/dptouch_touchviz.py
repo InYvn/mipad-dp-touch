@@ -1,223 +1,239 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""触控可视化 —— 只读面板。
+"""触控可视化 —— 系统级实时覆盖层。
 
-把平板报上来的触点画在一个 3:2 的方框里：手指是实心圆（按下橙色、悬停灰色），
-笔是十字加一个按压力大小的圈。数据来自 Engine.live_snapshot()，面板关掉就停，
-不参与任何合成，也不额外开 HID 设备。
+每块屏铺一个透明、点击穿透的覆盖窗，触点按 App 实际使用的映射
+（基准屏矩形 ox/oy/w/h）画在**屏幕上真实的位置**：位置修正生效后看到的就是修正后的落点。
+覆盖层关掉即停，不额外开 HID 设备、不合成事件。
 """
 
 import time
+from collections import deque
 
 import objc
 
 from AppKit import (
-    NSBackingStoreBuffered, NSBezierPath, NSColor, NSFont, NSFontAttributeName,
-    NSForegroundColorAttributeName, NSFloatingWindowLevel, NSMakeRect, NSObject,
-    NSPanel, NSString, NSTimer, NSView, NSWindowStyleMaskClosable,
-    NSWindowStyleMaskNonactivatingPanel, NSWindowStyleMaskTitled,
+    NSBackingStoreBuffered, NSBezierPath, NSColor, NSMakeRect, NSScreen,
+    NSScreenSaverWindowLevel, NSPanel, NSTimer, NSView,
+    NSWindowCollectionBehaviorCanJoinAllSpaces,
+    NSWindowCollectionBehaviorFullScreenAuxiliary,
+    NSWindowCollectionBehaviorIgnoresCycle,
+    NSWindowCollectionBehaviorStationary,
 )
 
-PANEL_W, PANEL_H = 460.0, 430.0
-PAD = 20.0
-TOP = 46.0
-BOTTOM = 62.0
-ASPECT = 3.0 / 2.0          # 平板 1704×1136
+TRAIL_SEC = 0.55          # 轨迹保留时长
+STALE_SEC = 0.35          # 抬手后点还留多久
+FPS = 30.0
+
+FINGER = (1.00, 0.45, 0.10)
+PEN = (0.35, 0.65, 1.00)
 
 
-def _text(s, x, y, size=11.0, alpha=0.75, bold=False):
-    attrs = {
-        NSFontAttributeName: NSFont.boldSystemFontOfSize_(size) if bold
-        else NSFont.systemFontOfSize_(size),
-        NSForegroundColorAttributeName: NSColor.colorWithCalibratedWhite_alpha_(1.0, alpha),
-    }
-    NSString.alloc().initWithString_(s).drawAtPoint_withAttributes_((x, y), attrs)
-
-
-def _rect(x, y, w, h, fill=None, stroke=None, radius=0.0, width=1.0):
-    p = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
-        NSMakeRect(x, y, w, h), radius, radius)
-    if fill is not None:
-        fill.set()
-        p.fill()
-    if stroke is not None:
-        stroke.set()
-        p.setLineWidth_(width)
-        p.stroke()
-
-
-class VizView(NSView):
-    """翻转为左上原点，坐标直接按归一化位置摆。"""
+class OverlayView(NSView):
+    """一块屏一个；翻转为左上原点。"""
 
     def initWithFrame_(self, rect):
-        self = objc.super(VizView, self).initWithFrame_(rect)
+        self = objc.super(OverlayView, self).initWithFrame_(rect)
         if self is None:
             return None
-        self.viz = None
+        self.overlay = None
         return self
 
     def isFlipped(self):
         return True
 
     def drawRect_(self, dirty):
-        b = self.bounds()
-        NSColor.colorWithCalibratedWhite_alpha_(0.09, 1.0).set()
-        NSBezierPath.fillRect_(b)
-
-        snap = self.viz.snapshot() if self.viz is not None else None
-        if snap is None:
-            _text("引擎未就绪", PAD, TOP, 12.0, 0.5)
-            return
-
-        now = snap["now"]
-        mode = "原生触控" if snap["native"] else "兼容模式"
-        fingers = snap["fingers"]
-        live = [(i, f) for i, f in enumerate(fingers)
-                if f["x"] is not None and f["y"] is not None
-                and (f["down"] or now - f["t"] < 0.35)]
-        pen = snap["pen"]
-        pen_live = (pen["x"] is not None and pen["y"] is not None
-                    and (pen["down"] or now - pen["t"] < 1.2))
-
-        # 标题行
-        _text(mode + " · 触点 %d" % len(live), PAD, 16, 12.0, 0.9, bold=True)
-        state = "未接入" if not snap["touch_iface"] else ("运行中" if snap["running"] else "已暂停")
-        _text("触控接口：%s" % state, PANEL_W - PAD - 130, 16, 11.0, 0.55)
-
-        # 平板区域：按 3:2 放进可用空间
-        avail_w = b.size.width - PAD * 2
-        avail_h = b.size.height - TOP - BOTTOM
-        if avail_w / avail_h > ASPECT:
-            ah = avail_h
-            aw = ah * ASPECT
-        else:
-            aw = avail_w
-            ah = aw / ASPECT
-        ax = PAD + (avail_w - aw) / 2
-        ay = TOP + (avail_h - ah) / 2
-
-        _rect(ax, ay, aw, ah, fill=NSColor.colorWithCalibratedWhite_alpha_(0.04, 1.0),
-              stroke=NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.18), radius=10.0, width=1.0)
-        NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.06).set()
-        for k in (1, 2, 3):
-            gx = ax + aw * k / 4.0
-            gy = ay + ah * k / 4.0
-            p = NSBezierPath.bezierPath()
-            p.moveToPoint_((gx, ay + 8))
-            p.lineToPoint_((gx, ay + ah - 8))
-            p.stroke()
-            p = NSBezierPath.bezierPath()
-            p.moveToPoint_((ax + 8, gy))
-            p.lineToPoint_((ax + aw - 8, gy))
-            p.stroke()
-
-        # 手指
-        for i, f in live:
-            cx = ax + f["x"] * aw
-            cy = ay + f["y"] * ah
-            r = 13.0 if f["down"] else 9.0
-            NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                1.0, 0.45, 0.10, 0.85 if f["down"] else 0.45).set()
-            NSBezierPath.bezierPathWithOvalInRect_(
-                NSMakeRect(cx - r, cy - r, r * 2, r * 2)).fill()
-            _text(str(i + 1), cx - 3.5, cy - 7, 10.0, 0.95, bold=True)
-
-        # 笔
-        if pen_live:
-            cx = ax + pen["x"] * aw
-            cy = ay + pen["y"] * ah
-            pres = max(0.0, min(1.0, float(pen["pres"]) / 4095.0))
-            r = 8.0 + 14.0 * pres if pen["down"] else 8.0
-            NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                0.35, 0.65, 1.0, 0.9 if pen["down"] else 0.5).set()
-            p = NSBezierPath.bezierPathWithOvalInRect_(NSMakeRect(cx - r, cy - r, r * 2, r * 2))
-            p.setLineWidth_(2.0)
-            p.stroke()
-            p = NSBezierPath.bezierPath()
-            p.moveToPoint_((cx - r - 7, cy))
-            p.lineToPoint_((cx + r + 7, cy))
-            p.moveToPoint_((cx, cy - r - 7))
-            p.lineToPoint_((cx, cy + r + 7))
-            p.stroke()
-
-        # 底部状态
-        y = b.size.height - BOTTOM + 12
-        if pen_live:
-            pen_s = "笔：%s · %d,%d · 压力 %d" % (
-                "按下" if pen["down"] else "悬停",
-                round(pen["x"] * 100), round(pen["y"] * 100), int(pen["pres"]))
-        else:
-            pen_s = "笔：未接入"
-        _text(pen_s, PAD, y, 11.0, 0.7)
-        _text("触摸平板，点会出现在方框里" if not live else "触点 %d 个" % len(live),
-              PAD, y + 18, 11.0, 0.5)
+        if self.overlay is not None:
+            self.overlay.draw_in_view(self)
 
 
-class VizWindowDelegate(NSObject):
-    """窗口关闭时停掉 30fps 刷新和只读快照。"""
-
-    def initWithViz_(self, viz):
-        self = objc.super(VizWindowDelegate, self).init()
-        if self is None:
-            return None
-        self.viz = viz
-        return self
-
-    def windowWillClose_(self, _note):
-        if self.viz is not None:
-            self.viz.on_close()
-
-
-class TouchViz:
-    """面板 + 定时刷新。宿主只需要 show() / close()。"""
+class TouchOverlay:
+    """系统级触控覆盖层。show()/hide()/toggle()，刷新交给 60fps 定时器。"""
 
     def __init__(self, engine, log=None):
         self.engine = engine
         self.log = log or (lambda *_: None)
-        self.win = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(0, 0, PANEL_W, PANEL_H),
-            NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskNonactivatingPanel,
-            NSBackingStoreBuffered, False)
-        self.win.setTitle_("触控可视化")
-        self.win.setLevel_(NSFloatingWindowLevel)
-        self.win.setReleasedWhenClosed_(False)
-        self._delegate = VizWindowDelegate.alloc().initWithViz_(self)
-        self.win.setDelegate_(self._delegate)
-        self.view = VizView.alloc().initWithFrame_(NSMakeRect(0, 0, PANEL_W, PANEL_H))
-        self.view.viz = self
-        self.win.setContentView_(self.view)
-        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            1.0 / 30.0, self, "tick:", None, True)
-        self._snap = None
-        self._last = 0.0
+        self.is_on = False
+        self._wins = []                 # [(NSScreen, NSPanel, OverlayView)]
+        self._trails = {}               # key -> deque[(gx, gy, t)]
+        self._points = []
+        self._timer = None
 
-    # 30fps 只重画；快照内部自己加锁
-    def tick_(self, _timer):
-        self._snap = self.engine.live_snapshot()
-        self.view.setNeedsDisplay_(True)
-
-    def snapshot(self):
-        if self._snap is None or time.time() - self._last > 0.5:
-            self._snap = self.engine.live_snapshot()
-            self._last = time.time()
-        return self._snap
-
+    # ---------------- 生命周期 ----------------
     def show(self):
+        self.is_on = True
         self.engine.set_live(True)
-        if not self.timer.isValid():      # 关过一次后 timer 已失效，重开要重建
-            self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                1.0 / 30.0, self, "tick:", None, True)
-        if not self.win.isVisible():
-            self.win.center()
-        self.win.orderFrontRegardless()
+        self._build_windows()
+        for _s, w, _v in self._wins:
+            w.orderFrontRegardless()
+        if self._timer is None or not self._timer.isValid():
+            self._timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                1.0 / FPS, self, "tick:", None, True)
 
-    def close(self):
-        self.on_close()
-        self.win.orderOut_(None)
-
-    def on_close(self):
+    def hide(self):
+        self.is_on = False
         self.engine.set_live(False)
-        try:
-            self.timer.invalidate()
-        except Exception:
-            pass
+        if self._timer is not None:
+            try:
+                self._timer.invalidate()
+            except Exception:
+                pass
+            self._timer = None
+        for _s, w, _v in self._wins:
+            w.orderOut_(None)
+        self._wins = []
+        self._trails = {}
+        self._points = []
+
+    def toggle(self):
+        self.hide() if self.is_on else self.show()
+        return self.is_on
+
+    def _build_windows(self):
+        self._wins = []
+        for scr in NSScreen.screens():
+            f = scr.frame()
+            w = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(0, 0, f.size.width, f.size.height), 0,
+                NSBackingStoreBuffered, False)
+            w.setLevel_(NSScreenSaverWindowLevel)
+            w.setOpaque_(False)
+            w.setBackgroundColor_(NSColor.clearColor())
+            w.setHasShadow_(False)
+            w.setIgnoresMouseEvents_(True)
+            w.setReleasedWhenClosed_(False)
+            w.setCollectionBehavior_(
+                NSWindowCollectionBehaviorCanJoinAllSpaces
+                | NSWindowCollectionBehaviorStationary
+                | NSWindowCollectionBehaviorIgnoresCycle
+                | NSWindowCollectionBehaviorFullScreenAuxiliary)
+            w.setFrame_display_(f, False)
+            v = OverlayView.alloc().initWithFrame_(NSMakeRect(0, 0, f.size.width, f.size.height))
+            v.overlay = self
+            w.setContentView_(v)
+            self._wins.append((scr, w, v))
+
+    # ---------------- 坐标 ----------------
+    def _main_h(self):
+        for s in NSScreen.screens():
+            f = s.frame()
+            if f.origin.x == 0 and f.origin.y == 0:
+                return f.size.height
+        m = NSScreen.mainScreen()
+        return m.frame().size.height if m is not None else 0.0
+
+    def _to_local(self, scr, gx, gy, main_h):
+        """CG 全局坐标（左上原点）-> 该屏窗口内坐标（flipped，左上原点）。"""
+        f = scr.frame()
+        return (gx - f.origin.x, f.origin.y + f.size.height - main_h + gy)
+
+    # ---------------- 每帧 ----------------
+    def tick_(self, _timer):
+        snap = self.engine.live_snapshot()
+        now = snap["now"]
+        rect = snap.get("rect")
+
+        if len(NSScreen.screens()) != len(self._wins):     # 插拔外接屏
+            self._build_windows()
+            for _s, w, _v in self._wins:
+                w.orderFrontRegardless()
+
+        points = []
+        if rect:
+            ox, oy, rw, rh = rect
+            for i, f in enumerate(snap["fingers"]):
+                if f["x"] is None or f["y"] is None:
+                    continue
+                if not f["down"] and now - f["t"] > STALE_SEC:
+                    continue
+                points.append(("f%d" % i, ox + f["x"] * rw, oy + f["y"] * rh,
+                               bool(f["down"]), False, 0.0))
+            p = snap["pen"]
+            if p["x"] is not None and p["y"] is not None and (p["down"] or now - p["t"] < 1.0):
+                points.append(("pen", ox + p["x"] * rw, oy + p["y"] * rh,
+                               bool(p["down"]), True, float(p["pres"])))
+
+        alive = {k for k, *_ in points}
+        for k in list(self._trails):
+            if k not in alive:
+                self._trails.pop(k, None)
+        for k, gx, gy, _down, _pen, _pres in points:
+            tr = self._trails.setdefault(k, deque(maxlen=90))
+            if not tr or abs(tr[-1][0] - gx) > 0.5 or abs(tr[-1][1] - gy) > 0.5:
+                tr.append((gx, gy, now))
+            while tr and now - tr[0][2] > TRAIL_SEC:
+                tr.popleft()
+
+        had = bool(self._points) or bool(self._trails)
+        self._points = points
+        if points or had:                 # 空闲时不重画整块透明屏
+            for _s, _w, v in self._wins:
+                v.setNeedsDisplay_(True)
+
+    # ---------------- 绘制 ----------------
+    def draw_in_view(self, view):
+        scr = None
+        for s, _w, v in self._wins:
+            if v is view:
+                scr = s
+                break
+        if scr is None:
+            return
+        main_h = self._main_h()
+        now = time.time()
+
+        for key, tr in self._trails.items():
+            if len(tr) < 2:
+                continue
+            is_pen = key == "pen"
+            col = PEN if is_pen else FINGER
+            items = list(tr)
+            for (x1, y1, t1), (x2, y2, t2) in zip(items[:-1], items[1:]):
+                age = now - t2
+                if age > TRAIL_SEC:
+                    continue
+                a = max(0.0, 1.0 - age / TRAIL_SEC) * 0.55
+                lx1, ly1 = self._to_local(scr, x1, y1, main_h)
+                lx2, ly2 = self._to_local(scr, x2, y2, main_h)
+                p = NSBezierPath.bezierPath()
+                p.moveToPoint_((lx1, ly1))
+                p.lineToPoint_((lx2, ly2))
+                p.setLineWidth_(4.0 if is_pen else 6.0)
+                p.setLineCapStyle_(1)
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(col[0], col[1], col[2], a).set()
+                p.stroke()
+
+        for key, gx, gy, down, is_pen, pres in self._points:
+            lx, ly = self._to_local(scr, gx, gy, main_h)
+            f = scr.frame()
+            if not (0 <= lx <= f.size.width and 0 <= ly <= f.size.height):
+                continue
+            col = PEN if is_pen else FINGER
+            if is_pen:
+                r = 9.0 + 16.0 * max(0.0, min(1.0, pres / 4095.0)) if down else 9.0
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                    col[0], col[1], col[2], 0.9 if down else 0.55).set()
+                p = NSBezierPath.bezierPathWithOvalInRect_(
+                    NSMakeRect(lx - r, ly - r, r * 2, r * 2))
+                p.setLineWidth_(2.5)
+                p.stroke()
+                p = NSBezierPath.bezierPath()
+                p.moveToPoint_((lx - r - 9, ly))
+                p.lineToPoint_((lx + r + 9, ly))
+                p.moveToPoint_((lx, ly - r - 9))
+                p.lineToPoint_((lx, ly + r + 9))
+                p.stroke()
+            else:
+                r = 17.0 if down else 12.0
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                    col[0], col[1], col[2], 0.28 if down else 0.16).set()
+                NSBezierPath.bezierPathWithOvalInRect_(
+                    NSMakeRect(lx - r, ly - r, r * 2, r * 2)).fill()
+                NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                    col[0], col[1], col[2], 0.95 if down else 0.55).set()
+                p = NSBezierPath.bezierPathWithOvalInRect_(
+                    NSMakeRect(lx - r, ly - r, r * 2, r * 2))
+                p.setLineWidth_(2.0)
+                p.stroke()
+                NSBezierPath.bezierPathWithOvalInRect_(
+                    NSMakeRect(lx - 3, ly - 3, 6, 6)).fill()
