@@ -419,7 +419,8 @@ class Engine(object):
         self._live_lk = threading.Lock()
         self._live_fingers = []
         self._live_pen = {"x": None, "y": None, "px": None, "py": None,
-                          "down": False, "pres": 0, "t": 0.0}
+                          "down": False, "inr": False, "pres": 0, "t": 0.0}
+        self._live_jumps = 0
         self._multi = False           # 是否正在双指手势
         self._two_prev = None         # 双指质心 (归一化)
         self._two_pend = [0.0, 0.0]   # 待发送的滚动量 (px)
@@ -1098,7 +1099,11 @@ class Engine(object):
 
     def _feed_locked(self, page, usage, v, lo, hi, rid=PEN_REPORT_ID, cookie=0):
         if self._live_on:
-            self._live_feed(page, usage, v, lo, hi, rid, cookie)
+            try:
+                self._live_feed(page, usage, v, lo, hi, rid, cookie)
+            except Exception as e:
+                # 可视化只是旁路：它出错绝不能吞掉这一帧的真实输入处理
+                self._log_err_once("触控可视化", e)
         # A report is positive interface evidence too. Resolve BEFORE even its
         # first coordinate, never wait for the UI timer or synthesize then switch.
         if rid == TOUCH_REPORT_ID and not self.touch_iface:
@@ -1223,7 +1228,8 @@ class Engine(object):
             if not on:
                 self._live_fingers = []
                 self._live_pen = {"x": None, "y": None, "px": None, "py": None,
-                                  "down": False, "pres": 0, "t": 0.0}
+                                  "down": False, "inr": False, "pres": 0, "t": 0.0}
+                self._live_jumps = 0
 
     def live_snapshot(self):
         with self._live_lk:
@@ -1238,11 +1244,12 @@ class Engine(object):
                          if self.b is not None else None),
             }
 
-    def _live_commit(self, st, nx, ny, now):
-        """落位前挡掉固件的「归零对」。
+    def _live_commit(self, st, nx, ny, now, label=""):
+        """落位前挡掉固件的「归零对」与异常跳变。
 
         实测报告顺序（触摸与笔都一样）：抬手先发 Y=0、X=0（笔是 Y 顶到 max），
         再发 InRange=0 / TipSwitch=0。不挡的话轨迹会被甩到角上，画出一条到角的直线。
+        另外未激活的触点槽也会送坐标，只有 down（触摸）/ in-range（笔）时才落位。
         """
         ox, oy = st["x"], st["y"]
         if ox is not None and oy is not None:
@@ -1250,6 +1257,10 @@ class Engine(object):
             far = abs(nx - ox) > 0.15 or abs(ny - oy) > 0.15
             if corner and far:
                 return
+            if (abs(nx - ox) > 0.35 or abs(ny - oy) > 0.35) and self._live_jumps < 20:
+                self._live_jumps += 1
+                self.log("LIVE jump %s: (%.2f,%.2f) -> (%.2f,%.2f)"
+                         % (label or "?", ox, oy, nx, ny))
         st["x"], st["y"], st["t"] = nx, ny, now
 
     def _live_feed(self, page, usage, v, lo, hi, rid, cookie):
@@ -1259,7 +1270,7 @@ class Engine(object):
             if rid == TOUCH_REPORT_ID:
                 if len(self._live_fingers) != len(self._finger_map):
                     self._live_fingers = [{"x": None, "y": None, "px": None, "py": None,
-                                            "down": False, "t": 0.0}
+                                           "down": False, "t": 0.0}
                                           for _ in self._finger_map]
                 for i, m in enumerate(self._finger_map):
                     st = self._live_fingers[i]
@@ -1270,30 +1281,40 @@ class Engine(object):
                     elif cookie == m.get("tip"):
                         st["down"] = bool(v)
                         st["t"] = now
-                        continue
+                        if v and st["px"] is not None and st["py"] is not None:
+                            self._live_commit(st, st["px"], st["py"], now, "f%d" % i)
+                        st["px"] = st["py"] = None      # 落位后必须清缓冲
+                        return
                     else:
                         continue
-                    if st.get("px") is not None and st.get("py") is not None:
-                        self._live_commit(st, st["px"], st["py"], now)
+                    if st["down"] and st["px"] is not None and st["py"] is not None:
+                        self._live_commit(st, st["px"], st["py"], now, "f%d" % i)
                         st["px"] = st["py"] = None
+                    return
             elif rid == PEN_REPORT_ID:
                 p = self._live_pen
                 if page == 0x01 and usage == 0x30 and hi > lo:
                     p["px"] = (v - lo) / float(hi - lo)
                 elif page == 0x01 and usage == 0x31 and hi > lo:
                     p["py"] = (v - lo) / float(hi - lo)
-                elif page == 0x0D and usage == 0x42:
+                elif page == 0x0D and usage == 0x32:      # InRange
+                    p["inr"] = bool(v)
+                    if not v:
+                        p["px"] = p["py"] = None
+                    p["t"] = now
+                    return
+                elif page == 0x0D and usage == 0x42:      # TipSwitch
                     p["down"] = bool(v)
                     p["t"] = now
                     return
-                elif page == 0x0D and usage == 0x30:
+                elif page == 0x0D and usage == 0x30:      # TipPressure
                     p["pres"] = v
                     p["t"] = now
                     return
                 else:
                     return
-                if p.get("px") is not None and p.get("py") is not None:
-                    self._live_commit(p, p["px"], p["py"], now)
+                if (p["down"] or p["inr"]) and p["px"] is not None and p["py"] is not None:
+                    self._live_commit(p, p["px"], p["py"], now, "pen")
                     p["px"] = p["py"] = None
 
     # ---------------- 状态 ----------------
