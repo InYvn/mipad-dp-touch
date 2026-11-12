@@ -57,14 +57,20 @@ refresh_epoch() {
 #     "disconnected/disabled" while a Mac session was live at 3408x2272@120
 #     (DSI connected, Type-C host/source, configfs hid.usb0/1 present, UDC
 #     configured, candidate running). A disconnected DRM connector is therefore
-#     never absence evidence; only "connected" is present evidence. Absent
-#     requires two independent session-ended marks: a readable gadget parent
-#     with neither hid.usb0 nor hid.usb1, AND every UDC state "not attached".
-#     Any present mark (DRM connected, Type-C partner/host/source, gadget HID,
-#     UDC configured) wins; anything else is unknown and opens no release gate.
-#     This is fail-safe: "DP gone but adb USB still connected" stays
-#     present/unknown and never releases via dp_absent; T4 calibrates the real
-#     values (BUILD-NOTES §9).
+#     never absence evidence; only "connected" is present evidence.
+#     2.1.6 (exit-release FAIL, 2026-11-13 01:40): the UDC state is the
+#     authoritative host-data-link evidence. Configfs hid.usb0/1 is NOT: the
+#     candidate itself creates those functions, so they survive a cable pull and
+#     the 2.1.5 "HID absent + all UDC not attached" conjunction never became
+#     true (candidate kept grabbing event11 after the Mac session ended).
+#     Absent is now "every readable UDC state is not attached"; present is "any
+#     readable UDC state is configured". Only when no UDC state is readable (or
+#     the readable set is mixed/unknown) does the monitor fall back to the
+#     present-evidence signals (DRM connected, Type-C partner/cable, configfs
+#     HID); without one it reports unknown. Unknown opens no release gate.
+#     This stays fail-safe for "DP gone but adb USB still connected" (UDC
+#     configured -> present, no dp_absent release); the sustained absent window
+#     (default 15s) covers transient UDC dips during a take-over.
 #   * session_lost is platform-tool verify failure OR a candidate descriptor
 #     mismatch (the same 9/62 + report_desc identity platform.sh:68). The
 #     descriptor arm is what catches "configfs teardown left the candidate
@@ -120,32 +126,45 @@ dp_desc_ended=0
 dp_last_state=
 wlog() { printf '%s WATCHDOG %s\n' "$(date +%s)" "$*" >> "$WLOG"; }
 # External DP-in session presence: present|absent|unknown.
-# Present evidence (any one is enough; it always wins over absence):
+# 2.1.6: UDC wins.
+#  * any readable UDC state == "configured"       -> present;
+#  * every readable UDC state == "not attached"   -> absent (even while the
+#    candidate's own configfs HID functions persist: they are self-referential,
+#    not host-session evidence);
+#  * no readable UDC (or a mixed/unknown set)      -> fall back to the
+#    present-evidence signals below; without one -> unknown.
+# Fallback present evidence (any one is enough):
 #  * DRM DP/HDMI connector status starts with "connected";
 #  * a Type-C partner/cable object exists (the cable is attached; T4 measured
 #    port0-partner present with data_role=device, so data_role/power_role alone
 #    are deliberately not used - they can describe the port, not DP consumption);
-#  * configfs has hid.usb0 or hid.usb1;
-#  * a UDC state is "configured".
-# Absence evidence (both required, never one alone):
-#  * the configfs gadget parent is readable and has neither hid function, AND
-#  * every readable UDC state is exactly "not attached".
-# A disconnected DRM connector is NOT absence evidence. T4 measured
-# card0-DP-1=disconnected/disabled while DP-in was live at 3408x2272@120, so
-# using DRM alone would kill a healthy Mac session. A present signal (e.g. adb
-# USB still configured) also blocks dp_absent; that is deliberate fail-safe,
-# and it means "DP gone but USB attached" falls to session_lost/manual release
-# unless T4 calibration proves a better signal. Unknown never releases.
+#  * configfs has hid.usb0 or hid.usb1.
+# A disconnected DRM connector is NOT absence evidence. Unknown never releases.
 dp_state() {
  if [ -n "${MIPAD_DP_PRESENT_PROBE:-}" ] && [ -x "${MIPAD_DP_PRESENT_PROBE:-/nonexistent}" ]; then
   if p=$("$MIPAD_DP_PRESENT_PROBE" 2>/dev/null); then :; else p=unknown; fi
   case "$p" in present|absent|unknown) printf '%s' "$p"; return 0;; esac
   printf unknown; return 0
  fi
- present=0
- hid_absent=0
+ # 2.1.6: UDC state is the authoritative host-data-link evidence, so it is
+ # collected first and decides present/absent before any configfs HID check.
  udc_seen=0
+ udc_configured=0
  udc_absent=1
+ for f in "$SYS"/class/udc/*/state; do
+  [ -r "$f" ] || continue
+  udc_seen=1
+  case "$(cat "$f" 2>/dev/null)" in
+   configured) udc_configured=1;;
+   'not attached') :;;
+   *) udc_absent=0;;
+  esac
+ done
+ if [ "$udc_configured" = 1 ]; then printf present; return 0; fi
+ if [ "$udc_seen" = 1 ] && [ "$udc_absent" = 1 ]; then printf absent; return 0; fi
+ # UDC unreadable or mixed/unknown: fall back to the present-evidence signals.
+ # Absence is NOT inferred here; without a positive signal the answer is unknown.
+ present=0
  for f in "$SYS"/class/drm/card*-DP*/status "$SYS"/class/drm/card*-HDMI*/status; do
   [ -r "$f" ] || continue
   case "$(cat "$f" 2>/dev/null)" in connected*) present=1;; esac
@@ -153,26 +172,10 @@ dp_state() {
  for f in "$SYS"/class/typec/port0-partner* "$SYS"/class/typec/port0-cable*; do
   [ -e "$f" ] && present=1
  done
- if [ -r "$GADGET" ]; then
-  if [ -e "$GADGET/hid.usb0" ] || [ -e "$GADGET/hid.usb1" ]; then
-   present=1
-  else
-   hid_absent=1
-  fi
+ if [ -r "$GADGET" ] && { [ -e "$GADGET/hid.usb0" ] || [ -e "$GADGET/hid.usb1" ]; }; then
+  present=1
  fi
- for f in "$SYS"/class/udc/*/state; do
-  [ -r "$f" ] || continue
-  udc_seen=1
-  case "$(cat "$f" 2>/dev/null)" in
-   configured) present=1;;
-   'not attached') :;;
-   *) udc_absent=0;;
-  esac
- done
  if [ "$present" = 1 ]; then printf present; return 0; fi
- if [ "$hid_absent" = 1 ] && [ "$udc_seen" = 1 ] && [ "$udc_absent" = 1 ]; then
-  printf absent; return 0
- fi
  printf unknown
 }
 # F2: the platform-tool verify only proves process/fd identity. platform.sh:68
