@@ -191,6 +191,62 @@ wait_probe() {
   *) return 1;;
  esac
 }
+# --- 2.1.5 handover quiescence (T2) ----------------------------------------
+# 2.1.4 mounted the SVID override first, then released and stopped the stock
+# HAL and immediately ran find/launch: the candidate could exec while init had
+# not yet proven the stock HAL stopped and the old hidg consumers were still
+# live. A cold reboot (bootreason AP_S_COLDBOOT, pstore pmsg only) was observed
+# inside exactly that window; the root cause is still under T1 investigation.
+# This is a timing hardening of that transient window, NOT a claimed
+# root-cause fix. The SVID mount and the candidate launch now happen only
+# after the stop is acknowledged by init, both hidg endpoints are gone and a
+# quiet window has elapsed. Every wait is bounded: the diagnostic env knobs
+# may only shrink the window inside the reviewed envelope below.
+handover_tenths() { # raw_ms default_ms max_ms -> 0.1s ticks (clamped)
+ _raw=$1
+ case "$_raw" in ''|*[!0-9]*) _raw=$2;; esac
+ [ "$_raw" -ge 100 ] || _raw=$2
+ [ "$_raw" -le "$3" ] || _raw=$3
+ printf '%s\n' $((_raw / 100))
+}
+# Fail-closed undo for a partially attempted handover. Never reissues ctl.stop
+# and never loops back into the stop path: it restores the stock HAL best
+# effort (bounded), removes an SVID override it had applied and terminates
+# only the candidate/owner journals this invocation launched. The pending
+# journal is deliberately retained: recover()/the watchdog own the rest of the
+# fail-closed cleanup.
+handover_abort() { # reason svid_applied launched detail
+ _reason=$1; _svid=$2; _launched=$3; _detail=${4:-none}
+ if [ "$_launched" = 1 ]; then
+  if [ -f "$S/candidate" ]; then
+   "$T" terminate "$S/candidate" >/dev/null 2>&1 || log 'HANDOVER_ABORT_UNDONE step=candidate'
+  fi
+  if [ -f "$S/candidate-owner" ]; then
+   "$T" terminate "$S/candidate-owner" >/dev/null 2>&1 || log 'HANDOVER_ABORT_UNDONE step=candidate-owner'
+  fi
+  rm -f "$S/candidate.new" "$S/candidate-owner.new"
+ fi
+ if [ "$_svid" = 1 ]; then
+  svid_action disable >/dev/null 2>&1 || log 'HANDOVER_ABORT_UNDONE step=svid_disable'
+ fi
+ # One bounded stock-HAL restore attempt: a running HAL ignores start, a
+ # stopped one gets a single start (never a second ctl.stop, no retry loop
+ # around the stop itself).
+ setprop ctl.start vendor.usb.dp.hal >/dev/null 2>&1 || log 'HANDOVER_ABORT_UNDONE step=ctl_start'
+ _restored=0
+ _n=0
+ while [ "$_n" -lt 20 ]; do
+  if record_hal >/dev/null 2>&1 && "$T" original "$S/hal" >/dev/null 2>&1; then
+   _restored=1
+   break
+  fi
+  sleep 0.1
+  _n=$((_n + 1))
+ done
+ if [ "$_restored" = 1 ]; then _detail="$_detail,stock=restored"; else _detail="$_detail,stock=unverified"; fi
+ log "HANDOVER_ABORT reason=$_reason detail=$_detail svid_rollback=$_svid launched=$_launched pending=retained"
+ return 0
+}
 recover() {
  [ -e "$S/pending" ] || [ -f "$S/recovery-owner" ] || return 0
  # Probe BEFORE candidate termination, SVID changes or owner replacement.
@@ -303,30 +359,124 @@ reconcile() {
  fi
  descriptors_save && stage || return 1
  boot > "$S/pending.new" && mv "$S/pending.new" "$S/pending" && sync || return 1
- svid_action enable || return 1
+ # The recorded factory HAL must still be the authenticated original before
+ # anything is torn down.
  "$T" same "$S/hal" && "$T" original "$S/hal" || return 1
  # Factory HAL owns all gadget writes; release its old gadget before stop.
  lifecycle_release || return 1
- setprop ctl.stop vendor.usb.dp.hal || return 1
- n=0; until "$T" gone "$S/hal" && [ "$(getprop init.svc.vendor.usb.dp.hal)" = stopped ]; do n=$((n+1)); [ "$n" -lt 50 ] || return 1; sleep 0.1; done
+ # 2.1.5 handover: stop -> init/gadget quiescence -> quiet window -> SVID
+ # mount -> unique-absence check -> candidate launch. See the block comment on
+ # handover_abort() for why the SVID mount moved behind the stop.
+ ht_stop=$(handover_tenths "${MIPAD_DP_HANDOVER_STOP_MS:-}" 4000 5000)
+ ht_quiet=$(handover_tenths "${MIPAD_DP_HANDOVER_QUIET_MS:-}" 800 2000)
+ ht_total=$(handover_tenths "${MIPAD_DP_HANDOVER_TOTAL_MS:-}" 8000 8000)
+ [ $((ht_stop + ht_quiet)) -le "$ht_total" ] || ht_total=$((ht_stop + ht_quiet))
+ hticks=0
+ svc=unknown
+ log "HANDOVER_START stop_tenths=$ht_stop quiet_tenths=$ht_quiet total_tenths=$ht_total"
+ if ! setprop ctl.stop vendor.usb.dp.hal; then
+  handover_abort stop_rejected 0 0 ctl_stop
+  return 1
+ fi
+ # Bounded stop wait: init must report stopped, the authenticated old PID must
+ # be gone and both hidg endpoints must disappear. A HAL that comes back after
+ # the stop was acknowledged is a restart, not a slow teardown: abort once,
+ # never issue a second stop.
+ stop_seen=0
+ stop_ok=0
+ ht_limit=$ht_stop
+ [ "$ht_limit" -le "$((ht_total - hticks))" ] || ht_limit=$((ht_total - hticks))
+ while [ "$hticks" -lt "$ht_limit" ]; do
+  svc=$(getprop init.svc.vendor.usb.dp.hal) || svc=unknown
+  case "$svc" in
+   stopped) stop_seen=1;;
+   running)
+    if [ "$stop_seen" = 1 ]; then
+     handover_abort hal_restarted 0 0 init.svc=running-after-stopped
+     return 1
+    fi;;
+  esac
+  if [ "$stop_seen" = 1 ] && [ ! -e /dev/hidg0 ] && [ ! -e /dev/hidg1 ] && "$T" gone "$S/hal"; then
+   stop_ok=1
+   break
+  fi
+  sleep 0.1
+  hticks=$((hticks + 1))
+ done
+ if [ "$stop_ok" != 1 ]; then
+  hidg0=present; [ -e /dev/hidg0 ] || hidg0=gone
+  hidg1=present; [ -e /dev/hidg1 ] || hidg1=gone
+  handover_abort stop_timeout 0 0 "svc=$svc,hidg0=$hidg0,hidg1=$hidg1"
+  return 1
+ fi
+ # Quiet window: hold the quiescent state for a bounded interval so init's
+ # post-stop teardown and the USB controller deconfiguration settle before
+ # the SVID mount and the candidate exec (0.1s granularity). The whole
+ # stop+quiet pre-launch window stays inside the total cap.
+ ht_limit=$ht_quiet
+ [ "$ht_limit" -le "$((ht_total - hticks))" ] || ht_limit=$((ht_total - hticks))
+ qticks=0
+ while [ "$qticks" -lt "$ht_limit" ]; do
+  svc=$(getprop init.svc.vendor.usb.dp.hal) || svc=unknown
+  if [ "$svc" = running ]; then
+   handover_abort hal_restarted 0 0 init.svc=running-during-quiet
+   return 1
+  fi
+  sleep 0.1
+  qticks=$((qticks + 1))
+  hticks=$((hticks + 1))
+ done
+ # A gadget that reappeared in the quiet window means something reconfigured
+ # USB after init claimed the service stopped: treat it exactly like a restart.
+ if [ -e /dev/hidg0 ] || [ -e /dev/hidg1 ]; then
+  handover_abort hal_restarted 0 0 hidg_reappeared
+  return 1
+ fi
+ if [ "$hticks" -gt "$ht_total" ]; then
+  handover_abort budget 0 0 "ticks=$hticks"
+  return 1
+ fi
+ # SVID override only after the gadget is provably quiet. apply() verifies
+ # ownership; read the override back explicitly before any launch.
+ if ! svid_action enable; then
+  handover_abort svid_enable 1 0 apply_failed
+  return 1
+ fi
+ if ! owned || [ "$(cat "$FAKE")" != 0 ]; then
+  handover_abort svid_verify 1 0 readback
+  return 1
+ fi
  # No second HAL: require unique discovery to report absent immediately pre-launch.
  rc=0; "$T" find "$HAL" >/dev/null || rc=$?
- [ "$rc" = 2 ] || return 1
- "$T" launch hal "$HAL" "$DSO" "$STAGE" "$S/candidate" || return 1
+ if [ "$rc" != 2 ]; then
+  handover_abort hal_present 1 0 "find_rc=$rc"
+  return 1
+ fi
+ if ! "$T" launch hal "$HAL" "$DSO" "$STAGE" "$S/candidate"; then
+  handover_abort launch 1 0 launch_failed
+  return 1
+ fi
  # Binder registration may lag exec, so owner retries are bounded and each is tracked.
  n=0
  while [ "$n" -lt 20 ]; do
   if [ -f "$S/candidate-owner" ] && "$T" same "$S/candidate-owner"; then break; fi
   rm -f "$S/candidate-owner" "$S/candidate-owner.new"
-  launch_owner "$S/candidate-owner" || return 1
+  if ! launch_owner "$S/candidate-owner"; then
+   handover_abort owner_launch 1 1 launch_owner_failed
+   return 1
+  fi
   sleep 0.2; n=$((n+1))
  done
- wait_verify "$S/candidate" "$S/candidate-owner" hooked || return 1
+ if ! wait_verify "$S/candidate" "$S/candidate-owner" hooked; then
+  handover_abort candidate_verify 1 1 verify_timeout
+  return 1
+ fi
  if [ -f "$S/recovery-owner" ]; then
   [ "$(cat "$S/owner-boot")" = "$(boot)" ] || return 1
   "$T" terminate "$S/recovery-owner" || return 1
   rm -f "$S/recovery-owner" "$S/owner-boot"
  fi
+ log "HANDOVER_DONE stop_tenths=$ht_stop quiet_tenths=$ht_quiet elapsed_tenths=$hticks"
  log 'candidate ready; dynamic PID+starttime, HAL domain, AT_SECURE=0, DSO maps, two FDs and live prepare owner verified'
 }
 guard || { log 'profile/domain/namespace guard rejected; no mutation'; exit 70; }

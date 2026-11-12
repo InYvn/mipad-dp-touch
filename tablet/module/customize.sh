@@ -143,7 +143,7 @@ fi
 (cd "$MODPATH" && sha256sum -c files.sha256) || abort "Package integrity check failed."
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 for f in module-controller platform-tool prepare-owner platform.sh bootstrap.sh runtime-monitor.sh service.sh post-fs-data.sh uninstall.sh action.sh; do set_perm "$MODPATH/$f" 0 0 0755; done
-ui_print "- Mipad DP Touch 触控解锁 2.1.4"
+ui_print "- Mipad DP Touch 触控解锁 2.1.5"
 ui_print "- 提供 DP-in 触摸屏与笔接口，并优化双指缩放。"
 ui_print "- 仅支持 KernelSU / root / Enforcing / arm64。"
 ui_print "- 需要匹配的小米平板 9 Pro Max（yingtian）硬件与 HAL/init 固件。"
