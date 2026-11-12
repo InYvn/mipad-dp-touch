@@ -1543,13 +1543,6 @@ class SettingsWindow(_Pane):
                 btn.addSubview_(ic)
             v.addSubview_(btn)
             self.c["tb_%s" % icon.replace(".", "_")] = btn
-        # 触控可视化：文字开关（图标容易被当成「手指触控」的开关）
-        _viz_on = bool(getattr(self.app, "_viz", None) is not None and self.app._viz.is_on)
-        self.c["viz"] = _button(
-            "触控可视化", self._r(x + w - 32 - 3 * 36 - 122, y - 25, 116, 22),
-            self, "onTouchViz:", switch=True, state=1 if _viz_on else 0, small=True)
-        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点")
-        v.addSubview_(self.c["viz"])
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
         self.c["ov_hero"] = _label("设备概览", self._r(x, y, w - 40, 40), size=30, bold=True)
@@ -1992,6 +1985,12 @@ class SettingsWindow(_Pane):
         v.addSubview_(_label("触控屏接口", self._r(x, y + 16, 300, 18), size=13, bold=True))
         self.c["diag_touch"] = _label("", self._r(x, y + 36, 420, 15), size=11, dim=True)
         v.addSubview_(self.c["diag_touch"])
+        _viz_on = bool(getattr(self.app, "_viz", None) is not None and self.app._viz.is_on)
+        self.c["viz"] = _button(
+            "触控可视化", self._r(x + w - 122, y + 16, 116, 22),
+            self, "onTouchViz:", switch=True, state=1 if _viz_on else 0, small=True)
+        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点（本应用前台时不显示）")
+        v.addSubview_(self.c["viz"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60
         v.addSubview_(_label("高级诊断", self._r(x, y + 16, 300, 18), size=13, bold=True))

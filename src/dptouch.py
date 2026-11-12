@@ -2274,6 +2274,11 @@ class DPApp(NSObject):
             self._viz = TV.TouchOverlay(self.engine, log=log)
         on = self._viz.toggle()
         log("触控可视化: %s" % ("开" if on else "关"))
+        if on and self._viz.own_front():
+            try:
+                self.win.toast("已开启 · 切到其他应用后显示（本应用前台时不画）", 3.2)
+            except Exception:
+                pass
         try:
             self._reflect()
             if self.win is not None:

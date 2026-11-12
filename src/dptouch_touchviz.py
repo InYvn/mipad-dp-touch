@@ -7,6 +7,7 @@
 覆盖层关掉即停，不额外开 HID 设备、不合成事件。
 """
 
+import os
 import time
 from collections import deque
 
@@ -14,7 +15,7 @@ import objc
 
 from AppKit import (
     NSBackingStoreBuffered, NSBezierPath, NSColor, NSMakeRect, NSScreen,
-    NSScreenSaverWindowLevel, NSPanel, NSTimer, NSView,
+    NSApplication, NSScreenSaverWindowLevel, NSPanel, NSTimer, NSView,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
     NSWindowCollectionBehaviorIgnoresCycle,
@@ -75,6 +76,8 @@ class TouchOverlay:
         self._trails = {}               # key -> deque[(gx, gy, t)]
         self._points = []
         self._boxes = {}                # id(view) -> 上一帧画过的区域
+        self._hidden_own = False        # 本应用前台时整组收起
+        self._free_since = None         # 连续「不是本应用前台」的起点（防闪）
         self._timer = None
 
     # ---------------- 生命周期 ----------------
@@ -82,8 +85,10 @@ class TouchOverlay:
         self.is_on = True
         self.engine.set_live(True)
         self._build_windows()
-        for _s, w, _v in self._wins:
-            w.orderFrontRegardless()
+        self._hidden_own = self.own_front()      # 本应用前台：先不上屏，切走再显示
+        if not self._hidden_own:
+            for _s, w, _v in self._wins:
+                w.orderFrontRegardless()
         if self._timer is None or not self._timer.isValid():
             self._timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 1.0 / FPS, self, "tick:", None, True)
@@ -103,6 +108,7 @@ class TouchOverlay:
         self._trails = {}
         self._points = []
         self._boxes = {}
+        self._hidden_own = False
 
     def toggle(self):
         self.hide() if self.is_on else self.show()
@@ -147,7 +153,34 @@ class TouchOverlay:
         return (gx - f.origin.x, f.origin.y + f.size.height - main_h + gy)
 
     # ---------------- 每帧 ----------------
+    def own_front(self):
+        """本应用是否是当前活跃 App。NSWorkspace.frontmostApplication 在 accessory 应用上会抖，
+        用 NSApp.isActive() 更贴近「用户正在操作我们自己的窗口」。"""
+        app = NSApplication.sharedApplication()
+        return bool(app is not None and app.isActive())
+
     def tick_(self, _timer):
+        # 本应用自己在前台时整组收起：既没有参考价值，也会和主线程的事件处理抢时间。
+        # 激活状态会抖（AX 请求、弹窗），所以要求连续 0.3s 都不是本应用前台才上屏。
+        if self.own_front():
+            self._free_since = None
+            if not self._hidden_own:
+                for _s, w, _v in self._wins:
+                    w.orderOut_(None)
+                self._hidden_own = True
+                self._points = []
+                self._trails = {}
+                self.log("触控可视化: 本应用前台，覆盖层收起")
+            return
+        now = time.time()
+        if self._free_since is None:
+            self._free_since = now
+        if self._hidden_own and now - self._free_since >= 0.3:
+            for _s, w, _v in self._wins:
+                w.orderFrontRegardless()
+            self._hidden_own = False
+            self.log("触控可视化: 覆盖层显示")
+
         snap = self.engine.live_snapshot()
         now = snap["now"]
         rect = snap.get("rect")
