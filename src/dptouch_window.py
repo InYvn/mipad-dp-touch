@@ -1986,10 +1986,16 @@ class SettingsWindow(_Pane):
         self.c["diag_touch"] = _label("", self._r(x, y + 36, 420, 15), size=11, dim=True)
         v.addSubview_(self.c["diag_touch"])
         _viz_on = bool(getattr(self.app, "_viz", None) is not None and self.app._viz.is_on)
-        self.c["viz"] = _button(
-            "触控可视化", self._r(x + w - 122, y + 16, 116, 22),
-            self, "onTouchViz:", switch=True, state=1 if _viz_on else 0, small=True)
-        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点（本应用前台时不显示）")
+        v.addSubview_(_label("触控可视化", self._r(x + w - 36 - 96, y + 23, 90, 18),
+                             size=13, bold=True, right=True))
+        self.c["viz"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 20, 36, 22))
+        self.c["viz"].setBordered_(False)
+        self.c["viz"].setTitle_("")
+        self.c["viz"].setState_(1 if _viz_on else 0)
+        self.c["viz"].setToolTip_("在屏幕上实时显示触点与笔的落点（落在本应用窗口上的不画）")
+        self.c["viz"].setAccessibilityLabel_("触控可视化")
+        self.c["viz"].setTarget_(self)
+        self.c["viz"].setAction_("onTouchViz:")
         v.addSubview_(self.c["viz"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60

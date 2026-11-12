@@ -2276,7 +2276,7 @@ class DPApp(NSObject):
         log("触控可视化: %s" % ("开" if on else "关"))
         if on and self._viz.own_front():
             try:
-                self.win.toast("已开启 · 切到其他应用后显示（本应用前台时不画）", 3.2)
+                self.win.toast("已开启 · 落在本应用窗口上的触点不显示", 3.2)
             except Exception:
                 pass
         try:

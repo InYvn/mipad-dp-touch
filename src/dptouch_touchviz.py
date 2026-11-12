@@ -85,10 +85,8 @@ class TouchOverlay:
         self.is_on = True
         self.engine.set_live(True)
         self._build_windows()
-        self._hidden_own = self.own_front()      # 本应用前台：先不上屏，切走再显示
-        if not self._hidden_own:
-            for _s, w, _v in self._wins:
-                w.orderFrontRegardless()
+        for _s, w, _v in self._wins:
+            w.orderFrontRegardless()
         if self._timer is None or not self._timer.isValid():
             self._timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 1.0 / FPS, self, "tick:", None, True)
@@ -159,28 +157,38 @@ class TouchOverlay:
         app = NSApplication.sharedApplication()
         return bool(app is not None and app.isActive())
 
-    def tick_(self, _timer):
-        # 本应用自己在前台时整组收起：既没有参考价值，也会和主线程的事件处理抢时间。
-        # 激活状态会抖（AX 请求、弹窗），所以要求连续 0.3s 都不是本应用前台才上屏。
-        if self.own_front():
-            self._free_since = None
-            if not self._hidden_own:
-                for _s, w, _v in self._wins:
-                    w.orderOut_(None)
-                self._hidden_own = True
-                self._points = []
-                self._trails = {}
-                self.log("触控可视化: 本应用前台，覆盖层收起")
-            return
-        now = time.time()
-        if self._free_since is None:
-            self._free_since = now
-        if self._hidden_own and now - self._free_since >= 0.3:
-            for _s, w, _v in self._wins:
-                w.orderFrontRegardless()
-            self._hidden_own = False
-            self.log("触控可视化: 覆盖层显示")
+    def own_rects(self):
+        """本应用可见窗口的屏幕矩形（CG 全局，左上原点），覆盖层自己的窗除外。"""
+        app = NSApplication.sharedApplication()
+        if app is None:
+            return []
+        skip = set()
+        for _s, w, _v in self._wins:
+            try:
+                skip.add(w.windowNumber())
+            except Exception:
+                pass
+        main_h = self._main_h()
+        out = []
+        for w in app.windows():
+            try:
+                if not w.isVisible() or w.windowNumber() in skip:
+                    continue
+                f = w.frame()
+                out.append((f.origin.x, main_h - (f.origin.y + f.size.height),
+                            f.size.width, f.size.height))
+            except Exception:
+                continue
+        return out
 
+    @staticmethod
+    def _hit(rects, gx, gy):
+        for x, y, w, h in rects:
+            if x <= gx <= x + w and y <= gy <= y + h:
+                return True
+        return False
+
+    def tick_(self, _timer):
         snap = self.engine.live_snapshot()
         now = snap["now"]
         rect = snap.get("rect")
@@ -204,6 +212,10 @@ class TouchOverlay:
             if p["x"] is not None and p["y"] is not None and (p["down"] or now - p["t"] < 1.0):
                 points.append(("pen", ox + p["x"] * rw, oy + p["y"] * rh,
                                bool(p["down"]), True, float(p["pres"])))
+
+        own = self.own_rects()
+        if own:
+            points = [p for p in points if not self._hit(own, p[1], p[2])]
 
         alive = {k for k, *_ in points}
         for k in list(self._trails):
