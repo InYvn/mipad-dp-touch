@@ -1,5 +1,5 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.3",
   "module_id": "mipad_dptouch_fullsplit_local",
   "installation_enabled": true,
   "manager_installation_tested": false,
@@ -51,8 +51,8 @@
   },
   "sender": {
     "mode": "fullsplit explicit-release mode1 bounded-v2",
-    "sha256": "053ee9593102f907aa48e6df9a7325b76059a398b1789f45d651c6481a26748e",
-    "source_changed": false
+    "sha256": "72757954666bcca58a022c546f81fefb1bb7ffef4a3250fcc9236982bc79c488",
+    "source_changed": true
   },
   "startup": {
     "implementation": "persistent native guardian+worker+state-owned monitor; dynamic discovery; pidfd generation-bound rollback",

@@ -4,9 +4,13 @@ set -eu
 M=$1
 S=$2
 # Covers all callers, including service reentry and uninstall's retained owner.
-if [ "${3:-}" != --monitor-locked ]; then
- exec "$S/module-controller" monitor "$M" "$S" "$0"
-fi
+# --monitor-locked is the normal loop. --release-now is the 2.1.2 uninstall hook:
+# it deliberately bypasses the module-controller and the watchdog kill switches
+# so removal cannot leave a journaled grabber behind (F4).
+case "${3:-}" in
+ --monitor-locked|--release-now) :;;
+ *) exec "$S/module-controller" monitor "$M" "$S" "$0";;
+esac
 failures=0
 # A breaker that only counts samples (3 x ~2s) cannot tell a boot/plug-in
 # transient from a real fault: HAL restart, module-dir swap and USB churn all
@@ -31,8 +35,430 @@ refresh_epoch() {
   printf '%s MONITOR_EPOCH monitor=%s failures=0 epoch=%s\n' "$(date +%s)" "$$" "$epoch" >> "$S/supervisor.log"
  fi
 }
+
+# ---------------------------------------------------------------------------
+# 2.1.2 DP lifecycle watchdog (corrections for 2.1.1: BUILD-NOTES §0; the
+# F1/F2/F4 test matrix is BUILD-NOTES §11).
+#
+# The hooked DP candidate is the stock /odm/bin/vendor.xiaomi.usb.dp-service
+# started per DP-in session; it holds an EVIOCGRAB on the physical touchpad
+# (event11), so it must exit as soon as the DP-in session ends. 2.1.0 had no
+# path that terminated it after the session: the panel input switch / Mac-side
+# stop left the candidate grabbing the touchpad while Android's own touchscreen
+# (event6) delivered no usable events. This watchdog releases ONLY the candidate
+# this module journaled and launched, and only after the session is provably
+# over. Invariants, in order of importance:
+#   * Never signal anything without a journal ($S/candidate) that platform-tool
+#     "same" still authenticates: pid + starttime + exe must match the record.
+#     A stock HAL, a recycled pid, an unrelated process or a preexec journal is
+#     therefore never a target. There is no process-name scan anywhere here.
+#   * Presence is evidence-based, not DRM-only. T4 found card0-DP-1 reporting
+#     "disconnected/disabled" while a Mac session was live at 3408x2272@120
+#     (DSI connected, Type-C host/source, configfs hid.usb0/1 present, UDC
+#     configured, candidate running). A disconnected DRM connector is therefore
+#     never absence evidence; only "connected" is present evidence. Absent
+#     requires two independent session-ended marks: a readable gadget parent
+#     with neither hid.usb0 nor hid.usb1, AND every UDC state "not attached".
+#     Any present mark (DRM connected, Type-C partner/host/source, gadget HID,
+#     UDC configured) wins; anything else is unknown and opens no release gate.
+#     This is fail-safe: "DP gone but adb USB still connected" stays
+#     present/unknown and never releases via dp_absent; T4 calibrates the real
+#     values (BUILD-NOTES §9).
+#   * session_lost is platform-tool verify failure OR a candidate descriptor
+#     mismatch (the same 9/62 + report_desc identity platform.sh:68). The
+#     descriptor arm is what catches "configfs teardown left the candidate
+#     verifying while the panel was switched back"; it is only allowed when the
+#     gadget parent is readable (otherwise the answer is unknown, not evidence).
+#   * The release helper is bounded: 3s initial wait, then SIGTERM for up to 2s,
+#     then SIGKILL for up to 1s, with a done-file confirmation. A helper that
+#     ignores TERM must never wedge the monitor (2.1.1 F1).
+#   * A remove marker or a missing module directory is itself disabled evidence,
+#     and --release-now gives uninstall a direct, fail-closed release hook (2.1.1
+#     F4). Both reuse the same identity-bound release below; neither guesses.
+#   * Never touch recovery-owner/owner-boot/svid/init services: the normal
+#     recover/reconcile paths keep owning those.
+#   * Be idempotent: after a release the journals are gone, so the next sample
+#     is a no-op, and the stock HAL path is handed back so DP-in can come back
+#     through the same reconcile the module always used.
+#   * Stay observability-only when a release is refused: every decision is
+#     appended to supervisor.log with a WATCHDOG prefix for the device runbook.
+# ---------------------------------------------------------------------------
+T=$S/platform-tool
+CLIENT=$S/prepare-owner
+HAL=/odm/bin/vendor.xiaomi.usb.dp-service
+DSO=/dev/mipad-fullsplit-v104-local/fullsplit-bounded-v2.so
+WLOG=$S/supervisor.log
+# Test-only root overrides so the shim harness can model the T4 DP-in layout
+# without touching the device. Production leaves both unset (real paths).
+SYS=${MIPAD_DP_SYSFS_ROOT:-/sys}
+GADGET=${MIPAD_DP_GADGET:-/config/usb_gadget/g1/functions}
+# Kill switches for the field: an env override (manual monitor run) or a marker
+# file that adb/manager can create without repackaging. Both restore 2.1.0
+# behaviour exactly (idle monitor, no probing, no release).
+watchdog=${MIPAD_DP_WATCHDOG:-1}
+if [ -e "$S/watchdog.off" ]; then watchdog=0; fi
+# Absence must persist across consecutive samples; the defaults leave room for
+# USB/DP re-enumeration and a Mac-side replug without ever releasing a live
+# session. Tests narrow them; production keeps these values.
+absent_limit=${MIPAD_DP_ABSENT_SECONDS:-15}
+case "$absent_limit" in ''|*[!0-9]*) absent_limit=15;; esac
+disabled_limit=${MIPAD_DP_DISABLED_SECONDS:-5}
+case "$disabled_limit" in ''|*[!0-9]*) disabled_limit=5;; esac
+verify_limit=${MIPAD_DP_VERIFY_SECONDS:-30}
+case "$verify_limit" in ''|*[!0-9]*) verify_limit=30;; esac
+if [ "$absent_limit" -lt 1 ]; then absent_limit=1; fi
+if [ "$disabled_limit" -lt 1 ]; then disabled_limit=1; fi
+if [ "$verify_limit" -lt 1 ]; then verify_limit=1; fi
+dp_absent_since=0
+dp_disabled_since=0
+dp_unverified_since=0
+dp_last_state=
+wlog() { printf '%s WATCHDOG %s\n' "$(date +%s)" "$*" >> "$WLOG"; }
+# External DP-in session presence: present|absent|unknown.
+# Present evidence (any one is enough; it always wins over absence):
+#  * DRM DP/HDMI connector status starts with "connected";
+#  * a Type-C partner/cable object exists (the cable is attached; T4 measured
+#    port0-partner present with data_role=device, so data_role/power_role alone
+#    are deliberately not used - they can describe the port, not DP consumption);
+#  * configfs has hid.usb0 or hid.usb1;
+#  * a UDC state is "configured".
+# Absence evidence (both required, never one alone):
+#  * the configfs gadget parent is readable and has neither hid function, AND
+#  * every readable UDC state is exactly "not attached".
+# A disconnected DRM connector is NOT absence evidence. T4 measured
+# card0-DP-1=disconnected/disabled while DP-in was live at 3408x2272@120, so
+# using DRM alone would kill a healthy Mac session. A present signal (e.g. adb
+# USB still configured) also blocks dp_absent; that is deliberate fail-safe,
+# and it means "DP gone but USB attached" falls to session_lost/manual release
+# unless T4 calibration proves a better signal. Unknown never releases.
+dp_state() {
+ if [ -n "${MIPAD_DP_PRESENT_PROBE:-}" ] && [ -x "${MIPAD_DP_PRESENT_PROBE:-/nonexistent}" ]; then
+  if p=$("$MIPAD_DP_PRESENT_PROBE" 2>/dev/null); then :; else p=unknown; fi
+  case "$p" in present|absent|unknown) printf '%s' "$p"; return 0;; esac
+  printf unknown; return 0
+ fi
+ present=0
+ hid_absent=0
+ udc_seen=0
+ udc_absent=1
+ for f in "$SYS"/class/drm/card*-DP*/status "$SYS"/class/drm/card*-HDMI*/status; do
+  [ -r "$f" ] || continue
+  case "$(cat "$f" 2>/dev/null)" in connected*) present=1;; esac
+ done
+ for f in "$SYS"/class/typec/port0-partner* "$SYS"/class/typec/port0-cable*; do
+  [ -e "$f" ] && present=1
+ done
+ if [ -r "$GADGET" ]; then
+  if [ -e "$GADGET/hid.usb0" ] || [ -e "$GADGET/hid.usb1" ]; then
+   present=1
+  else
+   hid_absent=1
+  fi
+ fi
+ for f in "$SYS"/class/udc/*/state; do
+  [ -r "$f" ] || continue
+  udc_seen=1
+  case "$(cat "$f" 2>/dev/null)" in
+   configured) present=1;;
+   'not attached') :;;
+   *) udc_absent=0;;
+  esac
+ done
+ if [ "$present" = 1 ]; then printf present; return 0; fi
+ if [ "$hid_absent" = 1 ] && [ "$udc_seen" = 1 ] && [ "$udc_absent" = 1 ]; then
+  printf absent; return 0
+ fi
+ printf unknown
+}
+# F2: the platform-tool verify only proves process/fd identity. platform.sh:68
+# additionally requires the reviewed gadget descriptor shape, which is what
+# distinguishes a live DP session from configfs teardown that left the process
+# verifying. Mirror platform.sh's exact candidate shape here (hid.usb0 9 bytes,
+# hid.usb1 62 bytes, fixed report_desc hashes; the 10-byte factory hash is NOT a
+# candidate shape). Return 0 match, 1 "shape gone/mismatched" with a readable
+# gadget parent, 2 unknown (no sha256sum, unreadable parent, or an existing
+# function whose metadata cannot be read). Only 1 is release evidence:
+# SELinux/transient configfs failures must never release a live Mac session.
+candidate_descriptors_check() {
+ command -v sha256sum >/dev/null 2>&1 || return 2
+ [ -r "$GADGET" ] || return 2
+ has0=0
+ has1=0
+ [ -e "$GADGET/hid.usb0" ] && has0=1
+ [ -e "$GADGET/hid.usb1" ] && has1=1
+ # Readable parent with neither reviewed function: the candidate's 9/62 shape
+ # is gone. A half-present pair is the same teardown evidence (the sustained
+ # window in watchdog_tick still has to pass before anything is released).
+ if [ "$has0" = 0 ] || [ "$has1" = 0 ]; then return 1; fi
+ [ -r "$GADGET/hid.usb0/report_length" ] || return 2
+ [ -r "$GADGET/hid.usb0/report_desc" ] || return 2
+ [ -r "$GADGET/hid.usb1/report_length" ] || return 2
+ [ -r "$GADGET/hid.usb1/report_desc" ] || return 2
+ len0=$(cat "$GADGET/hid.usb0/report_length" 2>/dev/null) || return 2
+ len1=$(cat "$GADGET/hid.usb1/report_length" 2>/dev/null) || return 2
+ [ "$len0" = 9 ] || return 1
+ [ "$len1" = 62 ] || return 1
+ desc0=$(sha256sum "$GADGET/hid.usb0/report_desc" 2>/dev/null | cut -d ' ' -f1) || return 2
+ desc1=$(sha256sum "$GADGET/hid.usb1/report_desc" 2>/dev/null | cut -d ' ' -f1) || return 2
+ [ -n "$desc0" ] && [ -n "$desc1" ] || return 2
+ [ "$desc0" = 0ac38b057ec9608b20557ce069c520e1789bf8a597059126dc76d464f7599755 ] || return 1
+ [ "$desc1" = 2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25 ] || return 1
+ return 0
+}
+session_lost_evidence() {
+ if candidate_descriptors_check; then return 1; else rc=$?; fi
+ [ "$rc" = 1 ]
+}
+# Best-effort graceful gadget release before the identity-bound kill. Bounded by
+# design (2.1.2 F1): a helper that ignores SIGTERM must not wedge the monitor.
+# A tiny wrapper records the real client pid and a done marker; after 3s we
+# SIGTERM, wait up to 2s, SIGKILL, wait up to 1s, and then continue regardless.
+# If even the wrapper cannot be reaped, it is killed so the monitor's own child
+# table/proc chain stays bounded; the identity-bound terminate below remains the
+# authoritative release. The done marker is proof the client disappeared, not
+# that exit was graceful.
+release_helper() {
+ rm -f "$S/.release-helper.pid" "$S/.release-helper.done"
+ (
+  "$CLIENT" --release >> "$WLOG" 2>&1 &
+  c=$!
+  printf '%s\n' "$c" > "$S/.release-helper.pid"
+  wait "$c" 2>/dev/null || true
+  : > "$S/.release-helper.done"
+ ) &
+ wrapper=$!
+ n=0
+ while [ "$n" -lt 15 ]; do
+  if [ -e "$S/.release-helper.done" ]; then
+   wait "$wrapper" 2>/dev/null || true
+   rm -f "$S/.release-helper.pid" "$S/.release-helper.done"
+   return 0
+  fi
+  sleep 0.2
+  n=$((n+1))
+ done
+ wlog "RELEASE_HELPER_TIMEOUT"
+ # The wrapper writes the client pid immediately after forking it. If the pid
+ # file is not visible yet, poll for up to 1s before declaring it stuck: the
+ # helper may have finished between the last done-check and this line.
+ helper=
+ n=0
+ while [ "$n" -lt 5 ]; do
+  if [ -e "$S/.release-helper.done" ]; then break; fi
+  if [ -r "$S/.release-helper.pid" ]; then
+   helper=$(cat "$S/.release-helper.pid" 2>/dev/null || true)
+   [ -n "$helper" ] && break
+  fi
+  sleep 0.2
+  n=$((n+1))
+ done
+ if [ -e "$S/.release-helper.done" ]; then
+  # It finished on its own just after the grace window: no kill, no wedge.
+  wlog "RELEASE_HELPER_LATE"
+  wait "$wrapper" 2>/dev/null || true
+  rm -f "$S/.release-helper.pid" "$S/.release-helper.done"
+  return 0
+ fi
+ if [ -n "$helper" ] && [ "$helper" != 0 ]; then
+  kill -TERM "$helper" 2>/dev/null || true
+  n=0
+  while [ "$n" -lt 10 ]; do
+   if [ -e "$S/.release-helper.done" ]; then break; fi
+   sleep 0.2
+   n=$((n+1))
+  done
+  if [ ! -e "$S/.release-helper.done" ]; then
+   kill -KILL "$helper" 2>/dev/null || true
+   n=0
+   while [ "$n" -lt 5 ]; do
+    if [ -e "$S/.release-helper.done" ]; then break; fi
+    sleep 0.2
+    n=$((n+1))
+   done
+  fi
+  if [ -e "$S/.release-helper.done" ]; then
+   wlog "RELEASE_HELPER_KILLED"
+  else
+   # Kernel D-state or an unreaped zombie: never block the monitor on it. Kill
+   # our wrapper too; the helper is already unkillable and the candidate
+   # terminate below is authoritative.
+   wlog "RELEASE_HELPER_STUCK"
+   kill -KILL "$wrapper" 2>/dev/null || true
+  fi
+ else
+  wlog "RELEASE_HELPER_STUCK"
+  kill -KILL "$wrapper" 2>/dev/null || true
+ fi
+ # Only reap the wrapper when it has already published done; never wait on a
+ # wedged helper. The identity-bound terminate below remains authoritative.
+ if [ -e "$S/.release-helper.done" ]; then wait "$wrapper" 2>/dev/null || true; fi
+ rm -f "$S/.release-helper.pid" "$S/.release-helper.done"
+ return 0
+}
+restore_stock_hal() {
+ reason=$1
+ rc=0
+ "$T" find "$HAL" >/dev/null 2>&1 || rc=$?
+ if [ "$rc" = 0 ]; then return 0; fi
+ if [ "$rc" != 2 ]; then wlog "STOCK_HAL_AMBIGUOUS reason=$reason rc=$rc"; return 0; fi
+ if ! command -v setprop >/dev/null 2>&1; then wlog "STOCK_HAL_UNAVAILABLE reason=$reason"; return 0; fi
+ if ! setprop ctl.start vendor.usb.dp.hal >/dev/null 2>&1; then wlog "STOCK_HAL_START_FAILED reason=$reason"; return 0; fi
+ n=0
+ rc=0
+ while [ "$n" -lt 50 ]; do
+  rc=0
+  "$T" find "$HAL" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" = 0 ]; then break; fi
+  sleep 0.1
+  n=$((n+1))
+ done
+ if [ "$rc" = 0 ]; then wlog "STOCK_HAL_RESTORED reason=$reason"; else wlog "STOCK_HAL_START_TIMEOUT reason=$reason"; fi
+}
+# Every attempt restarts the streak counters, so a refused/failed release is
+# retried once per threshold window instead of on every 2s tick (no log storm,
+# no tight kill loop). Success is the only path that needs no backoff.
+reset_timers() { dp_absent_since=0; dp_disabled_since=0; dp_unverified_since=0; }
+# The only release path. Caller has already decided the session is over; this
+# function re-proves the identity from the journal before any signal and is
+# safe to call repeatedly (a stale/absent journal only ever cleans journals it
+# can prove dead).
+watchdog_release() {
+ reason=$1
+ cand=$S/candidate
+ if [ ! -e "$cand" ]; then
+  if [ "$reason" = dp_absent ] && { [ -e "$S/pending" ] || [ -e "$S/candidate-owner" ] || [ -e "$S/candidate.new" ] || [ -e "$S/candidate-owner.new" ]; }; then
+   rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" "$S/candidate-owner.new"
+   sync 2>/dev/null || true
+   wlog "CLEANED reason=$reason detail=no-candidate-journal"
+   reset_timers
+  fi
+  return 0
+ fi
+ if ! "$T" same "$cand" >/dev/null 2>&1; then
+  # Not the journaled live candidate: never signal it. Only drop records that
+  # platform-tool proves are dead (exited or starttime changed).
+  if "$T" gone "$cand" >/dev/null 2>&1; then
+   rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" "$S/candidate-owner.new"
+   sync 2>/dev/null || true
+   wlog "CLEANED reason=$reason detail=stale-candidate-journal"
+   reset_timers
+  else
+   wlog "REFUSED reason=$reason detail=candidate-not-live-not-provably-gone"
+   reset_timers
+  fi
+  return 0
+ fi
+ if "$T" verify "$cand" "$S/candidate-owner" hooked "$DSO" >/dev/null 2>&1; then
+  release_helper
+ fi
+ rc=0
+ "$T" terminate "$cand" || rc=$?
+ if [ "$rc" != 0 ]; then wlog "TERMINATE_FAILED reason=$reason rc=$rc"; reset_timers; return 0; fi
+ n=0
+ while [ "$n" -lt 50 ]; do
+  if ! "$T" same "$cand" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+  n=$((n+1))
+ done
+ if "$T" same "$cand" >/dev/null 2>&1; then wlog "TERMINATE_TIMEOUT reason=$reason"; reset_timers; return 0; fi
+ rm -f "$S/pending" "$S/candidate" "$S/candidate-owner" "$S/candidate.new" "$S/candidate-owner.new"
+ sync 2>/dev/null || true
+ wlog "RELEASED reason=$reason candidate=journaled grab=released"
+ reset_timers
+ restore_stock_hal "$reason"
+}
+# F4: deterministic uninstall hook. Runs even with the watchdog disabled and
+# bypasses the controller (uninstall may hold the monitor lock). The release
+# itself is still identity-bound and fail-closed; REFUSED leaves the journal for
+# the background monitor or the documented manual fallback.
+if [ "${3:-}" = --release-now ]; then
+ wlog "RELEASE_NOW reason=module_removed"
+ watchdog_release module_removed
+ exit 0
+fi
+# Sample the session state and release only after the corresponding streak.
+# Three independent, evidence-backed gates:
+#   dp_absent       no present evidence, configfs HID gone and UDC detached,
+#                   past the absence limit (DRM disconnected is not absence);
+#   module_disabled the module is disabled (disable/remove/missing dir, user
+#                   action or our own breaker), so it must not keep the touchpad
+#                   grabbed;
+#   session_lost    the journaled candidate either stopped verifying as the
+#                   hooked owner, or no longer matches the reviewed gadget
+#                   descriptor shape (platform.sh:68), past the verify limit.
+#                   Present evidence raises the window to 2x (stale configfs).
+watchdog_tick() {
+ st=$1
+ now=$(date +%s)
+ case "$st" in
+  present|absent|unknown) :;;
+  *) st=unknown;;
+ esac
+ if [ "$st" != "$dp_last_state" ]; then dp_last_state=$st; wlog "PROBE state=$st"; fi
+ if [ "$st" = absent ]; then
+  if [ "$dp_absent_since" = 0 ]; then dp_absent_since=$now; fi
+ else
+  dp_absent_since=0
+ fi
+ if [ -e "$M/disable" ] || [ -e "$M/remove" ] || [ ! -d "$M" ]; then
+  if [ "$dp_disabled_since" = 0 ]; then dp_disabled_since=$now; fi
+ else
+  dp_disabled_since=0
+ fi
+ unverified=0
+ why=
+ if [ -f "$S/candidate" ]; then
+  if "$T" same "$S/candidate" >/dev/null 2>&1; then
+   if ! "$T" verify "$S/candidate" "$S/candidate-owner" hooked "$DSO" >/dev/null 2>&1; then
+    unverified=1; why=verify
+   elif session_lost_evidence; then
+    unverified=1; why=descriptors
+   fi
+  fi
+ fi
+ if [ "$unverified" = 1 ]; then
+  if [ "$dp_unverified_since" = 0 ]; then
+   dp_unverified_since=$now
+   case "$why" in
+    descriptors) wlog "PROBE session=ended evidence=descriptors state=$st";;
+    *) wlog "PROBE verify=failed state=$st";;
+   esac
+  fi
+ else
+  dp_unverified_since=0
+ fi
+ reason=
+ if [ "$dp_absent_since" -gt 0 ] && [ $((now-dp_absent_since)) -ge "$absent_limit" ]; then
+  reason=dp_absent
+ elif [ "$dp_disabled_since" -gt 0 ] && [ $((now-dp_disabled_since)) -ge "$disabled_limit" ]; then
+  reason=module_disabled
+ elif [ "$dp_unverified_since" -gt 0 ] && [ $((now-dp_unverified_since)) -ge "$verify_limit" ] && [ "$st" != present ]; then
+  reason=session_lost
+ elif [ "$dp_unverified_since" -gt 0 ] && [ $((now-dp_unverified_since)) -ge $((verify_limit*2)) ]; then
+  # Probe still says "present" but the journaled candidate has not verified for
+  # twice the window: the configfs/Type-C evidence is stale (it is exactly what
+  # a candidate that outlived its DP session leaves behind). Panel safety wins.
+  reason=session_lost
+ fi
+ if [ -n "$reason" ]; then watchdog_release "$reason"; fi
+}
 while :; do
  refresh_epoch
+ if [ "$watchdog" = 1 ]; then
+  st=$(dp_state) || st=unknown
+  watchdog_tick "$st"
+ else
+  st=present
+ fi
+ if [ "$st" = absent ]; then
+  # No DP-in session: launching a candidate now would grab the panel for a Mac
+  # that is gone, and a failing reconcile would trip the 30s breaker while the
+  # module is merely idle. Wait for the session to be re-established; the
+  # normal recover/reconcile path takes over again on the next present sample.
+  # Keep the original removal exit reachable without a re-launch.
+  if { [ ! -d "$M" ] || [ -e "$M/remove" ]; } && [ ! -e "$S/pending" ] && [ ! -e "$S/recovery-owner" ]; then exit 0; fi
+  sleep 2; continue
+ fi
  run_epoch=$epoch
  "$S/module-controller" run "$M" "$S" "$S/platform.sh" >> "$S/supervisor.log" 2>&1 && rc=0 || rc=$?
  refresh_epoch

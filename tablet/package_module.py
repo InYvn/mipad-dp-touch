@@ -8,8 +8,10 @@ import zipfile
 
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / 'module'
-NAME = 'mipad-dp-touch-module-v2.1.0.zip'
-EXPECTED_SHA256 = '31dba7888ea7afae69c41d6ace0da83a3a9180d8e9fe3530cbcd633820258711'
+NAME = 'mipad-dp-touch-module-v2.1.3-os4.0.16.zip'
+# Pinned after the deterministic build; --expect overrides it for the first
+# build / for verifying an artifact captured out of band.
+EXPECTED_SHA256 = 'dd43d84dd8b69689e3e48a88caeee7f058fe8974961237023d256c4c14376e78'
 MEMBERS = [
     'module.prop', 'customize.sh', 'post-fs-data.sh', 'service.sh',
     'uninstall.sh', 'action.sh', 'profile.sh', 'common.sh', 'platform.sh',
@@ -24,7 +26,7 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def package(output):
+def package(output, expected=None):
     contents = {}
     for name in MEMBERS:
         path = SOURCE / name
@@ -57,7 +59,8 @@ def package(output):
             if archive.testzip() is not None or archive.namelist() != MEMBERS:
                 raise ValueError('ZIP verification failed')
         digest = sha256(temporary.read_bytes())
-        if digest != EXPECTED_SHA256:
+        pinned = EXPECTED_SHA256 if expected is None else expected
+        if pinned is not None and digest != pinned:
             raise ValueError('Package bytes differ from the verified release: ' + digest)
         temporary.replace(output)
     finally:
@@ -68,7 +71,9 @@ def package(output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, default=HERE / 'dist' / NAME)
+    parser.add_argument('--expect', default=None,
+                        help='expected SHA256 of the produced zip (default: the pinned release hash)')
     args = parser.parse_args()
-    digest = package(args.output)
+    digest = package(args.output, args.expect)
     print('SHA256  ' + digest + '  ' + args.output.name)
     print('Bytes: ' + str(args.output.stat().st_size))
