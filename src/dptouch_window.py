@@ -1851,6 +1851,7 @@ class SettingsWindow(_Pane):
                     b = _FirstMouseButton.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
                     b.setImage_(img)
                     b.setImagePosition_(1)      # 只显示图片
+                    b.setImageScaling_(3)       # 等比缩放到按钮大小, 别溢出压到文字
                     b.setBordered_(False)
                     b.setTitle_("")
                     b.setToolTip_("点击放大预览")
