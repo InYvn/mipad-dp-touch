@@ -54,7 +54,7 @@ import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "2.2.0-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "2.2.1-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
@@ -2595,7 +2595,7 @@ class DPApp(NSObject):
             return
         ctl.toggle()
         try:
-            self.win.market_changed()
+            self.win.market_changed(full=False)
         except Exception:
             pass
 
@@ -3140,6 +3140,20 @@ def main():
             LOG_PATH = os.path.abspath(os.environ["DPTOUCH_SELFTEST_LOG"])
     fanout_output()
     AS.set_logger(log)
+    # 崩溃现场: .ips 只有 ObjC 帧。这里把 Python 栈也写一份, 下次崩了能直接看到行号。
+    try:
+        import faulthandler
+        import signal as _signal
+        _crash = open(os.path.join(os.path.dirname(LOG_PATH), "MipadDPTouch-crash.log"),
+                      "a", encoding="utf-8", buffering=1)
+        for _sig in (_signal.SIGTRAP, _signal.SIGSEGV, _signal.SIGBUS,
+                     _signal.SIGABRT, _signal.SIGILL):
+            try:
+                faulthandler.register(_sig, file=_crash, all_threads=True)
+            except Exception:
+                pass
+    except Exception:
+        pass
     try:
         app = NSApplication.sharedApplication()
         app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)

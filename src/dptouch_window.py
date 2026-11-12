@@ -2033,7 +2033,6 @@ class SettingsWindow(_Pane):
 
     def onMarketTogglePid_(self, sender):
         self.app.actPluginToggle_(sender.representedObject())
-        self._market_later_()
 
     def onMarketUninstallPid_(self, sender):
         self.app.actPluginUninstall_(sender.representedObject())
@@ -2086,10 +2085,27 @@ class SettingsWindow(_Pane):
             self._relayout(animate=False)
 
     @objc.python_method
-    def market_changed(self):
-        """App 侧安装/卸载完成后调用。"""
-        if self.page == "plugins":
+    def market_changed(self, full=True):
+        """App 侧安装/卸载/显隐完成后调用。
+
+        显隐只改按钮标题: 点一下「显示」就把整窗拆了重建没有意义, 而且重建会
+        在 0.6s 后销毁刚才那个按钮。安装/卸载才需要整页重排。
+        """
+        if self.page != "plugins":
+            return
+        if full:
             self._market_later_(0.6)
+            return
+        import dptouch_plugin as PLUG
+        ctls = getattr(self.app, "_plug_ctls", {}) or {}
+        for meta in PLUG.registry():
+            pid = meta["id"]
+            b = self.c.get("mk_%s_main" % pid)
+            if b is None:
+                continue
+            ctl = ctls.get(pid)
+            shown = ctl is not None and bool(getattr(ctl, "is_visible", False))
+            b.setTitle_("收起" if shown else "显示")
 
     def onNav_(self, sender):
         """侧栏切页 (⌘1–6 同效)。整窗重建 —— 和权限态切换走同一条路。"""
