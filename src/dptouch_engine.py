@@ -722,7 +722,10 @@ class Engine(object):
             self._rl = H.cf.CFRunLoopGetCurrent()
             self._mode_str = H.cfstr(H.DEFAULT_MODE)
             H.iokit.IOHIDManagerScheduleWithRunLoop(self.mgr, self._rl, self._mode_str)
-            self.rc = H.iokit.IOHIDManagerOpen(self.mgr, 0)
+            _opts = 1 if self.cfg.get("seize_pen") else 0   # 1 = kIOHIDOptionsTypeSeizeDevice
+            self.rc = H.iokit.IOHIDManagerOpen(self.mgr, _opts)
+            if _opts:
+                self.log("HID 独占模式 (seize) rc=%d" % self.rc)
             self.running = (self.rc == 0)
             self.started_at = time.time()
             self.log("HID 线程已就绪 (独立 run loop, 界面操作不会影响它)")

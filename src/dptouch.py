@@ -54,7 +54,7 @@ import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "2.3.0-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "2.3.1-beta"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
@@ -83,6 +83,10 @@ DEFAULTS = {
     "target_display": DP.TARGET_AUTO,
     # 拖拽位置源改用笔的绝对坐标 (高级选项; 用系统光标拖不动时才需要)
     "drag_pen": False,
+    # 独占笔设备（kIOHIDOptionsTypeSeizeDevice）：macOS 27.3 起系统自己也会把笔当数位板
+    # 处理（移动光标 + 点击），与 App 的合成事件叠加会导致一次点击触发多次、拖拽时
+    # 同时出现系统自己的选择框。开启后系统不再收到这支笔，全部由 App 处理。
+    "seize_pen": False,
     # 「停住再滑」/「停住不动」的判定时长
     "hold_ms": 250,
     "rc_hold_ms": 800,
