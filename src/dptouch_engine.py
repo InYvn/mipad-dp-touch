@@ -414,6 +414,11 @@ class Engine(object):
         self._finger_map = []         # 全部触点的 cookie 表 (双指滚动用)
         self._cookie2finger = {}      # cookie -> (手指序号, 类型)
         self._fstate = []             # 每根手指: down / x / y
+        # 触控可视化: 只读快照, 面板打开时才更新, 不参与任何合成。
+        self._live_on = False
+        self._live_lk = threading.Lock()
+        self._live_fingers = []
+        self._live_pen = {"x": None, "y": None, "down": False, "pres": 0, "t": 0.0}
         self._multi = False           # 是否正在双指手势
         self._two_prev = None         # 双指质心 (归一化)
         self._two_pend = [0.0, 0.0]   # 待发送的滚动量 (px)
@@ -1091,6 +1096,8 @@ class Engine(object):
         b.scroll_px(px, py)
 
     def _feed_locked(self, page, usage, v, lo, hi, rid=PEN_REPORT_ID, cookie=0):
+        if self._live_on:
+            self._live_feed(page, usage, v, lo, hi, rid, cookie)
         # A report is positive interface evidence too. Resolve BEFORE even its
         # first coordinate, never wait for the UI timer or synthesize then switch.
         if rid == TOUCH_REPORT_ID and not self.touch_iface:
@@ -1205,6 +1212,59 @@ class Engine(object):
                 b.last_drag = 0.0     # 抬起前补发最后一段拖拽
                 b.drag()
             b.release()
+
+    # ---------------- 触控可视化 (只读) ----------------
+
+    def set_live(self, on):
+        """打开/关闭只读触点快照。面板关掉就停，不占 HID 热路径。"""
+        with self._live_lk:
+            self._live_on = bool(on)
+            if not on:
+                self._live_fingers = []
+                self._live_pen = {"x": None, "y": None, "down": False, "pres": 0, "t": 0.0}
+
+    def live_snapshot(self):
+        with self._live_lk:
+            return {
+                "now": time.time(),
+                "fingers": [dict(f) for f in self._live_fingers],
+                "pen": dict(self._live_pen),
+                "touch_iface": bool(self.touch_iface),
+                "native": bool(self._mode.get("native_touch")),
+                "running": bool(self.running),
+            }
+
+    def _live_feed(self, page, usage, v, lo, hi, rid, cookie):
+        """把原始报告抄一份归一化坐标出来。只读：不改桥接状态、不合成事件。"""
+        now = time.time()
+        with self._live_lk:
+            if rid == TOUCH_REPORT_ID:
+                if len(self._live_fingers) != len(self._finger_map):
+                    self._live_fingers = [{"x": None, "y": None, "down": False, "t": 0.0}
+                                          for _ in self._finger_map]
+                for i, m in enumerate(self._finger_map):
+                    if cookie == m.get("x") and hi > lo:
+                        self._live_fingers[i]["x"] = (v - lo) / float(hi - lo)
+                    elif cookie == m.get("y") and hi > lo:
+                        self._live_fingers[i]["y"] = (v - lo) / float(hi - lo)
+                    elif cookie == m.get("tip"):
+                        self._live_fingers[i]["down"] = bool(v)
+                    else:
+                        continue
+                    self._live_fingers[i]["t"] = now
+            elif rid == PEN_REPORT_ID:
+                p = self._live_pen
+                if page == 0x01 and usage == 0x30 and hi > lo:
+                    p["x"] = (v - lo) / float(hi - lo)
+                elif page == 0x01 and usage == 0x31 and hi > lo:
+                    p["y"] = (v - lo) / float(hi - lo)
+                elif page == 0x0D and usage == 0x42:
+                    p["down"] = bool(v)
+                elif page == 0x0D and usage == 0x30:
+                    p["pres"] = v
+                else:
+                    return
+                p["t"] = now
 
     # ---------------- 状态 ----------------
 

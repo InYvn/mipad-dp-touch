@@ -1252,6 +1252,7 @@ class SettingsWindow(_Pane):
         self._disp_name = ""           # 「详情」开关: 计数行默认收起
         self._laid_perm_done = None     # 上次排版时权限齐没齐 (变了要整页重排)
         self._last_st = None            # 最后一次刷新看到的状态 (排版也用这份)
+        self._viz = None                # 触控可视化面板 (懒建)
         self._build()
         return self
 
@@ -1985,6 +1986,9 @@ class SettingsWindow(_Pane):
         v.addSubview_(_label("触控屏接口", self._r(x, y + 16, 300, 18), size=13, bold=True))
         self.c["diag_touch"] = _label("", self._r(x, y + 36, 420, 15), size=11, dim=True)
         v.addSubview_(self.c["diag_touch"])
+        self.c["viz"] = _button("可视化…", self._r(x + w - 108, y + 16, 108, 26),
+                                self, "onTouchViz:")
+        v.addSubview_(self.c["viz"])
         v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
         y += 60
         v.addSubview_(_label("高级诊断", self._r(x, y + 16, 300, 18), size=13, bold=True))
@@ -2819,6 +2823,13 @@ class SettingsWindow(_Pane):
     def onAdvanced_(self, sender):
         self.adv.show()
         self.refresh_all()
+
+    def onTouchViz_(self, sender):
+        """打开只读的触控可视化面板（30fps，关掉即停）。"""
+        if self._viz is None:
+            import dptouch_touchviz as TV
+            self._viz = TV.TouchViz(self.app.engine, log=self.app.log)
+        self._viz.show()
 
     def onHoldMs_(self, sender):
         if self._syncing:
