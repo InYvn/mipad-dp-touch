@@ -386,6 +386,9 @@ class Engine(object):
             "display_allow_unknown": False,     # 允许把未实测的屏当平板屏
             "touch_mode": "auto",
             "legacy_touch_ack": False,
+            # auto 在 macOS 27.3+ 上是否需要原生: 只有明确确认过原生能力才选原生。
+            # 本机实测 27.3 的模块 HID 原生触控是 no-op (只有兼容模拟能派发手指)。
+            "native_confirmed": False,
             "native_touch": False,               # effective compatibility mirror, never preference
                                                  # (macOS 27.3+ 系统直接处理手指, 桥接只服务笔)
             "hold_ms": 250,           # 「停住再滑」的判定时长
@@ -557,7 +560,8 @@ class Engine(object):
     def _resolve_mode(self):
         from dptouch_mode import resolve
         return resolve(self.cfg.get("touch_mode", "auto"), self.touch_iface,
-                       legacy_ack=self.cfg.get("legacy_touch_ack", False))
+                       legacy_ack=self.cfg.get("legacy_touch_ack", False),
+                       native_confirmed=bool(self.cfg.get("native_confirmed", False)))
 
     def _update_locked(self, kw):
         before_mode = self._mode["selected_mode"]

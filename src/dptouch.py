@@ -102,6 +102,12 @@ DEFAULTS = {
     # never triggers an automatic legacy fallback.
     "touch_mode": "auto",
     "legacy_touch_ack": False,
+    # 原生触控能力确认。macOS 27.3 的系统只是「版本上优先原生」, 不等于本机原生可用:
+    # 本版本实测 27.3 的模块 HID 原生触控是 no-op (内核日志
+    # createEventForDigitizerCollection generates null event), 手指只有兼容模拟能派发。
+    # 所以 auto 只有在 native_confirmed=True 时才选原生; 手动选「原生触控」也会把它置真。
+    # 想恢复自动走原生 (例如系统更新修好了) 时, 在设置里手选一次「原生触控」即可。
+    "native_confirmed": False,
     # 位置校正 (EDID 物理尺寸 override, 只对小米平板屏): 修正系统看到的物理尺寸,
     #   消除原生触控落点偏移。由 src/dptouch_edid.py 的控制器 + 原生助手管理。
     "edid_correct": True,  # strict verified factory profile only; persisted manual False wins
@@ -203,6 +209,10 @@ def load_cfg():
     from dptouch_mode import migrate
     cfg["touch_mode"] = migrate(raw)
     cfg.pop("native_touch", None)
+    # 这两个是用户确认状态: 只要存的是合法布尔就原样保留, 缺省/脏值才回默认。
+    # 绝不能因为「App 重启 / 版本升级」把它们重置, 否则兼容模拟会被自动策略顶掉。
+    cfg["legacy_touch_ack"] = bool(cfg.get("legacy_touch_ack"))
+    cfg["native_confirmed"] = bool(cfg.get("native_confirmed"))
     if "native_touch" in raw and "touch_mode" not in raw:
         log("触控模式迁移: 旧布尔值无手动来源标记，不能区分手动与版本默认 -> 自动；如需手动模式请重新选择")
     return cfg
@@ -383,6 +393,12 @@ class DPApp(NSObject):
         # ★整份配置都要推过去。老写法只推 5 个键, 于是「长按时间 / 长按不动」
         #   这些每次启动都被引擎自己的默认值悄悄盖掉: 设置窗口里显示 0.6 秒, 背后实际跑 0.8 秒。
         self.engine.update(**dict(self.cfg))
+        # config.json 的 mtime 基线: 见 _sync_policy_from_disk (外部改策略时采纳, 不覆盖)
+        self._cfg_mtime = None
+        try:
+            self._cfg_mtime = os.path.getmtime(CFG_PATH)
+        except OSError:
+            pass
         self.enabled = bool(self.cfg.get("enabled", True))
         # 位置校正控制器 (EDID 几何 B): 状态/备份/日志落 CFG_DIR; 助手路径不写死。
         # 只有 app 启用 + 原生触控 + 校正开关三者同时为真才会管理 override。
@@ -987,6 +1003,14 @@ class DPApp(NSObject):
                          _test_patch.object(HB.cg, "CGEventCreateMouseEvent", return_value=None) as _posts, \
                          _test_patch.object(HB.cg, "CGEventPost"), _test_patch.object(HB.cg, "CGEventSetIntegerValueField"), \
                          _test_patch.object(_probe.b, "scroll_px"), _test_patch.object(_probe.b, "pinch_native"):
+                        # 默认自动 + 原生能力未确认 -> 兼容模拟 (27.3 原生实测 no-op)
+                        for _page, _usage, _value in ((1, 0x31, 400), (1, 0x30, 600), (13, 0x42, 1), (13, 0x42, 0)):
+                            _probe.feed(_page, _usage, _value, 0, 1000, rid=1)
+                        assert _probe.status()["selected_mode"] == "legacy"
+                        assert _posts.called, "未确认原生的自动模式必须走兼容模拟并合成手指事件"
+                        _posts.reset_mock()
+                        # 确认过原生能力 -> 自动选原生: 两轮手指一个合成事件都不发
+                        _probe.update(native_confirmed=True)
                         for _ in range(2):
                             for _page, _usage, _value in ((1, 0x31, 400), (1, 0x30, 600), (13, 0x42, 1), (13, 0x42, 0)):
                                 _probe.feed(_page, _usage, _value, 0, 1000, rid=1)
@@ -994,7 +1018,7 @@ class DPApp(NSObject):
                         for _value in (1, 0):
                             _probe.feed(13, 0x42, _value, 0, 1, rid=3)
                         assert {1, 2}.issubset({_call.args[1] for _call in _posts.call_args_list})
-                        _p("    冻结/源码真实 Engine.feed: 首帧前自动原生、两轮手指零合成、笔 down/up 保留")
+                        _p("    冻结/源码真实 Engine.feed: 默认自动=兼容模拟(会合成)、确认原生后两轮手指零合成、笔 down/up 保留")
                     # Real AppKit target/action -> policy -> Engine -> persisted JSON.
                     # EDID calls are intercepted: never alter the live display.
                     _policy_cfg = dict(self.cfg)
@@ -1016,7 +1040,10 @@ class DPApp(NSObject):
                                         assert load_cfg()["touch_mode"] == _policy
                                         _ms = self.engine.status()
                                         from dptouch_mode import resolve as _resolve_policy
-                                        assert _ms["selected_mode"] == _resolve_policy(_policy, _iface, _version, True)["selected_mode"]
+                                        assert _ms["selected_mode"] == _resolve_policy(
+                                            _policy, _iface, _version, True,
+                                            native_confirmed=bool(self.engine.cfg.get("native_confirmed", False))
+                                        )["selected_mode"]
                                         assert _desired.call_args.args[1] == bool(_iface and _ms["native_touch"])
                                         self.win.refresh(force=True)
                                         assert self.win.c["route_preview"].data[0] == _ms["selected_mode"]
@@ -1064,7 +1091,7 @@ class DPApp(NSObject):
                             _fake = _fake_st(True, True, 0, _dev)
                             # Representative screenshot fixture only; no hardware claim.
                             _fake.update(selected_mode="native", touch_mode="auto", touch_iface=True,
-                                         native_touch=True, mode_reason="截图示例 · 自动选择原生触控")
+                                         native_touch=True, mode_reason="截图示例 · 已确认原生可用")
                             # 连引擎的状态一起钉住: 否则每次刷新的递归都会去问真实引擎
                             # (自检里引擎没跑), 假状态刚喂进去就被顶回来。
                             self.engine.status = lambda: dict(_fake)
@@ -1691,10 +1718,67 @@ class DPApp(NSObject):
 
     @objc.python_method
     def _apply(self, **kw):
+        # 外部刚改过的触控策略优先: 否则这次保存会把内存里的旧值写回去 (实测故障路径)
+        self._sync_policy_from_disk()
         self.cfg.update(kw)
         self.engine.update(**kw)
         save_cfg(self.cfg)
+        try:
+            self._cfg_mtime = os.path.getmtime(CFG_PATH)
+        except OSError:
+            pass
         self._reflect()
+
+    # 触控策略三件套: 只有这三个键做「磁盘优先」, 其余设置仍以 App 内存为准。
+    POLICY_KEYS = ("touch_mode", "legacy_touch_ack", "native_confirmed")
+
+    @objc.python_method
+    def _sync_policy_from_disk(self, force=False):
+        """用户在 App 运行时改了 config.json 的触控策略 -> 采纳, 而不是默默盖回去.
+
+        实测故障: 为了恢复手指触控, 在 App 还开着的时候把 config.json 改成
+        touch_mode=legacy / legacy_touch_ack=true。下一次任意设置动作都会走
+        _apply() -> save_cfg(self.cfg), 把内存里的 auto/false 整份写回 —— 用户以为
+        设置"又自己变回去了", 而且 set_touch_mode 不打日志, 事后完全查不到。
+
+        这里只对 POLICY_KEYS 做磁盘优先 (其余键不做整体热重载, 避免意外):
+          · force=False 时用 mtime 去抖, 每秒 tick 只有文件真的变了才读;
+          · 非法值 (例如不认识的 touch_mode) 忽略, 保留内存值;
+          · 采纳后同步推给 Engine, 立即生效 —— 不用重启 App。
+        """
+        try:
+            mt = os.path.getmtime(CFG_PATH)
+        except OSError:
+            return False
+        if not force and mt == getattr(self, "_cfg_mtime", None):
+            return False
+        self._cfg_mtime = mt
+        try:
+            with open(CFG_PATH, "r", encoding="utf-8") as f:
+                disk = json.load(f)
+        except Exception:
+            return False
+        if not isinstance(disk, dict):
+            return False
+        from dptouch_mode import POLICIES
+        changes = {}
+        for key in self.POLICY_KEYS:
+            if key not in disk:
+                continue
+            want = disk[key]
+            if key == "touch_mode":
+                if want not in POLICIES:
+                    continue
+            else:
+                want = bool(want)
+            if self.cfg.get(key) != want:
+                changes[key] = want
+        if not changes:
+            return False
+        log("配置同步: 采纳 config.json 里新写入的 %r" % (changes,))
+        self.cfg.update(changes)
+        self.engine.update(**changes)
+        return True
 
     # ---------------- 断开即锁屏 ----------------
 
@@ -1928,6 +2012,8 @@ class DPApp(NSObject):
 
     @objc.python_method
     def _tick_body(self):
+        # 用户在编辑器里改了 config.json 的触控策略 -> 一秒内采纳 (mtime 没变不读文件)
+        self._sync_policy_from_disk()
         # 笔上「切换屏幕」: 生效那一半在 HID 线程里已经做完了 (笔要立刻能用), 这里补上
         # 主线程这一半 —— 写配置 + 让菜单的勾跟上。菜单一秒内刷新, 勾就跟着走。
         _v = self.engine.take_pending_target()
@@ -2367,10 +2453,35 @@ class DPApp(NSObject):
             return False
         if mode == "legacy" and modern() and not acknowledged:
             return False
-        self._apply(touch_mode=mode, legacy_touch_ack=bool(mode == "legacy" and acknowledged))
+        kw = dict(touch_mode=mode,
+                  legacy_touch_ack=bool(mode == "legacy" and acknowledged))
+        if mode == "native":
+            # 手选原生 = 用户在本机明确确认原生可用, 记下来给 auto 用 (否则 auto 只会
+            # 走兼容模拟, 用户每次都得手动切回来)。
+            kw["native_confirmed"] = True
+        elif mode == "legacy":
+            # 手选并确认兼容模拟 = 「原生在这台机器上不行」的反证, 撤掉确认状态,
+            # 之后切回「自动」才不会又跳回原生 (默认仍应兼容模拟)。
+            kw["native_confirmed"] = False
+        self._apply(**kw)
+        # 模式切换必须留痕: 之前这里是静默的, 配置"自己变回 auto"时查不到任何线索。
+        log("触控模式 -> %s (legacy_ack=%s native_confirmed=%s)"
+            % (mode, bool(self.cfg.get("legacy_touch_ack")),
+               bool(self.cfg.get("native_confirmed"))))
         self.edid.reconfigure()
         self.edid.set_desired(self.enabled, self.native_touch_active(), bool(self.cfg.get("edid_correct")))
         self.edid.tick()
+        return True
+
+    @objc.python_method
+    def set_native_confirmed(self, on):
+        """记录/撤销「本机原生触控已验证」这一事实 (auto 据此决定是否选原生)。
+
+        默认 False: 系统版本 27.3+ 只说明"系统偏好原生", 不代表模块 HID 的原生触控
+        在这台机器上真能出事件。手选「原生触控」会自动置真; 这里给诊断/配置脚本用。
+        """
+        self._apply(native_confirmed=bool(on))
+        log("原生触控能力确认 -> %s" % ("是" if on else "否"))
         return True
 
     @objc.python_method

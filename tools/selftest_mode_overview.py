@@ -37,5 +37,17 @@ class Overview(unittest.TestCase):
         self.assertIn('等待检测', main)
         self.assertNotIn('原生', main)
 
+    def test_auto_route_copy_matches_verified_capability(self):
+        """自动模式默认兼容模拟: 概览必须如实说明"原生未验证", 不能写成系统原生。"""
+        main, detail = UI.input_mode_text(
+            self.state(selected_mode='legacy', touch_mode='auto', native_touch=False), True)
+        self.assertIn('兼容模拟', main)
+        self.assertIn('自动选择', detail)
+        self.assertIn('原生未验证', detail)
+        main, detail = UI.input_mode_text(
+            self.state(selected_mode='native', touch_mode='auto', native_touch=True), True)
+        self.assertIn('原生触控', main)
+        self.assertIn('已确认原生可用', detail)
+
 if __name__ == '__main__':
     unittest.main()

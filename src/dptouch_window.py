@@ -870,9 +870,16 @@ def input_mode_text(st, enabled):
         state = "运行中" if title != "等待检测" else "待确认"
     policy = st.get("touch_mode")
     provenance = "自动选择" if policy == "auto" else "手动选择" if policy in ("native", "legacy") else "来源待确认"
-    detail = ("手指由系统处理 · 系统手势需开启" if st.get("selected_mode") == "native" else
-              "手指由应用模拟 · 笔映射保留" if st.get("selected_mode") == "legacy" else
-              "未接入手指接口 · 保留笔映射" if st.get("selected_mode") == "pen_only" else "等待接口检测")
+    if st.get("selected_mode") == "native":
+        detail = ("手指由系统处理 · 已确认原生可用 · 系统手势需开启" if policy == "auto"
+                  else "手指由系统处理 · 系统手势需开启")
+    elif st.get("selected_mode") == "legacy":
+        detail = ("手指由应用模拟 · 原生未验证，自动已用兼容模拟" if policy == "auto"
+                  else "手指由应用模拟 · 笔映射保留")
+    elif st.get("selected_mode") == "pen_only":
+        detail = "未接入手指接口 · 保留笔映射"
+    else:
+        detail = "等待接口检测"
     return "%s · %s" % (state, title), "%s · %s" % (provenance, detail)
 
 
@@ -1741,7 +1748,8 @@ class SettingsWindow(_Pane):
     def _page_touch(self, v, x, w, y):
         y = self._eyebrow(v, x, y, "TOUCH & POSITION / 01")
         y = self._page_head(v, x, w, y, "触控与位置",
-                            "按系统与接口选择触控方式，显示设备位置修正状态。")
+                            "按系统与接口选择触控方式，显示设备位置修正状态。"
+                            "macOS 27.3+ 原生触控能力未验证，自动默认兼容模拟。")
         self.c["touch_actual"] = _label("等待检测", self._r(x, y, w, 19), size=14, bold=True)
         v.addSubview_(self.c["touch_actual"])
         y += 27
@@ -1758,9 +1766,10 @@ class SettingsWindow(_Pane):
         seg.setTarget_(self)
         seg.setAction_("onNativeTouch:")
         seg.setAccessibilityLabel_("触控方式")
-        seg.setToolTip_("自动按系统与接口选路；原生无事件不会自动回退。兼容模式仍需确认关闭系统触控手势。")
+        seg.setToolTip_("自动默认走兼容模拟（原生触控能力未验证）；手动选原生需先开启系统触控手势，"
+                        "无事件也不会自动回退。兼容模式仍需确认关闭系统触控手势。")
         v.addSubview_(seg)
-        for i, text in enumerate(("按系统与接口选择", "手指交给 macOS", "桥接为鼠标操作")):
+        for i, text in enumerate(("默认兼容模拟", "手指交给 macOS", "桥接为鼠标操作")):
             v.addSubview_(_label(text, self._r(x + i * w / 3, y + 36, w / 3 - 8, 16), size=11, dim=True))
         self.c["touch_reason"] = _label("", self._r(x, y + 61, w, 16), size=11, dim=True)
         v.addSubview_(self.c["touch_reason"])
@@ -2412,10 +2421,8 @@ class SettingsWindow(_Pane):
                 self._select(self.c["touch_mode"], list(POLICIES), a.cfg.get("touch_mode", "auto"))
                 ms = st or {}
                 self.c["touch_actual"].setStringValue_(mode_main)
-                reason = ms.get("mode_reason", "")
-                if ms.get("native_touch") and ms.get("touch_mode") != "legacy":
-                    reason = ("macOS 27.3+ 优先原生" if ms.get("touch_mode") == "auto" else "手动原生") + " · 系统手势需开启，无事件不回退"
-                self.c["touch_reason"].setStringValue_(reason)
+                # resolve() 的 mode_reason 已经是完整、如实的解释, 不再另写一份
+                self.c["touch_reason"].setStringValue_(ms.get("mode_reason", ""))
                 self.c["touch_reason"].setToolTip_(ms.get("native_hint", ""))
 
             for g, _t, opts, _d in BIND_ROWS:
@@ -2902,7 +2909,9 @@ class SettingsWindow(_Pane):
         from AppKit import NSAlert, NSAlertFirstButtonReturn
         alert = NSAlert.alloc().init()
         alert.setMessageText_("兼容模拟 · 高级选项")
-        alert.setInformativeText_("请先在系统设置关闭触控手势，否则系统与桥接可能双重派发。确认已关闭后才能使用兼容模拟。")
+        alert.setInformativeText_("请先在系统设置关闭触控手势，否则系统与桥接可能双重派发。"
+                                  "确认已关闭后才能使用兼容模拟。"
+                                  "（macOS 27.3+ 的原生触控能力未验证，自动模式默认也是兼容模拟。）")
         alert.addButtonWithTitle_("取消")
         alert.addButtonWithTitle_("已关闭，使用兼容模拟")
         return alert.runModal() != NSAlertFirstButtonReturn
