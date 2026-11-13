@@ -17,3 +17,10 @@ umount -l /odm/lib64/libanc_supermoon.so 2>/dev/null || umount /odm/lib64/libanc
 umount -l /mnt/vendor/mipad_lib 2>/dev/null || umount /mnt/vendor/mipad_lib 2>/dev/null || true
 . "$MODDIR/common.sh"
 run_locked uninstall || true
+# 卸载必须自己清干净：普通用户没有 adb，不会手动删残留。
+# 只有 SVID 确实已不在（或本来就没挂）时才删状态目录，
+# 避免把未完成的恢复记录（owner / mount-intent）一起丢掉。
+if [ -z "$(entry)" ]; then
+ rm -rf "$STATE"
+fi
+exit 0

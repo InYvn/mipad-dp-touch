@@ -4,6 +4,7 @@
 
 * 版本契约不再阻止安装：未审计的硬件/HAL/init 组合也能安装，安装器只打印提示。
 * 契约只用于决定是否注入 interposer；SVID 挂载是通用的一层，任何固件都照挂（结构性安全检查保留），避免一次 OTA 让模块静默失效。
+* 模块：`uninstall.sh` 卸载后删除运行时状态目录（`/data/adb/mipad_dptouch_v102`）——普通用户没有 adb，不能指望手动清理；只在 SVID 确认已撤时删除，避免丢掉未完成的恢复记录。
 * 模块：`uninstall.sh` 对 interposer 的两个 bind 改用 `umount -l`（HAL 映射着 DSO 时普通 umount 会 EBUSY），重装从干净状态开始。
 * 模块：`interposer.sh` 能识别上一代遗留的 tmpfs 挂载（tmpfs 被卸载但 bind 还在时不再误报「非本模块挂载」），并在 DSO 内容变化时叠加新 bind；修正 `active:*` 的匹配写法。
 * 模块：`action.sh` 从「开关 SVID」改为「立即应用」——挂 SVID + 布置 interposer，并明确报告已生效 / 等待 HAL 自然重载 / 无法热应用；`service.sh` 改为复用同一套 reconcile 逻辑（新增 `interposer.sh`），不再重复 patch。
