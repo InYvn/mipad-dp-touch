@@ -1,6 +1,12 @@
 # Mipad DP Touch Fullsplit — 2.1.10
 
-供管理器重装验收的完整本地候选，不是公开发布版本（未 push、未公开发布）。2.1.10 已由 Lead 完成一次真机端到端验收（接管/原生输入/Android 输入/退出释放，证据见 `.scratch/mipad-native-touch/evidence/FINAL-E2E-210.md` 及其 T8 审查修正节），但**只有这一次生产包会话**，且原始 logcat/hidutil/configfs 读回等证据形态有限；管理器真实重装和软重启后自动启动仍待验收，不能据此推断每项手势/每次连接均通过。
+供管理器重装验收的完整本地候选，不是公开发布版本（未 push、未公开发布）。2.1.10 已由 Lead 完成**两次生产包真机会话**并归档原始证据：
+
+- **会话 A（12:47–13:02）**：端到端验收（接管、V4 描述符替换、no-grab 5 设备抑制、macOS 原生输入、Android `getevent`、退出释放）；原生观测 **575 system-native / 0 app-synthetic**（12:59:40.989–13:00:04.142）。
+- **会话 B（13:17:36–13:18:28）**：平板连接窗口内 **562 个 system-native** 事件；`19-210-raw.jsonl` 全文件 1072 个中另有 **510 个发生在 13:18:28 设备移除之后**（13:18:54–13:19:50），属 Mac 内置触控板/鼠标污染，**不计入**平板原生证据。
+- 原始证据：raw logcat / supervisor / lifecycle / kernel / state 已存档于 `.scratch/mipad-native-touch/evidence/210-raw-*`（会话 A/B 混合，逐文件 sha/采集时间/来源见 `EVIDENCE-MANIFEST-210`）。
+- **未存档/未验证**：`hidutil` 13/5 输出（仅 lab 证据）、G2 严格同窗重叠、modules_update/重启固化、会话中 configfs 实时读回；管理器真实重装与软重启后自动启动仍待验收。
+- 结论：**CONDITIONAL PASS** —— 机制/合同无阻塞，剩余为已披露边界（EDID 退出 `failed/未确认`、坐标精度主观、App 仅本地 ad-hoc 构建、OS4.0.10 HAL native 未审计、`waiting_descriptors_check` 窄路径），不得据此推断每项手势/每次连接均通过。
 
 ## 安装与重新安装
 
@@ -12,7 +18,7 @@
    `su -c 'mv /dev/mipad-fullsplit-v104-local /dev/mipad-fullsplit-v104-local.bak-<时间戳>'`
    否则安装器会按 generation guard 拒绝，或 `stage()` 因旧 DSO pin 不匹配而反复失败（约 30s 后 runtime-monitor 写 `disable`，可用包内 `action.sh` 清标志后重试）。
 3. 当前同 ID 且运行时字节完全一致时，安装器允许覆盖重装，只更新管理器模块文件；不覆盖持久运行时、不停止 HAL、不回收任何 owner。若提示不同 runtime/旧 SVID 模块/外来状态，停止操作，保留现状，不要盲卸或正常重启绕过保护。
-4. 安装成功后确认模块已启用。正常开机/管理器热重启时 KernelSU 会自动执行包内 `service.sh`，**不需要任何外部启动脚本**；若软重启后 monitor 未常驻（已知 KernelSU LKM 晚加载限制），以 root 直接执行**包内**服务脚本即可：
+4. 安装成功后确认模块已启用。正常开机/管理器热重启时 KernelSU 会自动执行包内 `service.sh`，**不需要任何外部启动脚本**。**modules_update/重启固化 = 未验证**：安装到 modules_update 后须以 root 执行包内 `service.sh` 启动，重启后自动执行/固化仍需一次真实重启验证。若软重启后 monitor 未常驻（已知 KernelSU LKM 晚加载限制），同样以 root 直接执行**包内**服务脚本即可：
    `su -c 'sh /data/adb/modules/mipad_dptouch_fullsplit_local/service.sh'`
    然后重新连接 USB-C 或进入 DP-in。
 5. 首次验收核对版本及真实 DSO、native62、持久 owner、Mac B 状态，并重新实测手指和笔。真实管理器重装及软重启自动启动完成前，仍只称候选。
