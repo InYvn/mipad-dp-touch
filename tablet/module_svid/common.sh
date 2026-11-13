@@ -28,7 +28,8 @@ owned() {
  [ "$(cat "$FAKE")" = 0 ] && [ "$(cat "$TARGET")" = 0 ]
 }
 apply() {
- profile_check || { fail 'unknown hardware/HAL/init profile'; return 1; }
+ # 版本契约只用于决定是否注入 DSO；SVID 是通用的一层，未审计固件也照挂，
+ # 否则一次 OTA 就会让整个模块静默失效。这里只保留结构性的安全检查。
  [ ! -f "$STATE/off" ] || return 0
  if [ -n "$(entry)" ]; then owned || { fail 'foreign or unrecorded mount: not adopted'; return 1; }; return 0; fi
  [ -e "$TARGET" ] && [ ! -L "$TARGET" ] || return 1

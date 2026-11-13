@@ -30,13 +30,16 @@ diag_fail() {
   echo "rc=$(sha256sum /odm/etc/init/vendor.xiaomi.usb.dp-service.rc 2>/dev/null | cut -d ' ' -f1)"
  } >> "$S/last-error.log" 2>/dev/null || true
 }
-profile_check || { diag_fail; exit 70; }
+# 契约失败不再阻止 SVID（只影响注入），记一行便于排查。
+profile_check || diag_fail
 . "$MODDIR/common.sh"
 n=0
 while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n+1)); done
 run_locked enable || exit 1
 
 # ---------------------------------------------------------------- interposer
+# 注入只对审计过的 HAL 做：未审计的二进制不 patch，SVID 已经生效。
+profile_check || exit 0
 HAL=/odm/bin/vendor.xiaomi.usb.dp-service
 DSO_TARGET=/odm/lib64/libanc_supermoon.so
 LIBDIR=/mnt/vendor/mipad_lib

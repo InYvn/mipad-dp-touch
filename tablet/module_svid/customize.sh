@@ -29,4 +29,5 @@ profile_diagnostics() {
  ui_print "                      17b70644c4cd1ed8421616704eb72641aad5b7c00d94ecf029d324ce02d5a922 (OS4.0.16)"
 }
 . "$MODPATH/profile.sh"
-profile_check || { profile_diagnostics; abort "Unknown hardware/HAL/init contract. No activation permitted."; }
+# 版本契约不阻止安装（用户无法为每个固件版本都验证一遍）；只提示，注入会在开机时按 HAL 哈希决定。
+profile_check || { ui_print "- 提示：未审计的硬件/HAL/init 组合，模块仍会安装，但只挂 SVID、不注入 interposer。"; profile_diagnostics; }
