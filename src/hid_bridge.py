@@ -51,16 +51,18 @@ APPLE_SVID = 0x05AC
 PEN_USAGE_PAGE = 0x0D            # Digitizer: 笔集合所在接口
 PEN_USAGE = 0x02                 # Pen
 TOUCH_USAGE = 0x04               # Touch Screen: 平板侧「Mac 触控解锁」后 hid.usb1 变成它
+TOUCHPAD_USAGE = 0x05            # Touch Pad: native V4 描述符；macOS 原生只派发这一 usage
 RAW_LIMIT = 300
 
-# 输入模式 —— 一颗 Mac 连上来时，平板只会建一路 hid.usb1：要么纯笔(0x0D/0x02)，
-# 要么「触摸+笔」二合一(0x0D/0x04)。模式只决定 App 去认哪种接口，不动任何数据格式。
+# 输入模式 —— 一颗 Mac 连上来时，平板只会建一路 hid.usb1：纯笔(0x0D/0x02)、
+# 「触摸+笔」二合一(0x0D/0x04)，或 native V4 的 Touch Pad(0x0D/0x05)。
+# 模式只决定 App 去认哪种接口，不动任何数据格式。
 #   auto   两种都认（默认；对没做平板侧解锁的用户，行为与 pen 完全一致）
 #   pen    只认笔接口（老行为）
 #   touch  只认触摸+笔接口
 INPUT_MODES = ("auto", "pen", "touch")
 INPUT_MODE_TITLES = (("auto", "自动（两种都认）"), ("pen", "仅笔（标准）"),
-                     ("touch", "触控+笔（已解锁）"))
+                     ("touch", "触控+笔（已解锁，含 Touch Pad）"))
 
 
 def input_mode_title(mode):
@@ -71,12 +73,17 @@ def input_mode_title(mode):
 
 
 def match_usages(mode):
-    """该模式下要匹配的 digitizer usage 列表。"""
+    """该模式下要匹配的 digitizer usage 列表。
+
+    touch 同时接受 Touch Screen(0x04) 与 Touch Pad(0x05)：模块 native V4
+    描述符把 usage 改为 Touch Pad 后，macOS 才把 digitizer 帧派发成系统输入；
+    App 只需把它认成触摸接口，好让 native 模式启用 EDID 位置校正。
+    """
     if mode == "pen":
         return (PEN_USAGE,)
     if mode == "touch":
-        return (TOUCH_USAGE,)
-    return (PEN_USAGE, TOUCH_USAGE)
+        return (TOUCH_USAGE, TOUCHPAD_USAGE)
+    return (PEN_USAGE, TOUCH_USAGE, TOUCHPAD_USAGE)
 
 cf = ctypes.CDLL(ctypes.util.find_library("CoreFoundation"))
 iokit = ctypes.CDLL(ctypes.util.find_library("IOKit"))

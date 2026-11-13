@@ -86,9 +86,10 @@ def main():
     check("默认模式标题", HB.input_mode_title("auto"), "自动（两种都认）")
     check("未知模式回退到 auto 标题", HB.input_mode_title("nope"), "自动（两种都认）")
     check("pen 只认 0x02", list(HB.match_usages("pen")), [HB.PEN_USAGE])
-    check("touch 只认 0x04", list(HB.match_usages("touch")), [HB.TOUCH_USAGE])
-    check("auto 两个都认（笔在前）", list(HB.match_usages("auto")),
-          [HB.PEN_USAGE, HB.TOUCH_USAGE])
+    check("touch 认 0x04 Touch Screen 与 0x05 Touch Pad（native V4）",
+          list(HB.match_usages("touch")), [HB.TOUCH_USAGE, HB.TOUCHPAD_USAGE])
+    check("auto 三种都认（笔在前）", list(HB.match_usages("auto")),
+          [HB.PEN_USAGE, HB.TOUCH_USAGE, HB.TOUCHPAD_USAGE])
 
     eng = E.Engine()
     # These are compatibility-bridge tests, not the OS-dependent auto policy.
@@ -96,7 +97,7 @@ def main():
     eng.update(touch_mode="legacy", legacy_touch_ack=True)
     check("引擎默认 input_mode = auto（两种数据格式都认）",
           eng.cfg.get("input_mode"), "auto")
-    for mode, want_n in (("pen", 2), ("touch", 2), ("auto", 4)):
+    for mode, want_n in (("pen", 2), ("touch", 4), ("auto", 6)):
         with eng._lk:
             eng.cfg["input_mode"] = mode
             arr = eng._match()

@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2.2.3-beta — 2026-11-13
+
+* 支持平板模块 2.1.10 的 **原生 Touch Pad 描述符**（HID usage 0x0D:0x05）：`hid_bridge` 在 auto/touch 模式下同时接受 0x04 Touch Screen 与 0x05 Touch Pad，App 能把模块的 V4 接口识别为触摸接口并启用位置校正（EDID 校正 applied 后坐标准确）。
+* 配合模块 2.1.10 的默认 no-grab：macOS 原生触控与 Android 触摸同时可用（双端同触）；兼容模拟仍为「自动」默认，原生作为可手选/已确认选项。
+* README/INSTALL 更新原生触控前提（模块 2.1.10 + App 2.2.3 + macOS 27.3+，位置校正依赖 EDID）；更新日志与版本号。
+* 自检：11 个 selftest 全过（含 `selftest_touch` 的 0x04/0x05 匹配表用例）。
+
 ## 2.2.0-beta — 2026-11-12
 
 * 插件市场改成注册表：可列出多个插件（当前：屏幕键盘 TouchKeys、浮动工具栏 TouchBar），安装 / 更新 / 卸载 / 显示都按插件独立处理。
