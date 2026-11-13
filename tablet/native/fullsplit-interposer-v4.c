@@ -9,6 +9,8 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <time.h>
+#include <poll.h>
 #include <android/log.h>
 #include "fullsplit-v4.c"
 
@@ -17,7 +19,28 @@
 #endif
 
 static RX state;
-static ssize_t raw_write(int fd, const void *b, size_t n) { return syscall(SYS_write, fd, b, n); }
+__attribute__((constructor)) static void init_state(void) { rx_reset(&state); }
+static int64_t now_ms(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+/* A gadget endpoint that is being (re)enumerated is transient: retry the whole
+ * report inside a short bounded window. A failed whole-report write leaves no
+ * partial state on the host, so retrying is safe. */
+static ssize_t raw_write(int fd, const void *b, size_t n) {
+    int64_t deadline = now_ms() + 100;
+    for (;;) {
+        ssize_t r = syscall(SYS_write, fd, b, n);
+        if (r >= 0) return r;
+        int e = errno;
+        if (!(e == EAGAIN || e == EWOULDBLOCK || e == EINTR || e == ESHUTDOWN || e == ENODEV)) return r;
+        if (now_ms() >= deadline) return r;
+        struct pollfd p = { .fd = fd, .events = POLLOUT };
+        poll(&p, 1, 10);
+    }
+}
 static _Thread_local int entered;
 static int owner_fd = -1;
 static dev_t device, rdevice;
