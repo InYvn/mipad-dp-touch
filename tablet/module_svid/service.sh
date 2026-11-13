@@ -19,7 +19,18 @@ if [ "$(readlink /proc/self/ns/mnt)" != "$(readlink /proc/1/ns/mnt)" ]; then
  exec "$MIPAD_PLATFORM_BUSYBOX" nsenter --mount=/proc/1/ns/mnt -- "$MIPAD_PLATFORM_BUSYBOX" sh -o standalone "$0" "$@"
 fi
 . "$MODDIR/profile.sh"
-profile_check || exit 70
+# 契约失败时留一行可排查的记录（只读 prop/hash），再按原语义退出。
+diag_fail() {
+ S=/data/adb/mipad_dptouch_v102
+ mkdir -p "$S" 2>/dev/null || true
+ {
+  echo "time=$(date)"
+  echo "device=$(getprop ro.product.device) model=$(getprop ro.product.model) board=$(getprop ro.product.board) hw=$(getprop ro.hardware)"
+  echo "hal=$(sha256sum /odm/bin/vendor.xiaomi.usb.dp-service 2>/dev/null | cut -d ' ' -f1)"
+  echo "rc=$(sha256sum /odm/etc/init/vendor.xiaomi.usb.dp-service.rc 2>/dev/null | cut -d ' ' -f1)"
+ } >> "$S/last-error.log" 2>/dev/null || true
+}
+profile_check || { diag_fail; exit 70; }
 . "$MODDIR/common.sh"
 n=0
 while [ "$(getprop sys.boot_completed)" != 1 ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n+1)); done
