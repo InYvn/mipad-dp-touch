@@ -13,7 +13,10 @@ profile_check() {
  hal_sha=$(sha256sum /odm/bin/vendor.xiaomi.usb.dp-service | cut -d ' ' -f1) || return 1
  case "$hal_sha" in
  44efbe22de46196246c9dbf96bceba8444e5f53aea2400b8101b1b0b0d79c5c3|\
- 17b70644c4cd1ed8421616704eb72641aad5b7c00d94ecf029d324ce02d5a922) ;;
+ 17b70644c4cd1ed8421616704eb72641aad5b7c00d94ecf029d324ce02d5a922|\
+ 5d91d87dd2b372616ba10d945daaf4e63ddfbdadec3a435e322506e826bd1787) ;;
+ # 最后一个是本模块 patcher 对上面两个原厂 HAL 的输出：模块生效时 /odm/bin 是 bind，
+ # 读到的就是这份（安装器/软重启都要能通过，否则会把自己判成未知 HAL）。
  *) return 1 ;;
  esac
  [ "$(sha256sum /odm/etc/init/vendor.xiaomi.usb.dp-service.rc | cut -d ' ' -f1)" = 24c8b3714ae98e813017b8944483fafdb2fa398cc46003efac8c3295480dcd0a ] || return 1
