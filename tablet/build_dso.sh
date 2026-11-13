@@ -12,11 +12,15 @@
 #   默认输出到 tablet/native/build/fullsplit-bounded-v2.so；脚本不会改动
 #   tablet/module/ 里的模块载荷，换不换由打包步骤决定。
 #
-#   实验分支（native-touch lab）:
+#   生产 native-touch（2.1.10，模块载荷）:
+#     MIPAD_DSO_NATIVE=1 tablet/build_dso.sh tablet/native/build/fullsplit-bounded-v2.so
+#   编译 fullsplit-native.h：固定 V4 描述符替换（Touch Pad 0x0D:0x05 + RID2→1，
+#   帧不重排）+ 默认 no-grab（event6/9/11/7/8），只额外导出 ioctl。需要先用
+#   tablet/native/lab/gen_variants.py 生成 native-v4-desc.h。
+#   实验分支（native-touch lab，不属于生产载荷）:
 #     MIPAD_DSO_LAB=1 tablet/build_dso.sh /tmp/fullsplit-lab.so
 #   额外编译 fullsplit-lab.h 的 probe/variant/no-grab 钩子（导出 ioctl、
-#   openat），但所有钩子在 candidate 环境没有 MIPAD_NATIVE_LAB=1 时都按
-#   syscall 原样透传；不设 MIPAD_DSO_LAB 时产物与生产 DSO 完全相同。
+#   openat）。不设任何模式变量时产物与 2.1.9 生产 DSO 完全相同。
 #
 # 编译参数刻意与 2.2.0-beta 里那份 .so 对齐：NDK r27c（clang 18.0.3 / LLD 18.0.3）、
 # API 35、-O2、-shared -fPIC、FULLSPLIT_EXPLICIT=1、RX_TARGET_PATH=/dev/hidg1。
@@ -28,6 +32,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC="$HERE/native/fullsplit-bounded-interposer.c"
 OUT=${1:-$HERE/native/build/fullsplit-bounded-v2.so}
 LAB=${MIPAD_DSO_LAB:-0}
+NATIVE=${MIPAD_DSO_NATIVE:-0}
+if [ "$LAB" = 1 ] && [ "$NATIVE" = 1 ]; then
+	echo "MIPAD_DSO_LAB 与 MIPAD_DSO_NATIVE 不能同时设置" >&2
+	exit 1
+fi
 
 if [ ! -f "$SRC" ]; then
 	echo "找不到源码: $SRC" >&2
@@ -70,9 +79,10 @@ CC="$BIN/aarch64-linux-android35-clang"
 mkdir -p "$(dirname "$OUT")"
 echo "NDK : $NDK"
 echo "CC  : $CC"
-LAB_DEFS=
-if [ "$LAB" = 1 ]; then LAB_DEFS='-DFULLSPLIT_LAB=1'; fi
-"$CC" --target=aarch64-linux-android35 -shared -fPIC -O2 -pthread $LAB_DEFS \
+MODE_DEFS=
+if [ "$LAB" = 1 ]; then MODE_DEFS='-DFULLSPLIT_LAB=1'; fi
+if [ "$NATIVE" = 1 ]; then MODE_DEFS='-DFULLSPLIT_NATIVE=1'; fi
+"$CC" --target=aarch64-linux-android35 -shared -fPIC -O2 -pthread $MODE_DEFS \
 	-DFULLSPLIT_EXPLICIT=1 '-DRX_TARGET_PATH="/dev/hidg1"' \
 	-o "$OUT" "$SRC" -llog
 
@@ -82,6 +92,8 @@ if [ -x "$BIN/llvm-nm" ]; then
 	got=$("$BIN/llvm-nm" -D --defined-only "$OUT" | awk 'NF==3{print $3}' | LC_ALL=C sort | tr '\n' ' ')
 	if [ "$LAB" = 1 ]; then
 		want='__open_2 __write_chk close dup2 dup3 ioctl open open64 openat write '
+	elif [ "$NATIVE" = 1 ]; then
+		want='__open_2 __write_chk close dup2 dup3 ioctl open open64 write '
 	else
 		want='__open_2 __write_chk close dup2 dup3 open open64 write '
 	fi
@@ -110,6 +122,8 @@ else
 fi
 if [ "$LAB" = 1 ]; then
 	echo "  导出符号: write close open open64 openat ioctl __open_2 __write_chk dup2 dup3（lab, not stripped）"
+elif [ "$NATIVE" = 1 ]; then
+	echo "  导出符号: write close open open64 ioctl __open_2 __write_chk dup2 dup3（native 2.1.10, not stripped）"
 else
 	echo "  导出符号: write close open open64 __open_2 __write_chk dup2 dup3（not stripped）"
 fi

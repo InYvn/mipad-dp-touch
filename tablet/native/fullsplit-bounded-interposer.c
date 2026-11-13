@@ -9,6 +9,10 @@
 #include <android/log.h>
 #include "fullsplit-bounded.c"
 #include "fullsplit-gate.h"
+/* Production native-touch payload (module 2.1.10); lab build is separate. */
+#ifdef FULLSPLIT_NATIVE
+#include "fullsplit-native.h"
+#endif
 #ifndef FULLSPLIT_EXPLICIT
 #define FULLSPLIT_EXPLICIT 1
 #endif
@@ -57,6 +61,9 @@ static ssize_t raw_write(int fd,const void*b,size_t n){
 static int enter(int*cancel){*cancel=0;if(fs_enter())return -1;entered=1;return 0;}
 static void leave(int cancel,int e){(void)cancel;entered=0;fs_leave();errno=e;}
 ssize_t write(int fd,const void*b,size_t n){struct stat s;int saved=errno;
+#ifdef FULLSPLIT_NATIVE
+ {ssize_t nr;if(native_desc_try_write(fd,b,n,&nr))return nr;}
+#endif
 #ifdef FULLSPLIT_LAB
  lab_ensure();
  if(lab_enabled){ssize_t lr;if(lab_desc_try_write(fd,b,n,&lr))return lr;}

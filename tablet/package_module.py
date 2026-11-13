@@ -11,7 +11,7 @@ SOURCE = HERE / 'module'
 NAME = 'mipad-dp-touch-module-v2.1.9-os4.0.16.zip'
 # Pinned after the deterministic build; --expect overrides it for the first
 # build / for verifying an artifact captured out of band.
-EXPECTED_SHA256 = '214282f3d2fd331b89fa44382eff97964655929093f6ae7df8b8db2667d0efe2'
+EXPECTED_SHA256 = 'edb2e1a3ebcf5b2bee1a11e562e273ba0782cf604baeb8eb1e2c491785c40e2e'
 MEMBERS = [
     'module.prop', 'customize.sh', 'post-fs-data.sh', 'service.sh',
     'uninstall.sh', 'action.sh', 'profile.sh', 'common.sh', 'platform.sh',

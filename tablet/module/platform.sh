@@ -27,30 +27,20 @@ OWNER=$STATE/owner
 LOCK=$STATE/lock
 log() { printf '%s %s\n' "$(date +%s)" "$*" >> "$S/lifecycle.log"; }
 
-# --- native-touch lab gates (experimental; production default unchanged) ----
-# Only an explicit MIPAD_NATIVE_LAB=1 enables the lab DSO probe/variant/no-grab
-# path. The switch is read from the candidate environment or from a root-owned
-# env file shipped next to the runtime ($S wins over $M); the variables are
-# then exported so platform-tool launch hands them to the preloaded lab DSO.
-LAB_MODE=0
-LAB_DESC_SHA=
-for lab_env in "$S/native-lab.env" "$M/native-lab.env"; do
- [ -e "$lab_env" ] || continue
- { [ -f "$lab_env" ] && [ ! -L "$lab_env" ]; } || exit 78
- . "$lab_env"
- break
-done
-if [ "${MIPAD_NATIVE_LAB:-0}" = 1 ]; then
- LAB_MODE=1
- LAB_DESC_SHA=${MIPAD_LAB_DESC_SHA:-}
- export MIPAD_NATIVE_LAB=1
- export MIPAD_LAB_VARIANT=${MIPAD_LAB_VARIANT:-V0}
- export MIPAD_LAB_NOGRAB=${MIPAD_LAB_NOGRAB:-0}
- export MIPAD_LAB_NOGRAB_DEV=${MIPAD_LAB_NOGRAB_DEV:-event11}
- export MIPAD_LAB_DESC_PRELOADED=${MIPAD_LAB_DESC_PRELOADED:-0}
- export MIPAD_LAB_PEN_PROBE=${MIPAD_LAB_PEN_PROBE:-0}
- log "NATIVE_LAB active=1 variant=$MIPAD_LAB_VARIANT nograb=$MIPAD_LAB_NOGRAB nograb_dev=$MIPAD_LAB_NOGRAB_DEV desc_sha=${LAB_DESC_SHA:-factory} preloaded=$MIPAD_LAB_DESC_PRELOADED"
+# --- native touch (2.1.10) control ------------------------------------------
+# The shipped DSO plants the validated V4 HID descriptor (Touch Pad 0x0D:0x05,
+# feature report ID 2 -> 1) and suppresses the stock HAL's EVIOCGRAB on the
+# five reviewed evdev nodes, so the tablet stays touchable while DP-in is
+# active and macOS still receives the panel. $S/allow-grab is a diagnostic
+# escape only: it restores the kernel grab for one runtime generation.
+NATIVE_ALLOW_GRAB=0
+if [ -e "$S/allow-grab" ]; then
+ { [ -f "$S/allow-grab" ] && [ ! -L "$S/allow-grab" ]; } || exit 78
+ NATIVE_ALLOW_GRAB=1
+ log "NATIVE allow-grab=1 (diagnostic escape; stock HAL grab restored)"
 fi
+export MIPAD_NATIVE_ALLOW_GRAB=$NATIVE_ALLOW_GRAB
+
 guard() {
  [ "$(id -u)" = 0 ] && [ "$(id -Z)" = u:r:ksu:s0 ] || return 1
  [ "$(getenforce)" = Enforcing ] || return 1
@@ -97,30 +87,13 @@ known_descriptors_check() {
  [ "$(cat /config/usb_gadget/g1/functions/hid.usb1/report_length)" = "$1" ] || return 1
  [ "$(sha256sum /config/usb_gadget/g1/functions/hid.usb0/report_desc | cut -d ' ' -f1)" = 0ac38b057ec9608b20557ce069c520e1789bf8a597059126dc76d464f7599755 ] || return 1
  desc1=$(sha256sum /config/usb_gadget/g1/functions/hid.usb1/report_desc | cut -d ' ' -f1) || return 1
- # Factory Pen is 107 bytes. Reviewed retained native descriptor bytes may
- # also survive with the factory length; native activation still requires 62.
+ # 2.1.10 native touch: the candidate must carry the V4 descriptor (Touch Pad
+ # 0x0D:0x05 + feature RID2 -> RID1, 914B/62B). The stock HAL factory shapes
+ # (hid.usb0 pen 9/10) remain accepted for recovery/stock compatibility.
  case "$1:$desc1" in
-  10:e743412bc1096b18566ad74f9bc46aa40fd2bde608fde05fbe8e2c5531031fa1|10:2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25|62:2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25) return 0;;
-  *)
-   # native-touch lab: the report_length is still 62; the touch descriptor must
-   # equal the lab env's pinned variant sha (LAB_MODE/LAB_DESC_SHA come from the
-   # root-owned native-lab.env; both are unset in production and in the 2.1.9
-   # contract harness, which therefore keeps the reviewed hash set above).
-   [ "${LAB_MODE:-0}" = 1 ] && [ "$1" = 62 ] && [ -n "${LAB_DESC_SHA:-}" ] &&
-    [ "$desc1" = "$LAB_DESC_SHA" ] && return 0
-   return 1;;
+  10:e743412bc1096b18566ad74f9bc46aa40fd2bde608fde05fbe8e2c5531031fa1|10:2235bd04d655a092c83b7dfb3915ba67b4b63ec4a1f0ef332851bbed5bdf3a25|62:b459867c064839f7ad19a24108d6b16e57db2c8b06097e2d9ead2566b9dacffe) return 0;;
+  *) return 1;;
  esac
-}
-# Lab modules pin their own DSO generation in the authenticated runtime
-# manifest (bootstrap.sh verified it before this path runs); the production
-# literal pin below is untouched. Called from stage() only when LAB_MODE=1, so
-# the 2.1.9 stage_smoke harness (which extracts stage() alone and has no lab
-# env) still exercises the shipped pin check.
-lab_stage_pin_ok() {
- [ "${LAB_MODE:-0}" = 1 ] || return 1
- [ ! -L "$DSO" ] || return 1
- lab_pin=$(awk '$2=="fullsplit-bounded-v2.so"{print $1;found=1} END{if(!found)exit 1}' "$S/runtime.sha256") || return 1
- [ -n "$lab_pin" ] && [ "$(sha256sum "$DSO" | cut -d ' ' -f1)" = "$lab_pin" ]
 }
 stage() {
  [ "$(stat -f -c %T /dev)" = tmpfs ] || return 1
@@ -133,12 +106,8 @@ stage() {
  fi
  # The staged DSO must be exactly the packaged runtime DSO; bootstrap.sh
  # wrote and verified it through runtime.sha256 before this path runs.
- # package_check.py cross-checks the production pin against the packaged DSO.
- if [ "${LAB_MODE:-0}" = 1 ]; then
-  lab_stage_pin_ok || return 1
- else
-  [ ! -L "$DSO" ] && [ "$(sha256sum "$DSO" | cut -d ' ' -f1)" = 72757954666bcca58a022c546f81fefb1bb7ffef4a3250fcc9236982bc79c488 ] || return 1
- fi
+ # package_check.py cross-checks this pin against the packaged DSO.
+ [ ! -L "$DSO" ] && [ "$(sha256sum "$DSO" | cut -d ' ' -f1)" = 73234ec8bd1f06b744110f227b22514be918e6b05d0dc3a7555e644760a197f5 ] || return 1
  [ "$(ls -Z "$DSO" | awk '{print $1}')" = u:object_r:vendor_file:s0 ]
 }
 verify_candidate() { "$T" verify "$S/candidate" "$S/candidate-owner" hooked "$DSO" && candidate_descriptors_check; }
