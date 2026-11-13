@@ -1,6 +1,6 @@
 id=mipad_dptouch_fullsplit_local
 name=Mipad DP Touch 触控解锁
-version=2.2.5
-versionCode=20205
+version=2.2.4
+versionCode=20204
 author=InYvn
 description=小米平板 9 Pro Max 当 Mac 外接屏（DP-in）时，让 Mac 拿到触摸屏与笔，并修正双指缩放抬手跳变。只做内存 bind-mount，不改磁盘、不接管厂商 HAL。
