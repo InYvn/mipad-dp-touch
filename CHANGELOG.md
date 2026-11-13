@@ -6,6 +6,8 @@
 * 配合模块 2.1.10 的默认 no-grab：macOS 原生触控与 Android 触摸同时可用（双端同触）；兼容模拟仍为「自动」默认，原生作为可手选/已确认选项。
 * README/INSTALL 更新原生触控前提（模块 2.1.10 + App 2.2.3 + macOS 27.3+，位置校正依赖 EDID）；更新日志与版本号。
 * 自检：11 个 selftest 全过（含 `selftest_touch` 的 0x04/0x05 匹配表用例）。
+* 交付边界（T9 文档修正）：本版本仅本地 ad-hoc 构建 `.app`，未打 DMG/未做发布签名，不是可分发的 release；README/INSTALL 已改为本地交付路径与「待发布」说明。
+* 如实披露：退出 DP-in 且 DP 显示已移除时，EDID 恢复无法回读确认，App 状态可能为 `failed`（`reset API/readback verification failed` / `guard still alive`）；下次进入会重新 apply，不影响平板。原生「位置准确」目前为用户主观确认，尚无坐标对照测量。
 
 ## 2.2.0-beta — 2026-11-12
 

@@ -1,15 +1,21 @@
 # Mipad DP Touch Fullsplit — 2.1.10
 
-供管理器重装验收的完整本地候选，不是公开发布版本。相同运行时代码已由生产 service/controller 在已验证设备启动，读回 native62、处理库与持久 owner，用户整体反馈正常；管理器真实重装和热重启自动启动仍待验收，不能据此推断每项手势均通过。
+供管理器重装验收的完整本地候选，不是公开发布版本（未 push、未公开发布）。2.1.10 已由 Lead 完成一次真机端到端验收（接管/原生输入/Android 输入/退出释放，证据见 `.scratch/mipad-native-touch/evidence/FINAL-E2E-210.md` 及其 T8 审查修正节），但**只有这一次生产包会话**，且原始 logcat/hidutil/configfs 读回等证据形态有限；管理器真实重装和软重启后自动启动仍待验收，不能据此推断每项手势/每次连接均通过。
 
 ## 安装与重新安装
 
 仅限 KernelSU、Enforcing、arm64、yingtian / M367FC / O3 / xring_o3_asic，以及 manifest 中精确 HAL/init 契约。Magisk、Recovery、其他硬件/未知固件不支持。临时 root 的热重启保留能力也须实机验证，不能以正常重启替代。
 
-1. 打开 KernelSU 管理器 → 模块 → 从存储安装，选择 Download 中的 `mipad-dp-touch-module-v2.1.10-os4.0.16.zip`。
-2. 当前同 ID 且运行时字节完全一致时，安装器允许覆盖重装，只更新管理器模块文件；不覆盖持久运行时、不停止 HAL、不回收任何 owner。若提示不同 runtime/旧 SVID 模块/外来状态，停止操作，保留现状，不要盲卸或正常重启绕过保护。
-3. 安装成功后确认模块已启用，使用已安装的热重启模块完成热重启，再重新连接 USB-C 或进入 DP-in。无需额外脚本、手动复制处理库或执行命令。
-4. 首次验收核对版本及真实 DSO、native62、持久 owner、Mac B 状态，并重新实测手指和笔。真实管理器重装及热重启完成前，仍只称候选。
+1. 打开 KernelSU 管理器 → 模块 → 从存储安装，选择 `mipad-dp-touch-module-v2.1.10-os4.0.16.zip`（本次为本地构建产物，未发布到远端）。
+2. **跨 generation 升级（2.1.9 及更早 → 2.1.10）**：安装前先移走旧运行时，并在不重启的热切换场景清掉旧 `/dev` stage（重启会清 `/dev`，正常安装后重启不受影响）：
+   `su -c 'mv /data/adb/mipad_fullsplit_local /data/adb/mipad_fullsplit_local.bak-<时间戳>'`
+   `su -c 'mv /dev/mipad-fullsplit-v104-local /dev/mipad-fullsplit-v104-local.bak-<时间戳>'`
+   否则安装器会按 generation guard 拒绝，或 `stage()` 因旧 DSO pin 不匹配而反复失败（约 30s 后 runtime-monitor 写 `disable`，可用包内 `action.sh` 清标志后重试）。
+3. 当前同 ID 且运行时字节完全一致时，安装器允许覆盖重装，只更新管理器模块文件；不覆盖持久运行时、不停止 HAL、不回收任何 owner。若提示不同 runtime/旧 SVID 模块/外来状态，停止操作，保留现状，不要盲卸或正常重启绕过保护。
+4. 安装成功后确认模块已启用。正常开机/管理器热重启时 KernelSU 会自动执行包内 `service.sh`，**不需要任何外部启动脚本**；若软重启后 monitor 未常驻（已知 KernelSU LKM 晚加载限制），以 root 直接执行**包内**服务脚本即可：
+   `su -c 'sh /data/adb/modules/mipad_dptouch_fullsplit_local/service.sh'`
+   然后重新连接 USB-C 或进入 DP-in。
+5. 首次验收核对版本及真实 DSO、native62、持久 owner、Mac B 状态，并重新实测手指和笔。真实管理器重装及软重启自动启动完成前，仍只称候选。
 
 旧模块或不同运行时的跨代迁移不在此次“相同字节安全重装”支持范围，保护不会被跳过；需要单独安排受控恢复和所有权交接，不能以卸载代替。
 
@@ -41,7 +47,9 @@
 - Mac App 需要 **2.2.3-beta 或更新**：`hid_bridge.match_usages` 在 auto/touch 模式下接受 0x0D:0x05（Touch Pad），App 日志出现「触控接口已识别」；位置校正仍依赖 EDID 校正（applied 282×188）。
 - **诊断逃生**：仅用于排查。在平板上创建 `/data/adb/mipad_fullsplit_local/allow-grab`（root 属主普通文件）后重启 monitor/重新进入 DP-in，DSO 恢复 stock HAL 的内核 grab（Android 触控会被独占，macOS 原生仍可用，取决于 HAL 状态）；删除该文件并重启 monitor 恢复默认双端。
 - **描述符替换是 fail-closed**：只有 stock HAL 单次写入的缓冲恰好是整份 914B factory 描述符时才替换；写入失败/内容不符时 DSO 保留 factory HID 形态并只记录一次 `native-desc-*` 日志，模块的候选描述符契约会中止接管（原生不生效），App 的 legacy（兼容模拟）路径仍可使用 2.1.9 行为。此时请回滚 2.1.9 或检查 HAL 版本。
-- 关键日志（tag `FullSplitBounded`，只在启动/接管时各一条，不逐帧打印）：`native init variant=V4 … no_grab=1 allow_grab=0`、`native-desc-replaced variant=V4 …`、`native-desc-replace-failed`/`native-desc-write-unexpected`、`native-grab-suppressed path=/dev/input/event6 …`（每设备一次）及其余 `native-grab-unmatched`。
+- **EDID 与退出状态**：原生位置校正依赖 EDID 校正 applied（282×188 mm，读回 280.1×189.8 mm）。退出 DP-in 且 DP 显示已被系统移除时，EDID 助手无法回读目标屏，恢复尝试可能以 `failed`（`reset API/readback verification failed` / `guard still alive`）结束——这是**未确认状态**，不是平板/内屏 EDID 被改坏，也不影响平板自身使用；下次进入 DP-in 会重新 apply。「位置准确」目前仅有用户主观确认，尚无设备端坐标对照测量。
+- **no-grab 的已知 fail-open 分支**：若 `/proc/self/fd` readlink 失败（极端 fd/权限竞态）或 HAL 抓取白名单之外的节点，DSO 会把 grab 透传给内核（fail-open），此时 Android 触控可能被 HAL 独占；白名单外节点的转发会记 `native-grab-unmatched … action=forward`。诊断优先用 `$S/allow-grab` 对照（恢复内核 grab 后日志 `native-grab-allowed`），并用 `adb shell getevent /dev/input/event6` 判断 Android 是否收到事件；需要重新 probe HAL 的 grab 列表/权限后更新白名单再发版。
+- 关键日志（tag `FullSplitBounded`，新增 native 日志只在启动/接管时各一条，不逐帧打印；2.1.9 既有的 gate 帧日志 `input_seq/seq hex=…` 保持不变、仍逐帧）：`native init variant=V4 … no_grab=1 allow_grab=0`、`native-desc-replaced variant=V4 …`、`native-desc-replace-failed`/`native-desc-write-unexpected`、`native-grab-suppressed path=/dev/input/event6 …`（每设备一次）及其余 `native-grab-unmatched`。
 
 ## 发送端与范围
 

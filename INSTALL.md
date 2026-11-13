@@ -25,9 +25,9 @@
 
 ## 安装
 
-1. 从 Releases 下载 [**`Mipad-DP-Touch-2.0.0-beta.dmg`**](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/Mipad-DP-Touch-2.0.0-beta.dmg)，双击打开。
-2. 把里面的 **Mipad DP Touch** 拖到旁边的 **「应用程序」**。
-3. 从「应用程序」里双击打开。
+1. 当前交付是**本地 ad-hoc 构建的 App**（2.2.3-beta，本机构建产物 `.scratch/mipad-native-src/dist-pyi/Mipad DP Touch.app`），**未打 DMG、未做发布签名**；把 .app 直接拖入「应用程序」。
+2. 从「应用程序」里双击打开。
+3. 正式发布（DMG + 发布签名）后再按发布说明更新；在此之前不要把此构建当作可分发的 release。
 
 > **如果提示「无法打开，因为来自身份不明的开发者」或「已损坏」**：这是没有 Apple 公证的正常现象，
 > **不是文件坏了**。打开「系统设置 → 隐私与安全性 → 安全性」，点被拦那条的 **「仍要打开」**并确认。
@@ -252,6 +252,7 @@ macOS 其实已经为这块屏生成好了 **HiDPI** 档（渲染按 2x 画，�
 | 笔能移光标但点不中 | 辅助功能没开。同上处理 |
 | 点击、滚动都正常但**手指**没反应 | 确认平板已安装并启用模块 **2.1.10+**，使用热重启模块完成热重启后重新连接 DP-in。App 默认「自动」在 macOS 27.3 及以上是**兼容模拟**：确认「触控与位置」显示兼容模拟，并先在 **系统设置 → 无障碍 → 触控 → 触控调节** 关闭系统手势。若之前手选过「原生触控」，改选「兼容模拟」即可恢复。见 [README](README.md#手指触控默认兼容模拟) |
 | 手选「原生触控」后手指**完全没反应** | 原生触控需要 **模块 2.1.10+ + App 2.2.3+ + macOS 27.3+**：旧模块（2.1.9 及更早）只有 Touch Screen 描述符，系统不产生原生事件。确认模块版本与 App 日志「触控接口已识别」，并确认 EDID 校正已 applied；否则改选「兼容模拟」（会弹确认：先关闭系统触控手势）。见 [README](README.md#手指触控默认兼容模拟) |
+| 退出 DP-in 后 App 显示 `EDID 校正: failed` | DP 显示已移除时，EDID 助手无法回读目标屏，恢复尝试会以 `failed`（`reset API/readback verification failed` / `guard still alive`）结束。这是退出时的**未确认状态**，不是内屏/平板 EDID 被改坏；下次进入 DP-in 会重新 apply，App 按既有 backoff 重试。 |
 | 想弹右键菜单 | 笔尖停在原地别动、约 0.8 秒后抬手（设置窗口「笔的输入」→「停住不动」，判定时长可在「高级选项」改 0.6 / 1.0 秒，动作本身也能换成别的）。停住之后又划走仍算拖拽 |
 | 滚动方向反了 | 「滚动方向」里选另一个 |
 | 滚动太快 / 太慢 | 「滚动速度」里调 |
@@ -293,11 +294,11 @@ DPTOUCH_SELFTEST_WINDOW=exit DPTOUCH_NO_GUIDE=1 "$APP"
 （`src/dptouch_engine.py` 的 `KNOWN_DEVICES`）。
 
 > **注意**：这个 app 解决**笔**；**手指触控需要平板侧解锁** —— 平板在 DP-in 下默认只输出笔这一路，
-> 下载 [`mipad-dp-touch-module-v2.0.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
+> 使用本机/本地构建的 **`mipad-dp-touch-module-v2.1.10-os4.0.16.zip`**（本次交付路径 `.scratch/mipad-touch-210/dist/`，**未发布到远端**），推到平板后在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口、原生 Touch Pad 描述符与双端同触；2.1.9 及更早版本只支持兼容模拟。
 >
 > 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 >
-> 已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.0。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。
+> 从 2.1.9 或更早升级属于跨 runtime generation：先 `mv /data/adb/mipad_fullsplit_local` 旧运行时，并在热切换时清 `/dev/mipad-fullsplit-v104-local`（重启会清 /dev，正常安装后重启不受影响）；否则会按 generation guard 拒绝或 stage pin 失败。同 ID 且运行时字节一致的 2.1.10 可覆盖重装。
 > 详见 [README 的快速开始](README.md#快速开始)。
 
 > **触控方式默认兼容模拟**：macOS 27.3 下旧模块（2.1.9 及更早）的 Touch Screen 描述符不出原生事件；原生触控需要模块 2.1.10 + App 2.2.3
@@ -305,6 +306,8 @@ DPTOUCH_SELFTEST_WINDOW=exit DPTOUCH_NO_GUIDE=1 "$APP"
 > 「自动 · 推荐」在 27.3 及以上也走兼容模拟。兼容模拟请先在
 > **系统设置 → 无障碍 → 触控 → 触控调节** 关闭系统手势；想使用原生触控时，
 > 确认模块 2.1.10+ 与 App 2.2.3+，再开启它并在 App「触控与位置」手选「原生触控」。
+> 「位置准确」目前只有用户主观确认（无坐标对照测量）；退出 DP-in 时 EDID 恢复可能
+> 因目标屏已移除而显示 `failed/未确认`，不影响平板与下次进入时的重新校正。
 > 详见 [README 的手指触控](README.md#手指触控默认兼容模拟)。
 
 ---

@@ -42,7 +42,7 @@
 
 ### 1. 安装 Mac App
 
-从 [Releases](https://github.com/InYvn/mipad-dp-touch/releases) 选择 **2.2.3-beta** 的 DMG，打开后将 **Mipad DP Touch.app** 拖入「应用程序」，然后打开 App。
+当前交付是**本地 ad-hoc 构建的 App**（2.2.3-beta，构建产物 `dist-pyi/Mipad DP Touch.app`，已安装副本在 `/Applications/Mipad DP Touch.app`）：**尚未打 DMG、未做发布签名，不是可分发的 release**。把 .app 拖入「应用程序」后打开即可；待正式发布后再改用 DMG。
 
 首次打开被系统拦下时（ad-hoc 签名），在「系统设置 → 隐私与安全性 → 安全性」中点「仍要打开」并确认。
 
@@ -50,11 +50,11 @@
 
 ### 2. 准备平板触控模块
 
-下载 [`mipad-dp-touch-module-v2.0.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
+使用本机/本地构建产物 **`mipad-dp-touch-module-v2.1.10-os4.0.16.zip`**（本次交付路径 `.scratch/mipad-touch-210/dist/`，**未发布到远端**；2.1.9 及更早版本仍只提供兼容模拟、没有原生 Touch Pad 描述符），推到平板后，在平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口、原生 Touch Pad 描述符与双端同触。
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 
-已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.1.10。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。
+从 2.1.9 或更早升级到 2.1.10 属于跨 runtime generation：安装前先移走旧运行时（`su -c 'mv /data/adb/mipad_fullsplit_local /data/adb/mipad_fullsplit_local.bak-<时间戳>'`），并在热切换时清掉旧 `/dev` stage（`su -c 'mv /dev/mipad-fullsplit-v104-local /dev/mipad-fullsplit-v104-local.bak-<时间戳>'`），否则安装器/引导会按 generation guard 拒绝或 stage pin 失败；重启会清 `/dev`，正常安装后重启不受影响。同 ID 且运行时字节一致的 2.1.10 可覆盖重装。
 
 ### 3. 触控方式（默认兼容模拟，无需系统设置）
 
@@ -72,6 +72,8 @@
 
 - **自动 · 推荐（默认）**：macOS 27.3 及以上仍使用**兼容模拟**（保持既有行为与兼容性），较早系统也是兼容模拟。自动模式只有在确认过原生能力（配置 `native_confirmed: true`，或手选过一次「原生触控」）时才会选原生；原生能力需要模块 2.1.10 + App 2.2.3。
 - **原生触控**：手指输入与多指手势交给 macOS。需要先在系统设置开启触控调节，并确认平板模块为 2.1.10+（Touch Pad 描述符）、EDID 校正已 applied；否则手指没有反应。手选「原生触控」会记录「原生能力已确认」，之后切回「自动」仍会用原生；改选「兼容模拟」（确认关闭系统手势）会撤掉该记录，自动模式回到兼容模拟。
+- **位置精度**：EDID 校正 applied（282×188 mm，读回 280.1×189.8 mm）是位置校正的前提；当前「位置准确」只有用户主观确认，尚无设备端坐标对照测量，交付文档按主观反馈标注。
+- **退出 DP-in 时的 EDID 状态**：若 DP 显示已被系统移除，EDID 助手无法回读目标屏，恢复尝试可能以 `failed`（`reset API/readback verification failed` / `guard still alive`）结束。这是**退出时的未确认状态**，不是内屏/平板 EDID 被改坏，也不影响平板自身使用；下次进入 DP-in 会重新 apply 校正。App 会按既有 backoff 重试，不改变行为。
 - **兼容模拟**：App 合成手指的点击、拖拽、滚动与双指手势，需要先关闭系统触控手势；「手势映射」页显示为「手势映射」，可同时调整手指与笔。
 
 > 想彻底让「自动」回到兼容模拟，也可以退出 App 后把 `~/Library/Application Support/MipadDPTouch/config.json` 里的 `native_confirmed` 改成 `false`（App 运行中直接改也会被采纳，无需重启）。

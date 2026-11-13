@@ -345,6 +345,20 @@ int main(void)
 	ok(fake_ioctl_count == 2, "allow-grab forwards the kernel grab for reviewed nodes");
 	ok(native_grab_logged[0] == 1, "grab-allowed logged for the reviewed node");
 
+	/* ---------------------------------------------------------------- N7 */
+	printf("--- N7 readlink failure is a documented fail-open branch\n");
+	lab_reset(NULL);
+	/* No fake_links entry: /proc/self/fd resolution fails for this fd, so the
+	 * no-grab filter cannot prove the node is a reviewed evdev and forwards the
+	 * grab to the kernel (documented fail-open; diagnostics: allow-grab /
+	 * getevent). */
+	fake_ioctl_rc = 0;
+	fake_ioctl_errno = 0;
+	rc = ioctl(99, (int)EVIOCGRAB, &one);
+	ok(rc == 0 && fake_ioctl_count == 1,
+	   "unresolvable fd forwards the grab (documented fail-open branch)");
+	ok(native_grab_logged[0] == 0, "fail-open branch never claims suppression");
+
 	/* ---------------------------------------------------------------- N6 */
 	printf("--- N6 environment parsing rejects non-\"1\" values\n");
 	lab_reset("true");
