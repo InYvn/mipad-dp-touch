@@ -491,9 +491,22 @@ class Engine(object):
           · 跟随光标: 不接管坐标 (笔不移动光标, 只在光标所在那块屏上点/拖/滚)
           · 平板 / 指定某块屏: 接管坐标, 绝对映射铺到那块屏上 (笔能把光标带过去)
         """
-        r = DP.resolve_target(self.cfg.get("target_display"),
+        td = self.cfg.get("target_display")
+        seized = self._pen_seized()
+        if seized and str(td or "auto") == "auto":
+            # 笔接口被独占后系统不再驱动光标（原生数位板映射被切断），
+            # 「跟随光标」就不再成立：必须由 App 绝对映射，否则光标完全不动。
+            td = "tablet"
+        r = DP.resolve_target(td,
                               infos=infos,
                               allow_unknown=bool(self.cfg.get("display_allow_unknown")))
+        if seized and not r["takeover"] and r.get("rect"):
+            # 认不出平板屏（例如没接 DP）时至少在当前光标那块屏上接管，
+            # 不能让笔独占后光标彻底不动。
+            r = dict(r)
+            r["takeover"] = True
+            r["label"] = (r.get("label") or "") + " · 笔独占"
+            r["note"] = "笔接口已独占：系统不再驱动光标，改由 App 绝对映射"
         self.target = r
         if self.target_changed(r):
             self.log("光标基准屏 -> %s%s" % (
@@ -566,6 +579,11 @@ class Engine(object):
         from dptouch_mode import resolve
         return resolve(self.cfg.get("touch_mode", "auto"), self.touch_iface,
                        legacy_ack=self.cfg.get("legacy_touch_ack", False))
+
+    def _pen_seized(self):
+        """笔接口是否会被独占 —— 与 _hid_thread 里建 pen manager 的条件保持一致。"""
+        return (PEN_USAGE in H.match_usages(self.cfg.get("input_mode", "auto"))
+                and not self.cfg["allow_unknown"])
 
     def _seize_wanted(self):
         """是否独占 HID：纯笔模式可选，兼容模拟必须独占（否则系统原生与 App 合成双落点）。
