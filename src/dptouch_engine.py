@@ -447,6 +447,7 @@ class Engine(object):
         self.b = None
         self._new_bridge()
         self.mgr = None
+        self.mgr_pen = None
         self.rc = 0
         self.running = False
         self.devices = []             # [(名字, vid, pid, 是否已验证)]
@@ -616,7 +617,7 @@ class Engine(object):
         if before[:4] != after[:4] or (before != after and self.b.src_touch):
             self.b.reset_state()      # 绑定变了: 残留不能带到下一笔
         if (after[1] != before[1] or after[3] != before[3] or
-                self._seize_wanted() != before_seize) and self.mgr is not None:
+                self._seize_wanted() != before_seize) and (self.mgr is not None or self.mgr_pen is not None):
             return self.restart()      # 匹配条件或独占方式变了, 必须重建 manager
         return 0
 
@@ -677,7 +678,7 @@ class Engine(object):
 
     # ---------------- 生命周期 ----------------
 
-    def _match(self):
+    def _match(self, usages=None):
         """IOHIDManager 匹配表。
 
         默认（严格）：VID 白名单 × ProductID × digitizer 接口 usage，三个条件同时成立。
@@ -694,7 +695,7 @@ class Engine(object):
                 dicts.append(_dict([(b"VendorID", v)]))
         else:
             for v in SUPPORTED_VENDOR_IDS:
-                for usage in H.match_usages(mode):
+                for usage in (H.match_usages(mode) if usages is None else usages):
                     dicts.append(_dict([(b"VendorID", v), (b"ProductID", PRODUCT_ID),
                                         (b"PrimaryUsagePage", PEN_USAGE_PAGE),
                                         (b"PrimaryUsage", usage)]))
@@ -723,22 +724,45 @@ class Engine(object):
     def _hid_thread(self):
         """HID 线程: 建 manager -> 开 -> 跑自己的 run loop -> 收尾。"""
         try:
-            self.mgr = H.iokit.IOHIDManagerCreate(None, 0)
-            H.iokit.IOHIDManagerSetDeviceMatchingMultiple(self.mgr, self._match())
+            usages = H.match_usages(self.cfg.get("input_mode", "auto"))
+            touch_usages = [u for u in usages if u == TOUCH_USAGE]
+            pen_usages = [u for u in usages if u == PEN_USAGE]
+            self.mgr = None
+            self.mgr_pen = None
+            self.rc = 0
             self._cb = self._value_cb()
             self._dev_cb = self._device_cb(True)
             self._rm_cb = self._device_cb(False)
             H.KEEP.extend([self._cb, self._dev_cb, self._rm_cb])
-            H.iokit.IOHIDManagerRegisterInputValueCallback(self.mgr, self._cb, None)
-            H.iokit.IOHIDManagerRegisterDeviceMatchingCallback(self.mgr, self._dev_cb, None)
-            H.iokit.IOHIDManagerRegisterDeviceRemovalCallback(self.mgr, self._rm_cb, None)
+            # 触摸接口单独一个 manager（0x04）；笔接口（0x02）用另一个 manager 独占，
+            # 这样 macOS 27.3 的原生数位板处理不会和 App 合成叠加成两个落点，
+            # 又不会像以前那样把触摸一起 seize 掉。
+            if touch_usages:
+                self.mgr = H.iokit.IOHIDManagerCreate(None, 0)
+                H.iokit.IOHIDManagerSetDeviceMatchingMultiple(self.mgr, self._match(touch_usages))
+                H.iokit.IOHIDManagerRegisterInputValueCallback(self.mgr, self._cb, None)
+                H.iokit.IOHIDManagerRegisterDeviceMatchingCallback(self.mgr, self._dev_cb, None)
+                H.iokit.IOHIDManagerRegisterDeviceRemovalCallback(self.mgr, self._rm_cb, None)
+            if pen_usages and not self.cfg["allow_unknown"]:
+                self.mgr_pen = H.iokit.IOHIDManagerCreate(None, 0)
+                H.iokit.IOHIDManagerSetDeviceMatchingMultiple(self.mgr_pen, self._match([PEN_USAGE]))
+                H.iokit.IOHIDManagerRegisterInputValueCallback(self.mgr_pen, self._cb, None)
+                H.iokit.IOHIDManagerRegisterDeviceMatchingCallback(self.mgr_pen, self._dev_cb, None)
+                H.iokit.IOHIDManagerRegisterDeviceRemovalCallback(self.mgr_pen, self._rm_cb, None)
             self._rl = H.cf.CFRunLoopGetCurrent()
             self._mode_str = H.cfstr(H.DEFAULT_MODE)
-            H.iokit.IOHIDManagerScheduleWithRunLoop(self.mgr, self._rl, self._mode_str)
-            _opts = 1 if self._seize_wanted() else 0   # 1 = kIOHIDOptionsTypeSeizeDevice
-            self.rc = H.iokit.IOHIDManagerOpen(self.mgr, _opts)
-            if _opts:
-                self.log("HID 独占模式 (seize) rc=%d" % self.rc)
+            if self.mgr is not None:
+                H.iokit.IOHIDManagerScheduleWithRunLoop(self.mgr, self._rl, self._mode_str)
+                _opts = 1 if self._seize_wanted() else 0   # 1 = kIOHIDOptionsTypeSeizeDevice
+                self.rc = H.iokit.IOHIDManagerOpen(self.mgr, _opts)
+                if _opts:
+                    self.log("HID 独占模式 (seize) rc=%d" % self.rc)
+            if self.mgr_pen is not None:
+                H.iokit.IOHIDManagerScheduleWithRunLoop(self.mgr_pen, self._rl, self._mode_str)
+                rcp = H.iokit.IOHIDManagerOpen(self.mgr_pen, 1)
+                self.log("笔接口独占 (seize) rc=%d" % rcp)
+                if self.rc == 0:
+                    self.rc = rcp
             self.running = (self.rc == 0)
             self.started_at = time.time()
             self.log("HID 线程已就绪 (独立 run loop, 界面操作不会影响它)")
@@ -757,16 +781,22 @@ class Engine(object):
             self._log_err_once("HID 线程异常", e)
         finally:
             try:
-                if self.mgr is not None:
-                    H.iokit.IOHIDManagerClose(self.mgr, 0)
-                    H.iokit.IOHIDManagerUnscheduleFromRunLoop(self.mgr, self._rl,
-                                                              self._mode_str)
-                    H.cf.CFRelease(self.mgr)
-            except Exception as e:
-                self._log_err_once("HID 收尾异常", e)
-            self.mgr = None
-            self.running = False
-            self._rl = None
+                for m in (self.mgr, self.mgr_pen):
+                    if m is None:
+                        continue
+                    try:
+                        H.iokit.IOHIDManagerClose(m, 0)
+                        if self._rl is not None:
+                            H.iokit.IOHIDManagerUnscheduleFromRunLoop(m, self._rl,
+                                                                      self._mode_str)
+                        H.cf.CFRelease(m)
+                    except Exception as e:
+                        self._log_err_once("HID 收尾异常", e)
+            finally:
+                self.mgr = None
+                self.mgr_pen = None
+                self.running = False
+                self._rl = None
 
     def stop(self):
         self._stop_flag = True
