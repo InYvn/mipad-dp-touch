@@ -126,6 +126,13 @@ static unsigned long lab_grab_suppressed;
 static unsigned long lab_ioctl_seen;
 static struct { int used; int fd; int req; } lab_pairs[LAB_IOCTL_PAIRS];
 static int lab_pair_count;
+/* Per-unique-path open log budget: the HAL re-opens the backlight brightness
+ * node ~10x/s and rescans every /dev/input/eventN repeatedly. Log the first
+ * few occurrences per distinct path, then stay quiet (T5/T6 log size). */
+#define LAB_OPEN_LOG_FIRST 4u
+#define LAB_OPEN_PATH_SLOTS 64
+static struct { uint64_t hash; unsigned count; } lab_open_paths[LAB_OPEN_PATH_SLOTS];
+static int lab_open_path_count;
 
 static void lab_log(const char *fmt, ...)
 {
@@ -217,32 +224,33 @@ static int lab_fd_lookup(int fd, char *out, size_t n)
 	return found;
 }
 
-/* Canonical fd -> path. The fd table is authoritative for descriptors the
- * candidate opened after the DSO was loaded; /proc/self/fd is the fallback for
- * inherited descriptors (and is where a relative openat is resolved). */
+/* Canonical fd -> path. /proc/self/fd is authoritative: bionic's closedir()/
+ * fclose() internally close some descriptors without going through this
+ * interposer's close() (T4 hit a stale fd-table entry: an evdev fd reused the
+ * number of a previously closed /dev/input directory and the grab was logged as
+ * "path=/dev/input", which would also defeat the no-grab path whitelist). The
+ * table is therefore only a fallback (and the host-test seam, where readlink
+ * is stubbed to fail). */
 static int lab_fd_path(int fd, char *out, size_t n)
 {
 	char link[48], name[LAB_PATH_MAX];
 	ssize_t r;
-	if (lab_fd_lookup(fd, out, n)) {
-		return 1;
+	if (fd < 0 || !out || !n) {
+		return 0;
 	}
 	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
 	r = LAB_READLINK(link, name, sizeof(name) - 1);
-	if (r <= 0) {
-		return 0;
+	if (r > 0) {
+		name[r] = 0;
+		if (strncmp(name, "socket:", 7) && strncmp(name, "anon_inode:", 11) &&
+		    strncmp(name, "pipe:", 5) && strncmp(name, "/memfd:", 7) &&
+		    strncmp(name, "/dev/null", 9) && strncmp(name, "/dev/urandom", 12)) {
+			snprintf(out, n, "%s", name);
+			lab_fd_put(fd, out);
+			return 1;
+		}
 	}
-	name[r] = 0;
-	/* Anonymous kernel objects are not interesting and must not be cached
-	 * under a growing set of throw-away descriptors. */
-	if (!strncmp(name, "socket:", 7) || !strncmp(name, "anon_inode:", 11) ||
-	    !strncmp(name, "pipe:", 5) || !strncmp(name, "/memfd:", 7) ||
-	    !strncmp(name, "/dev/null", 9) || !strncmp(name, "/dev/urandom", 12)) {
-		return 0;
-	}
-	snprintf(out, n, "%s", name);
-	lab_fd_put(fd, out);
-	return 1;
+	return lab_fd_lookup(fd, out, n);
 }
 
 static int lab_path_kind(const char *path)
@@ -323,6 +331,8 @@ static void lab_init(void)
 	lab_ioctl_seen = 0;
 	lab_pair_count = 0;
 	memset(lab_pairs, 0, sizeof(lab_pairs));
+	lab_open_path_count = 0;
+	memset(lab_open_paths, 0, sizeof(lab_open_paths));
 	snprintf(lab_nograb_dev, sizeof(lab_nograb_dev), "event11");
 	if (!lab_enabled) {
 		return;
@@ -389,6 +399,39 @@ static void lab_ensure(void)
 	}
 }
 
+static uint64_t lab_path_hash(const char *path)
+{
+	uint64_t h = 1469598103934665603ULL;
+	while (path && *path) {
+		h ^= (unsigned char)*path++;
+		h *= 1099511628211ULL;
+	}
+	return h;
+}
+
+/* 1 = log this open, 0 = budget exhausted for this distinct path. */
+static int lab_open_log_budget(const char *path)
+{
+	uint64_t h = lab_path_hash(path);
+	int i, slot = -1, allowed = 1;
+	pthread_mutex_lock(&lab_lock);
+	for (i = 0; i < lab_open_path_count; i++) {
+		if (lab_open_paths[i].hash == h) {
+			slot = i;
+			break;
+		}
+	}
+	if (slot >= 0) {
+		allowed = ++lab_open_paths[slot].count <= LAB_OPEN_LOG_FIRST;
+	} else if (lab_open_path_count < LAB_OPEN_PATH_SLOTS) {
+		lab_open_paths[lab_open_path_count].hash = h;
+		lab_open_paths[lab_open_path_count].count = 1;
+		lab_open_path_count++;
+	}
+	pthread_mutex_unlock(&lab_lock);
+	return allowed;
+}
+
 static void lab_open_note(const char *given, int flags, int dirfd, int fd, int err)
 {
 	char path[LAB_PATH_MAX], dir[LAB_PATH_MAX];
@@ -410,13 +453,19 @@ static void lab_open_note(const char *given, int flags, int dirfd, int fd, int e
 	} else {
 		path[0] = 0;
 	}
+	if (!path[0] && given) {
+		snprintf(path, sizeof(path), "%s", given);
+	}
+	if (!lab_open_log_budget(path[0] ? path : "?")) {
+		return;
+	}
 	if (dirfd >= 0) {
 		lab_log("openat fd=%d dirfd=%d name=%s flags=0x%x rc=%s path=%s",
 			fd, dirfd, given ? given : "?", flags,
 			err ? "error" : "ok", path[0] ? path : "?");
 	} else {
 		lab_log("open fd=%d flags=0x%x rc=%s path=%s", fd, flags,
-			err ? "error" : "ok", path[0] ? path : (given ? given : "?"));
+			err ? "error" : "ok", path[0] ? path : "?");
 	}
 }
 
@@ -426,7 +475,10 @@ static void lab_close_note(int fd)
 	int kind;
 	if (lab_fd_lookup(fd, path, sizeof(path))) {
 		kind = lab_path_kind(path);
-		if (kind != LAB_KIND_NONE) {
+		/* Event-node open/close churn is covered by the (deduped) open log,
+		 * the grab/ioctl log and the whitelist; only gadget/hidg/configfs
+		 * closes are individually interesting. */
+		if (kind != LAB_KIND_NONE && kind != LAB_KIND_INPUT) {
 			lab_log("close fd=%d path=%s", fd, path);
 		}
 		lab_fd_del(fd);

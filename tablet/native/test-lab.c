@@ -54,11 +54,20 @@ int FS_TEST_LAB_IOCTL(int fd, int req, void *arg)
 	return fake_ioctl_rc;
 }
 
+static char fake_readlink[LAB_PATH_MAX];
+
 ssize_t FS_TEST_LAB_READLINK(const char *path, char *buf, size_t n)
 {
 	(void)path;
-	(void)buf;
-	(void)n;
+	if (fake_readlink[0]) {
+		size_t len = strlen(fake_readlink);
+		if (len >= n) {
+			len = n - 1;
+		}
+		memcpy(buf, fake_readlink, len);
+		buf[len] = 0;
+		return (ssize_t)len;
+	}
 	errno = ENOENT; /* host has no /proc/self/fd: the fd table must carry it */
 	return -1;
 }
@@ -138,6 +147,7 @@ static void reset_lab(const char *variant, int nograb, const char *dev)
 		unsetenv("MIPAD_LAB_NOGRAB_DEV");
 	}
 	lab_fd_del_all_for_test();
+	fake_readlink[0] = 0;
 	lab_init();
 	reset_fakes();
 }
@@ -206,6 +216,34 @@ int main(void)
 		close(dfd);
 	}
 
+	/* --------------------------------------------------------------- L1b */
+	printf("--- L1b stale fd table entries are corrected from /proc/self/fd (T4 grab mislabel)\n");
+	reset_lab(NULL, 0, NULL);
+	lab_fd_put(77, "/dev/input"); /* stale: closedir() bypassed our close() */
+	lab_fd_put(78, "/dev/input/event6");
+	{
+		char got[LAB_PATH_MAX];
+		snprintf(fake_readlink, sizeof(fake_readlink), "/dev/input/event9");
+		ok(lab_fd_path(77, got, sizeof(got)) && !strcmp(got, "/dev/input/event9"),
+		   "readlink wins over the stale table entry");
+		ok(lab_fd_lookup(77, got, sizeof(got)) && !strcmp(got, "/dev/input/event9"),
+		   "table entry refreshed after the readlink");
+	}
+	reset_lab(NULL, 1, "event9");
+	lab_fd_put(77, "/dev/input");
+	snprintf(fake_readlink, sizeof(fake_readlink), "/dev/input/event9");
+	rc = ioctl(77, EVIOCGRAB, &one);
+	ok(rc == 0 && ioctl_call_count == 0 && lab_grab_suppressed == 1,
+	   "no-grab matches the real device even when the table entry is stale");
+	fake_readlink[0] = 0;
+	reset_lab(NULL, 0, NULL);
+	lab_fd_put(77, "/dev/input");
+	{
+		char got[LAB_PATH_MAX];
+		ok(lab_fd_path(77, got, sizeof(got)) && !strcmp(got, "/dev/input"),
+		   "table fallback still used when readlink fails (host seam)");
+	}
+
 	/* ---------------------------------------------------------------- L2 */
 	printf("--- L2  ioctl pass-through + classification counters\n");
 	reset_lab(NULL, 0, NULL);
@@ -264,6 +302,47 @@ int main(void)
 	ok(ioctl_call_count == 1 && lab_grab_suppressed == 1, "full path whitelist matched");
 	rc = ioctl(44, EVIOCGRAB, &one);
 	ok(ioctl_call_count == 1 && lab_grab_suppressed == 2, "comma list basename matched");
+
+	/* --------------------------------------------------------------- L4b */
+	printf("--- L4b T4-proven whitelist: all four stock-HAL grabbed evdev nodes\n");
+	reset_lab(NULL, 1, "event6,event11,event7,event8");
+	lab_fd_put(41, "/dev/input/event11");
+	lab_fd_put(43, "/dev/input/event6");
+	lab_fd_put(45, "/dev/input/event7");
+	lab_fd_put(46, "/dev/input/event8");
+	lab_fd_put(47, "/dev/input/event5");
+	rc = ioctl(41, EVIOCGRAB, &one);
+	ok(rc == 0 && ioctl_call_count == 0, "event11 grab suppressed (T4 list)");
+	rc = ioctl(43, EVIOCGRAB, &one);
+	ok(ioctl_call_count == 0, "event6 (Android touchscreen) grab suppressed (T4 list)");
+	rc = ioctl(45, EVIOCGRAB, &one);
+	rc = ioctl(46, EVIOCGRAB, &one);
+	ok(ioctl_call_count == 0 && lab_grab_suppressed == 4, "event7/event8 grab suppressed (T4 list)");
+	rc = ioctl(47, EVIOCGRAB, &one);
+	ok(ioctl_call_count == 1, "event5 not in the T4 list is forwarded");
+	rc = ioctl(43, EVIOCREVOKE, &one);
+	ok(ioctl_call_count == 1 && lab_grab_suppressed == 5, "revoke on event6 suppressed too");
+
+	/* --------------------------------------------------------------- L4c */
+	printf("--- L4c long whitelist: no per-entry limit, only the 160-byte buffer\n");
+	{
+		char list[150];
+		int used = 0;
+		for (int i = 1; i <= 12 && used < 130; i++) {
+			used += snprintf(list + used, sizeof(list) - (size_t)used,
+					 "%sevent%d", i == 1 ? "" : ",", i);
+		}
+		printf("      whitelist len=%d: %s\n", used, list);
+		reset_lab(NULL, 1, list);
+		lab_fd_put(41, "/dev/input/event12");
+		lab_fd_put(43, "/dev/input/event13");
+		rc = ioctl(41, EVIOCGRAB, &one);
+		ok(rc == 0 && ioctl_call_count == 0, "12th entry is still parsed and matched");
+		rc = ioctl(43, EVIOCGRAB, &one);
+		ok(ioctl_call_count == 1, "13th (absent) device is forwarded");
+		ok(used < LAB_PATH_MAX,
+		   "test list fits the documented 159-character environment limit");
+	}
 
 	/* ---------------------------------------------------------------- L5 */
 	printf("--- L5  variant table: factory/V1/V3 descriptor bytes\n");
@@ -596,6 +675,7 @@ int main(void)
 	unsetenv("MIPAD_LAB_NOGRAB");
 	setenv("MIPAD_LAB_PEN_PROBE", "1", 1);
 	lab_fd_del_all_for_test();
+	fake_readlink[0] = 0;
 	lab_init();
 	reset_fakes();
 	ok(lab_pen_probe == 1, "pen probe armed from the environment");
@@ -616,6 +696,30 @@ int main(void)
 		ok(rc == 62 && write_call_count == 1, "pen probe fires only once per session");
 	}
 	unsetenv("MIPAD_LAB_PEN_PROBE");
+
+	/* --------------------------------------------------------------- L12 */
+	printf("--- L12 non-interesting open paths are log-budgeted (T5/T6 noise)\n");
+	reset_lab(NULL, 0, NULL);
+	{
+		const char *bl = "/sys/devices/platform/soc/d0000000.dpu/backlight/panel0-backlight/brightness";
+		int allowed = 0;
+		for (int i = 0; i < 8; i++) {
+			allowed += lab_open_log_budget(bl);
+		}
+		ok(allowed == 4, "first 4 opens of one sysfs path are logged, the rest suppressed");
+		ok(lab_open_log_budget(bl) == 0, "budget stays exhausted for that path");
+		ok(lab_open_log_budget("/dev/input/event6") == 1, "a different path has its own budget");
+	}
+	reset_lab(NULL, 0, NULL);
+	{
+		char got[LAB_PATH_MAX];
+		for (int i = 0; i < 6; i++) {
+			lab_open_note("/sys/class/backlight/fake/brightness", 0, -1, 90, 0);
+		}
+		ok(lab_fd_lookup(90, got, sizeof(got)) &&
+		   !strcmp(got, "/sys/class/backlight/fake/brightness"),
+		   "suppressed open logs still record fd->path");
+	}
 
 	printf("\n%d checks, %d failure(s)\n", checks, fails);
 	return fails ? 1 : 0;
