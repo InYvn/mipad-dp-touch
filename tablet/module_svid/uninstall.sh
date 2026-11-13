@@ -9,5 +9,9 @@ if [ "$(readlink /proc/self/ns/mnt)" != "$(readlink /proc/1/ns/mnt)" ]; then
  export MIPAD_NS_ENTERED=1
  exec "$MIPAD_PLATFORM_BUSYBOX" nsenter --mount=/proc/1/ns/mnt -- "$MIPAD_PLATFORM_BUSYBOX" sh -o standalone "$0" "$@"
 fi
+# interposer 的两个 bind 先撤，再撤 SVID
+umount /odm/bin/vendor.xiaomi.usb.dp-service 2>/dev/null || true
+umount /odm/lib64/libanc_supermoon.so 2>/dev/null || true
+umount /mnt/vendor/mipad_lib 2>/dev/null || true
 . "$MODDIR/common.sh"
 run_locked uninstall || true

@@ -34,6 +34,10 @@ static ssize_t rx_send(RX*s,int target,int fd,const void*b,size_t n,writer fn){
  if(s->poison){errno=EIO;return -1;}
  fs_writer=fn;fs_deadline=fs_now_ms()+FS_DEADLINE_MS;
  ssize_t r=rx_send_legacy(s,target,fd,b,n,fs_retry_write);int e=errno;
+ /* Transport shutdown (unplug / re-enumeration) ends this session: reset so the
+  * next fd or generation starts clean. Poisoning here would drop every touch
+  * report until the whole HAL process restarts. */
+ if(r<0&&(e==ESHUTDOWN||e==ENODEV||e==EPIPE)){rx_reset(s);errno=e;return -1;}
  /* A partial expanded transaction has no representable input byte count. */
  if(r<0||((n==62&&((const unsigned char*)b)[0]==1)&&r!=62)){
   s->poison=1;if(r>=0){r=-1;e=EIO;}
