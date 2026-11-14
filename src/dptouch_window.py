@@ -773,7 +773,7 @@ PAGES = (
     ("touch", "scope", "触控与位置"),
     ("gestures", "hand.point.up", "手势映射"),
     ("display", "display", "显示设置"),
-    ("plugins", "puzzlepiece.extension", "插件市场"),
+    ("plugins", "puzzlepiece.extension", "插件与工具"),
     ("runtime", "gearshape", "运行与诊断"),
 )
 
@@ -1870,14 +1870,14 @@ class SettingsWindow(_Pane):
 
     @objc.python_method
     def _page_plugins(self, v, x, w, y):
-        """插件市场：按注册表列出全部插件，安装动作交给 App。"""
+        """插件与工具：插件按注册表列出，外部工具只提供官方下载/官网。"""
         import dptouch_plugin as PLUG
         busy = getattr(self.app, "_plug_busy", "") or ""
         ctls = getattr(self.app, "_plug_ctls", {}) or {}
 
         y = self._eyebrow(v, x, y, "PLUGIN MARKET / 05")
-        y = self._page_head(v, x, w, y, "插件市场",
-                            "可选功能按需安装：App 本体不打包它们，点安装时才从发行源下载并校验。",
+        y = self._page_head(v, x, w, y, "插件与工具",
+                            "插件按需安装；工具只提供官方下载入口，不随 App 分发。",
                             "检查更新", "onMarketCheck:")
 
         for meta in PLUG.registry():
@@ -1939,6 +1939,52 @@ class SettingsWindow(_Pane):
             self.c["mk_%s_open" % pid].setRepresentedObject_(pid)
             v.addSubview_(self.c["mk_%s_open" % pid])
 
+            y += card_h + 10
+
+        # ---- 外部工具：不装进 App，只给官方下载/官网 ----
+        tlist = PLUG.tools()
+        if tlist:
+            y += 6
+            v.addSubview_(_label("工具", self._r(x, y, w, 18), size=13, bold=True))
+            y += 24
+        for tmeta in tlist:
+            tid = tmeta["id"]
+            tbusy = getattr(self.app, "_tool_busy", "") == tid
+            done, total = getattr(self.app, "_tool_progress", (0, 0))
+            card_h = 104.0
+            self._card(v, y, card_h, x, w)
+
+            icon = self._symbol_icon(tmeta.get("symbol") or "display")
+            if icon is not None:
+                icon.setFrame_(self._r(x + 20, y + 20, 64, 64))
+                v.addSubview_(icon)
+
+            tx = x + 20 + 64 + 16
+            tw = x + w - 20 - tx
+            v.addSubview_(_label(tmeta["name"], self._r(tx, y + 14, 200, 20), size=15, bold=True))
+            tag = self._tag_badge(tmeta.get("tag") or "")
+            if tag is not None:
+                tag.setFrame_(self._r(tx + 4 + 112, y + 17, 56, 16))
+                v.addSubview_(tag)
+            v.addSubview_(_label(tmeta["blurb"], self._r(tx, y + 38, tw, 16), size=11, dim=True))
+
+            by = y + 72
+            if tbusy and total:
+                title = "下载中… %d%%" % int(done * 100 / total)
+            elif tbusy:
+                title = "下载中…"
+            else:
+                title = "下载…"
+            self.c["mk_%s_dl" % tid] = _button(title, self._r(tx, by, 110, 26),
+                                              self, "onToolDownload:")
+            self.c["mk_%s_dl" % tid].setRepresentedObject_(tid)
+            self.c["mk_%s_dl" % tid].setEnabled_(not tbusy)
+            v.addSubview_(self.c["mk_%s_dl" % tid])
+
+            self.c["mk_%s_site" % tid] = _button("官网 ↗", self._r(x + w - 20 - 92, by, 92, 26),
+                                                self, "onToolOpen:")
+            self.c["mk_%s_site" % tid].setRepresentedObject_(tid)
+            v.addSubview_(self.c["mk_%s_site" % tid])
             y += card_h + 10
 
         y += 8
@@ -2014,7 +2060,7 @@ class SettingsWindow(_Pane):
         return y
 
     # ---------------- 交互: 切页 / 外观 / 详情 / 提示条 ----------------
-    # ---------------- 插件市场 ----------------
+    # ---------------- 插件与工具 ----------------
     def onPluginPreview_(self, sender):
         import base64
         import plugin_icons
@@ -2052,6 +2098,40 @@ class SettingsWindow(_Pane):
     def onMarketUninstallPid_(self, sender):
         self.app.actPluginUninstall_(sender.representedObject())
         self._market_later_()
+
+    @objc.python_method
+    def _symbol_icon(self, name, w=64.0, h=64.0):
+        try:
+            from AppKit import NSImageSymbolConfiguration
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
+            if img is None:
+                return None
+            cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(34.0, 0.3)
+            img = img.imageWithSymbolConfiguration_(cfg)
+            iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+            iv.setImage_(img)
+            iv.setImageScaling_(3)
+            return iv
+        except Exception:
+            return None
+
+    @objc.python_method
+    def _tag_badge(self, text):
+        try:
+            f = _label(text, NSMakeRect(0, 0, 56, 16), size=9, color=brand_color())
+            f.setAlignment_(1)
+            f.setWantsLayer_(True)
+            f.layer().setCornerRadius_(4.0)
+            f.layer().setBackgroundColor_(brand_color().colorWithAlphaComponent_(0.12).CGColor())
+            return f
+        except Exception:
+            return None
+
+    def onToolDownload_(self, sender):
+        self.app.actToolDownload_(sender.representedObject())
+
+    def onToolOpen_(self, sender):
+        self.app.actToolOpen_(sender.representedObject())
 
     def onMarketOpenPid_(self, sender):
         import dptouch_plugin as PLUG

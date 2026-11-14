@@ -67,6 +67,63 @@ PLUGINS = (
 
 DEFAULT_ID = "touchkeys"
 
+# 外部工具：不是插件，装不进 App 进程。只做「下载官方安装包 + 打开官网」，
+# 不镜像、不打包、不静默安装 —— 版权上只做跳转/代下，不做分发。
+TOOLS = (
+    {
+        "id": "hyperconnect",
+        "name": "小米互联服务",
+        "tag": "小米官方",
+        "blurb": "小米互联服务是一款运行在苹果设备上，并能和小米设备之间进行文件互传、数据流转和桌面共享等跨端协同和控制的应用。",
+        "url": "https://hyperconnect.hyperos.mi.com/hyper-connect/HyperConnect_AI.dmg",
+        "page": "https://os.mi.com/continuity/abilities/ab0016",
+        "symbol": "display",
+        "min_host": "2.0.0",
+    },
+)
+
+
+def tools():
+    """全部外部工具（只读）。"""
+    return TOOLS
+
+
+def tool(tid):
+    for t in TOOLS:
+        if t["id"] == tid:
+            return t
+    raise PluginError("未知工具: %s" % tid)
+
+
+def download_file(url, dest, progress=None, timeout=1800):
+    """流式下载（不校验哈希）：外部工具只从官方地址拉，下完由调用方验签名。"""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    tmp = dest + ".part"
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r, open(tmp, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if progress is not None:
+                    try:
+                        progress(done, total)
+                    except Exception:
+                        pass
+        os.replace(tmp, dest)
+        return dest
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 # 旧代码兼容别名
 PLUGIN_ID = DEFAULT_ID
 PLUGIN_NAME = "屏幕键盘（TouchKeys）"

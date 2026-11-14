@@ -454,6 +454,9 @@ class DPApp(NSObject):
         self._upd_started = time.time()
         # 插件（屏幕键盘）: 同样用后台线程 + 主线程取结果
         self._plug_in = None             # ("check"|"install", data)
+        self._tool_in = None             # (tid, {ok, why, path}) 外部工具下载结果
+        self._tool_busy = ""             # 正在下载的工具 id
+        self._tool_progress = (0, 0)     # (done, total) 字节
         self._plug_busy = ""             # "" / "check" / "install"
         self._plug_progress = None
         self._plug_mod = None            # 已加载的插件模块
@@ -541,6 +544,12 @@ class DPApp(NSObject):
                             _visual_layout = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
                             assert not _visual_layout, _visual_layout
                             assert self.cfg == _ui_cfg, "rendering clobbered config"
+                # 插件与工具页: 插件卡片 + 外部工具卡片都要过布局质检
+                self.win.page = "plugins"
+                self.win._relayout(animate=False)
+                _plug_layout = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
+                assert not _plug_layout, _plug_layout
+                assert "mk_hyperconnect_dl" in self.win.c
                 # Real AppKit dispatch, not a direct Python action call.
                 _snapshot.update(selected_mode="native", touch_mode="auto", ax=True, running=True, rc=0, devices=list(_dev))
                 self.enabled = True
@@ -2624,7 +2633,7 @@ class DPApp(NSObject):
             ctl = self._plug_ensure(pid)
         except Exception as e:
             log("插件加载失败(%s): %r" % (pid, e))
-            self._warn("插件加载失败", "%s\n\n可以在插件市场里卸载后重装。" % e)
+            self._warn("插件加载失败", "%s\n\n可以在「插件与工具」里卸载后重装。" % e)
             return
         ctl.toggle()
         try:
@@ -2675,6 +2684,105 @@ class DPApp(NSObject):
             self.win.market_changed()
         except Exception:
             pass
+
+    # ---------------- 外部工具（官方下载 / 官网） ----------------
+
+    def actToolDownload_(self, tid):
+        """下载外部工具的官方安装包：不镜像、不打包、不静默安装。"""
+        if not tid or self._tool_busy:
+            return
+        meta = PLUG.tool(tid)
+        dest = os.path.expanduser("~/Downloads/%s.dmg" % meta["name"])
+        body = ("会从官方地址下载安装包：\n%s\n\n保存到：%s\n\n"
+                "下载完成后会校验签名并打开安装包，需要你手动拖进「应用程序」。" % (meta["url"], dest))
+        if self._ask("下载%s？" % meta["name"], body, ["下载", "取消"]) != 0:
+            return
+        self._tool_busy = tid
+        self._tool_progress = (0, 0)
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
+        threading.Thread(target=self._tool_worker_download, args=(tid, dest),
+                         daemon=True).start()
+
+    @objc.python_method
+    def _tool_worker_download(self, tid, dest):
+        meta = PLUG.tool(tid)
+        try:
+            def prog(done, total):
+                self._tool_progress = (done, total)
+            PLUG.download_file(meta["url"], dest, progress=prog)
+            ok, why = self._verify_dmg(dest)
+            out = {"ok": ok, "why": why, "path": dest}
+        except Exception as e:
+            out = {"ok": False, "why": "%s: %s" % (e.__class__.__name__, e), "path": dest}
+        self._tool_in = (tid, out)
+
+    @objc.python_method
+    def _verify_dmg(self, path):
+        """DMG 格式 + 挂载后校验 App 签名与 Team ID（小米 DG75VEYT9V）。"""
+        import shutil
+        import subprocess
+        import tempfile
+        if not path.endswith(".dmg") or not os.path.exists(path) or os.path.getsize(path) < (1 << 20):
+            return False, "文件不是有效的 DMG"
+        mnt = tempfile.mkdtemp(prefix="dptouch-dmg-")
+        try:
+            r = subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly",
+                                "-mountpoint", mnt, path],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                return False, "挂载失败: %s" % ((r.stderr or r.stdout).strip()[:200])
+            app = None
+            for root, dirs, _files in os.walk(mnt):
+                for d in dirs:
+                    if d.endswith(".app"):
+                        app = os.path.join(root, d)
+                        break
+                if app:
+                    break
+            if not app:
+                return False, "安装包里没有 App"
+            v = subprocess.run(["codesign", "--verify", "--deep", "--strict", app],
+                               capture_output=True, text=True)
+            if v.returncode != 0:
+                return False, "签名校验失败: %s" % ((v.stderr or "").strip()[:200])
+            d = subprocess.run(["codesign", "-dv", "--verbose=4", app],
+                               capture_output=True, text=True)
+            txt = (d.stderr or "") + (d.stdout or "")
+            if "DG75VEYT9V" not in txt:
+                return False, "签名 Team ID 不是小米"
+            return True, ""
+        finally:
+            subprocess.run(["hdiutil", "detach", "-force", mnt], capture_output=True)
+            shutil.rmtree(mnt, ignore_errors=True)
+
+    @objc.python_method
+    def _tool_after_download(self, tid, out):
+        self._tool_busy = ""
+        self._tool_progress = (0, 0)
+        meta = PLUG.tool(tid)
+        if not out.get("ok"):
+            self._warn("下载%s失败" % meta["name"],
+                       "%s\n\n可以打开官网手动下载：%s" % (out.get("why") or "原因不明", meta["page"]))
+        else:
+            self._ask("下载完成",
+                      "安装包已保存到：\n%s\n\n即将打开安装包，请把「%s」拖进「应用程序」。"
+                      % (out["path"], meta["name"]), ["打开", "稍后"])
+            try:
+                NSWorkspace.sharedWorkspace().openFile_(out["path"])
+            except Exception:
+                pass
+        try:
+            self.win.market_changed()
+        except Exception:
+            pass
+
+    def actToolOpen_(self, tid):
+        from Foundation import NSURL
+        meta = PLUG.tool(tid)
+        NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(meta["page"]))
 
     def actPluginCheck_(self, sender):
         """手动检查插件更新（市场页 / 菜单都走这里）。"""
@@ -2801,6 +2909,13 @@ class DPApp(NSObject):
 
     @objc.python_method
     def _plug_tick(self):
+        t = self._tool_in
+        if t:
+            self._tool_in = None
+            try:
+                self._tool_after_download(*t)
+            except Exception as e:
+                log("工具下载收尾异常: %r" % (e,))
         p = self._plug_in
         if p:
             self._plug_in = None

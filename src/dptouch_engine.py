@@ -511,8 +511,8 @@ class Engine(object):
         if self.target_changed(r):
             self.log("光标基准屏 -> %s%s" % (
                 r["label"], ("  (接管坐标: 绝对的, 笔到哪光标到哪)" if r["takeover"] else "")))
-        if r.get("note"):
-            self.log(r["note"])
+            if r.get("note"):
+                self.log(r["note"])
         rect = r.get("rect")
         if rect:
             self.b.set_rect(rect[0], rect[1], rect[2], rect[3], r["label"])
