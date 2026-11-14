@@ -1954,7 +1954,7 @@ class SettingsWindow(_Pane):
             card_h = 104.0
             self._card(v, y, card_h, x, w)
 
-            icon = self._symbol_icon(tmeta.get("symbol") or "display")
+            icon = self._tool_icon(tid, 64.0) or self._symbol_icon(tmeta.get("symbol") or "display")
             if icon is not None:
                 icon.setFrame_(self._r(x + 20, y + 20, 64, 64))
                 v.addSubview_(icon)
@@ -2098,6 +2098,24 @@ class SettingsWindow(_Pane):
     def onMarketUninstallPid_(self, sender):
         self.app.actPluginUninstall_(sender.representedObject())
         self._market_later_()
+
+    @objc.python_method
+    def _tool_icon(self, tid, size=64.0):
+        """外部工具图标：优先用打包进来的官方 App 图标，取不到退回 SF Symbol。"""
+        try:
+            import base64
+            import tool_icons
+            raw = tool_icons.ICONS.get(tid)
+            if raw:
+                img = NSImage.alloc().initWithData_(base64.b64decode(raw))
+                if img is not None:
+                    iv = NSImageView.alloc().initWithFrame_(NSMakeRect(0, 0, size, size))
+                    iv.setImage_(img)
+                    iv.setImageScaling_(3)
+                    return iv
+        except Exception:
+            pass
+        return None
 
     @objc.python_method
     def _symbol_icon(self, name, w=64.0, h=64.0):
