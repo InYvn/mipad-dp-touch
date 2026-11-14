@@ -1,0 +1,15 @@
+# mipad_dpin_guard 配置（改完执行: sh /data/adb/modules/mipad_dpin_guard/bin/dpin-guard.sh restart）
+# 所有值只能是数字；未知键/非数字值被忽略。
+ENABLE=1
+POLL=2
+HAL_WAIT=12
+PHASE500_GUARD=45
+MAX_STARTS_PER_FRAMEWORK=3
+MAX_STARTS_PER_BOOT=10
+START_COOLDOWN=10
+VERIFY_DELAY=75
+# 框架重启是二次 opt-in：保持 0 时 dpin-recover.sh framework-restart 一律拒绝。
+ALLOW_FRAMEWORK_RESTART=0
+# 实验项：post-fs-data 阶段就补拉 HAL（早于 servicemanager 稳定，默认关闭）。
+EARLY_START=0
+LOGCAT_TAIL=4000

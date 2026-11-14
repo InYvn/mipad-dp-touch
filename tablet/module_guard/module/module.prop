@@ -1,0 +1,6 @@
+id=mipad_dpin_guard
+name=Mipad DP-in Callback Guard
+version=0.1.0
+versionCode=100
+author=Mipad DP Touch contributors
+description=Guard the display-feature HAL so DfMS can register its DP-IN callback before onBootPhase(500). Read-only besides an idempotent HAL start; never touches the touch module, HID, UDC or /odm.
