@@ -237,18 +237,29 @@ static io_service_t CopyAVServiceForDisplay(CGDirectDisplayID display) {
         io_string_t path = {0};
         size_t len = strlen(wantPath);
         BOOL controllerMatch = NO;
-        char scope[1024]; strlcpy(scope,wantPath,sizeof(scope));
-        char *controller = strrchr(scope,'/');
-        if (controller) {
-            *controller++ = 0;
-            char *unitEnd = strchr(controller,'@');
-            if (unitEnd) *unitEnd = 0;
-            char epic[256]; snprintf(epic,sizeof(epic),"/%s:dcpav-service-epic:",controller);
-            IORegistryEntryGetPath(s,kIOServicePlane,path);
-            controllerMatch = strlen(controller)>0 && strncmp(path,scope,strlen(scope))==0 &&
-                path[strlen(scope)]=='/' && strstr(path,epic)!=NULL;
+        // macOS 26/27 (Apple Silicon) 把 DCPAVServiceProxy 从显示控制器子树
+        // (dispN@.../...) 移到独立的 dcpextN@... 节点下，AV 服务与 IODisplayLocation
+        // 不再共享路径前缀，且 location 末尾会多出 AppleCLCD2 一层。因此改为按 DCP
+        // 单元名匹配 epic 服务节点：单元名取 location 中最深的 "名称@地址" 节点
+        // （disp0@8A000000 → disp0、dispext0@88000000 → dispext0），对应 AV 节点
+        // "<单元>:dcpav-service-epic:N"；不再要求路径落在控制器子树内。
+        char unit[128] = {0}, scan[1024];
+        strlcpy(scan,wantPath,sizeof(scan));
+        for (char *tok = scan; tok && *tok; ) {
+            char *end = strchr(tok,'/');
+            if (end) *end = 0;
+            char *at = strchr(tok,'@');
+            if (at) { *at = 0; strlcpy(unit,tok,sizeof(unit)); }
+            tok = end ? end + 1 : NULL;
         }
-        if (IORegistryEntryGetPath(s, kIOServicePlane, path) == KERN_SUCCESS &&
+        if (!unit[0]) {
+            char *lastSlash = strrchr(wantPath,'/');
+            strlcpy(unit, lastSlash ? lastSlash + 1 : wantPath, sizeof(unit));
+        }
+        char epic[256]; snprintf(epic,sizeof(epic),"/%s:dcpav-service-epic:",unit);
+        kern_return_t pathRC = IORegistryEntryGetPath(s, kIOServicePlane, path);
+        controllerMatch = pathRC == KERN_SUCCESS && unit[0] && strstr(path,epic)!=NULL;
+        if (pathRC == KERN_SUCCESS &&
             (controllerMatch || (strncmp(path, wantPath, len) == 0 && (path[len] == '/' || path[len] == 0)))) {
             io_name_t name = {0};
             if (IORegistryEntryGetName(s, name) == KERN_SUCCESS &&
@@ -482,6 +493,52 @@ static BOOL SameConfiguration(NSArray *before,NSArray *after,CGDirectDisplayID t
     }
     return YES;
 }
+// macOS re-flows the arrangement when a display's physical size changes (the
+// panel is re-registered as a new virtual display). That is an expected side
+// effect of the geometry-only B guard, not a configuration corruption: restore
+// the pre-apply origins and only then treat the apply as clean.
+static BOOL OnlyArrangementChanged(NSArray *before,NSArray *after,CGDirectDisplayID target) {
+    if (!before || !after || before.count!=after.count) return NO;
+    for (NSUInteger i=0;i<before.count;i++) {
+        if (![before[i][@"id"] isEqual:after[i][@"id"]]) return NO;
+        NSMutableDictionary *a=[before[i] mutableCopy],*b=[after[i] mutableCopy];
+        if ([a[@"id"] unsignedIntValue]==target) {
+            for (NSString *k in @[@"sizeMM",@"mode",@"w",@"h",@"pixelWidth",@"pixelHeight",@"logicalWidth",@"logicalHeight",@"hz"]) {
+                [a removeObjectForKey:k]; [b removeObjectForKey:k];
+            }
+        }
+        [a removeObjectForKey:@"x"]; [a removeObjectForKey:@"y"];
+        [b removeObjectForKey:@"x"]; [b removeObjectForKey:@"y"];
+        if (![a isEqualToDictionary:b]) return NO;
+    }
+    return YES;
+}
+static BOOL RestoreArrangement(NSArray *before) {
+    CGDisplayConfigRef cfg=NULL;
+    if (CGBeginDisplayConfiguration(&cfg)!=kCGErrorSuccess) return NO;
+    BOOL ok=YES;
+    for (NSDictionary *s in before) {
+        CGError e=CGConfigureDisplayOrigin(cfg,(CGDirectDisplayID)[s[@"id"] unsignedIntValue],
+                                           (int32_t)[s[@"x"] intValue],(int32_t)[s[@"y"] intValue]);
+        if (e!=kCGErrorSuccess) ok=NO;
+    }
+    if (CGCompleteDisplayConfiguration(cfg,kCGConfigureForSession)!=kCGErrorSuccess) ok=NO;
+    return ok;
+}
+static BOOL SameConfigurationForApply(NSArray *before,NSArray *after,CGDirectDisplayID target) {
+    if (!before || !after || before.count!=after.count) return NO;
+    for (NSUInteger i=0;i<before.count;i++) {
+        if (![before[i][@"id"] isEqual:after[i][@"id"]]) return NO;
+        NSMutableDictionary *a=[before[i] mutableCopy],*b=[after[i] mutableCopy];
+        if ([a[@"id"] unsignedIntValue]==target) {
+            for (NSString *k in @[@"sizeMM",@"mode",@"w",@"h",@"pixelWidth",@"pixelHeight",@"logicalWidth",@"logicalHeight",@"hz"]) {
+                [a removeObjectForKey:k]; [b removeObjectForKey:k];
+            }
+        }
+        if (![a isEqualToDictionary:b]) return NO;
+    }
+    return YES;
+}
 static BOOL SameService(CGDirectDisplayID d,uint64_t originalID) {
     io_service_t s=CopyAVServiceForDisplay(d); uint64_t now=0; if (!s) return NO;
     kern_return_t rc=IORegistryEntryGetRegistryEntryID(s,&now); IOObjectRelease(s);
@@ -545,13 +602,19 @@ static int cmd_guard(CGDirectDisplayID d,NSString *file,NSString *factoryFile,
     int outFlags=fcntl(STDOUT_FILENO,F_GETFL,0);
     if (outFlags>=0) fcntl(STDOUT_FILENO,F_SETFL,outFlags|O_NONBLOCK);
     IOReturn applyRC=IOAVServiceSetVirtualEDIDMode(av,1,(__bridge CFDataRef)patched);
-    BOOL applied=applyRC==kIOReturnSuccess && WaitReadback(d,av,patched,desired) &&
-        SameService(d,serviceID) && SameConfiguration(beforeAll,Snapshot(),d);
+    BOOL geometryOK=applyRC==kIOReturnSuccess && WaitReadback(d,av,patched,desired) && SameService(d,serviceID);
+    BOOL arrangementRestored=NO;
+    if (geometryOK && !SameConfiguration(beforeAll,Snapshot(),d) &&
+        OnlyArrangementChanged(beforeAll,Snapshot(),d)) {
+        arrangementRestored=RestoreArrangement(beforeAll);
+        for (int i=0;i<10 && arrangementRestored && !SameConfiguration(beforeAll,Snapshot(),d);i++) usleep(100000);
+    }
+    BOOL applied=geometryOK && SameConfigurationForApply(beforeAll,Snapshot(),d);
     NSString *applyError=applied ? @"" : [NSString stringWithFormat:@"apply/readback/config verification failed (api=0x%x)",applyRC];
     PrintJSON(@{@"cmd":@"guard",@"rc":applied ? @0 : @1,@"stage":applied ? @"applied" : @"apply-failed",
       @"error":applyError,@"apiRC":@(applyRC),@"edidMatches":@([ReadEDID(av) isEqualToData:patched]),
       @"geometryMatches":@(NearSize(CGDisplayScreenSize(d),desired)),@"sameService":@(SameService(d,serviceID)),
-      @"configurationUnchanged":@(SameConfiguration(beforeAll,Snapshot(),d)),
+      @"configurationUnchanged":@(SameConfiguration(beforeAll,Snapshot(),d)),@"arrangementRestored":@(arrangementRestored),
       @"sizeBefore":SZ(before),@"sizeAfter":SZ(CGDisplayScreenSize(d)),
       @"serviceID":@(serviceID),@"snapshotBefore":beforeAll,@"snapshotAfter":Snapshot() ?: @[]});
     int flags=fcntl(STDIN_FILENO,F_GETFL,0); if (flags>=0) fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK);
@@ -569,7 +632,10 @@ static int cmd_guard(CGDirectDisplayID d,NSString *file,NSString *factoryFile,
     else if (same && (([now isEqualToData:patched] && (!applied || NearSize(current,desired))) ||
              (!applied && [now isEqualToData:factory] && NearSize(current,desired)))) {
         resetRC=IOAVServiceSetVirtualEDIDMode(av,0,NULL);
-        restored=resetRC==kIOReturnSuccess && WaitReadback(d,av,factory,before) && SameService(d,serviceID);
+        BOOL edidBack=NO;
+        for (int i=0;i<60;i++) { if ([ReadEDID(av) isEqualToData:factory]) { edidBack=YES; break; } usleep(100000); }
+        for (int i=0;i<30 && !NearSize(CGDisplayScreenSize(d),before);i++) usleep(100000);
+        restored=resetRC==kIOReturnSuccess && edidBack && SameService(d,serviceID);
         if (!restored) restoreError=@"reset API/readback verification failed";
     } else restoreError=@"original service disconnected/replaced or third-party EDID; left untouched";
     NSArray *afterAll=Snapshot(); CFRelease(av); IOObjectRelease(svc);
