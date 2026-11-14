@@ -36,7 +36,7 @@ from AppKit import (NSAlert, NSApplication, NSApplicationActivationPolicyAccesso
                     NSBitmapImageFileTypePNG, NSGraphicsContext, NSBezierPath,
                     NSBitmapImageRep, NSImage, NSDeviceRGBColorSpace,
                     NSImageSymbolConfiguration, NSCompositingOperationSourceOver,
-                    NSView, NSTextView, NSFont)
+                    NSView, NSTextView, NSFont, NSScrollView, NSColor)
 from Foundation import (NSObject, NSTimer, NSRunLoop, NSDate, NSMakeRect,
                         NSMakeSize, NSMakePoint, NSZeroRect)
 
@@ -3063,6 +3063,33 @@ class DPApp(NSObject):
         return int(a.runModal()) - 1000        # NSAlertFirstButtonReturn == 1000
 
     @objc.python_method
+    def _notes_alert(self, title, headline, notes, buttons):
+        """带 Markdown 渲染的弹窗：正文放进可滚动的只读文本视图。"""
+        a = NSAlert.alloc().init()
+        a.setMessageText_(title)
+        a.setInformativeText_(headline or "")
+        for b in buttons:
+            a.addButtonWithTitle_(b)
+        try:
+            import dptouch_markdown as MD
+            tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, 470, 250))
+            tv.setEditable_(False)
+            tv.setSelectable_(True)
+            tv.setDrawsBackground_(True)
+            tv.setBackgroundColor_(NSColor.textBackgroundColor())
+            tv.setTextContainerInset_(NSMakeSize(10, 8))
+            tv.textStorage().setAttributedString_(MD.to_attributed(notes))
+            sv = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 470, 250))
+            sv.setHasVerticalScroller_(True)
+            sv.setBorderType_(1)
+            sv.setDocumentView_(tv)
+            a.setAccessoryView_(sv)
+        except Exception as e:
+            log("更新说明渲染失败, 退回纯文本: %r" % (e,))
+            a.setInformativeText_("%s\n\n%s" % (headline or "", notes or ""))
+        return int(a.runModal()) - 1000
+
+    @objc.python_method
     def _upd_on_check(self, res):
         manual = self._upd_manual
         self._upd_manual = False
@@ -3083,11 +3110,12 @@ class DPApp(NSObject):
         log("检查更新: 有新版本 %s (%s %s)"
             % (v, res.get("asset") or "", UPD.human_size(res.get("size") or 0)))
         self._upd_pending = res
-        body = "当前 %s → 最新 %s%s\n\n%s" % (
+        headline = "当前 %s → 最新 %s%s" % (
             APP_VERSION, v,
-            "（下载 %s）" % UPD.human_size(res.get("size") or 0) if res.get("size") else "",
-            res.get("notes") or "（这一版没有写更新说明）")
-        pick = self._ask("有新版本 %s" % v, body, ["下载并安装", "以后再说"])
+            "（下载 %s）" % UPD.human_size(res.get("size") or 0) if res.get("size") else "")
+        pick = self._notes_alert("有新版本 %s" % v, headline,
+                                 res.get("notes") or "（这一版没有写更新说明）",
+                                 ["下载并安装", "以后再说"])
         if pick is None:
             return
         if pick == 0:

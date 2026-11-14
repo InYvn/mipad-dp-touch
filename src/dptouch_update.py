@@ -112,7 +112,7 @@ def pick_asset(rel):
     return None
 
 
-def short_notes(body, limit=900):
+def short_notes(body, limit=6000):
     """发版正文当更新说明用: 去掉图片/HTML 噪声, 超长就截断。"""
     t = str(body or "")
     t = re.sub(r"<!--.*?-->", "", t, flags=re.S)
