@@ -506,7 +506,10 @@ class Engine(object):
             r = dict(r)
             r["takeover"] = True
             r["label"] = (r.get("label") or "") + " · 笔独占"
-            r["note"] = "笔接口已独占：系统不再驱动光标，改由 App 绝对映射"
+            # 不覆盖 resolve 自己的说明（断开/回退才是用户最需要看到的），
+            # 只在没有别的原因时补一句笔的状态。
+            if not r.get("note"):
+                r["note"] = "笔接口已独占：系统不再驱动光标，改由 App 绝对映射"
         self.target = r
         if self.target_changed(r):
             self.log("光标基准屏 -> %s%s" % (

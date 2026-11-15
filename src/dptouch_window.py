@@ -1961,14 +1961,17 @@ class SettingsWindow(_Pane):
 
             tx = x + 20 + 64 + 16
             tw = x + w - 20 - tx
-            v.addSubview_(_label(tmeta["name"], self._r(tx, y + 14, 200, 20), size=15, bold=True))
+            v.addSubview_(_label(tmeta["name"], self._r(tx, y + 14, 96, 20), size=15, bold=True))
             tag = self._tag_badge(tmeta.get("tag") or "")
             if tag is not None:
-                tag.setFrame_(self._r(tx + 4 + 112, y + 17, 56, 16))
+                tag.setFrame_(self._r(tx + 100, y + 17, 56, 16))
                 v.addSubview_(tag)
-            v.addSubview_(_label(tmeta["blurb"], self._r(tx, y + 38, tw, 16), size=11, dim=True))
+            # 官方说明是一整句, 长度随文案变; 按宽度折成两行, 免得被裁
+            _f = NSFont.systemFontOfSize_(11.0)
+            for _i, _ln in enumerate(self._split_two(tmeta["blurb"], _f, tw)):
+                v.addSubview_(_label(_ln, self._r(tx, y + 36 + _i * 15, tw, 15), size=11, dim=True))
 
-            by = y + 72
+            by = y + 74
             if tbusy and total:
                 title = "下载中… %d%%" % int(done * 100 / total)
             elif tbusy:
@@ -2132,6 +2135,31 @@ class SettingsWindow(_Pane):
             return iv
         except Exception:
             return None
+
+    @objc.python_method
+    def _split_two(self, text, font, width):
+        """按实际字宽折成最多两行; 两行还放不下就第二行省略号。"""
+        text = str(text or "")
+        if measure(text, font) <= width:
+            return [text]
+        lo, hi = 1, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if measure(text[:mid], font) <= width:
+                lo = mid
+            else:
+                hi = mid - 1
+        first, rest = text[:lo], text[lo:]
+        if measure(rest, font) <= width:
+            return [first, rest]
+        lo2, hi2 = 1, len(rest)
+        while lo2 < hi2:
+            mid = (lo2 + hi2 + 1) // 2
+            if measure(rest[:mid] + "…", font) <= width:
+                lo2 = mid
+            else:
+                hi2 = mid - 1
+        return [first, rest[:lo2] + "…"]
 
     @objc.python_method
     def _tag_badge(self, text):

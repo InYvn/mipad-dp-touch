@@ -550,6 +550,8 @@ class DPApp(NSObject):
                 _plug_layout = UI.check_layout(self.win.win.contentView(), UI.W, self.win._H)
                 assert not _plug_layout, _plug_layout
                 assert "mk_hyperconnect_dl" in self.win.c
+                self.win.page = "gestures"       # 后面几段用 bind_tap, 切回来
+                self.win._relayout(animate=False)
                 # Real AppKit dispatch, not a direct Python action call.
                 _snapshot.update(selected_mode="native", touch_mode="auto", ax=True, running=True, rc=0, devices=list(_dev))
                 self.enabled = True
