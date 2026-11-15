@@ -1875,7 +1875,7 @@ class SettingsWindow(_Pane):
         busy = getattr(self.app, "_plug_busy", "") or ""
         ctls = getattr(self.app, "_plug_ctls", {}) or {}
 
-        y = self._eyebrow(v, x, y, "PLUGIN MARKET / 05")
+        y = self._eyebrow(v, x, y, "PLUGINS & TOOLS / 05")
         y = self._page_head(v, x, w, y, "插件与工具",
                             "插件按需安装；工具只提供官方下载入口，不随 App 分发。",
                             "检查更新", "onMarketCheck:")

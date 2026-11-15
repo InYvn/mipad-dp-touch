@@ -1,6 +1,6 @@
 <div align="center">
   <h1>
-    <img src="docs/logo.png?v=2.0.0-beta" width="170" alt="Mipad DP Touch Enhanced"/>
+    <img src="docs/logo.png?v=2.2.5" width="170" alt="Mipad DP Touch Enhanced"/>
     <br/>
     Mipad DP Touch <img alt="Enhanced" src="https://img.shields.io/badge/-Enhanced-ff6900?style=flat-square">
   </h1>
@@ -9,7 +9,7 @@
   <p><a href="https://inyvn.github.io/mipad-dp-touch/">官网与操作教程</a> · <a href="https://github.com/InYvn/mipad-dp-touch/releases">下载安装包</a> · <a href="CHANGELOG.md">更新日志</a></p>
 
 ![平台](https://img.shields.io/badge/platform-macOS%2027-blue)
-![版本](https://img.shields.io/badge/version-2.0.0--beta-ff6900)
+![版本](https://img.shields.io/badge/version-2.2.5-ff6900)
 [![许可](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 </div>
@@ -19,7 +19,7 @@
 - 小米平板 9 Pro Max、小米焦点触控笔 Pro，以及支持视频传输的 USB-C 全功能线。
 - Mac 运行 macOS 27；使用系统原生触控时运行 macOS 27.3 或以上。
 - 平板进入 DP-in，通过 USB-C 连接 Mac。
-- 手指触控使用平板侧模块 `mipad-dp-touch-module-v2.0.0.zip`，提供触摸屏与笔接口，并优化双指缩放；安装需要平板 root 权限和匹配的硬件及固件。
+- 手指触控使用平板侧模块 `mipad-dp-touch-module-v2.2.5.zip`，提供触摸屏与笔接口，并优化双指缩放；安装需要平板 root 权限和匹配的硬件及固件。
 
 ## 按你的配置看功能
 
@@ -41,7 +41,7 @@
 
 ### 1. 安装 Mac App
 
-从 [Releases](https://github.com/InYvn/mipad-dp-touch/releases) 选择 **2.0.0-beta** 的 DMG，打开后将 **Mipad DP Touch.app** 拖入「应用程序」，然后打开 App。
+从 [Releases](https://github.com/InYvn/mipad-dp-touch/releases) 选择 **2.2.5** 的 DMG，打开后将 **Mipad DP Touch.app** 拖入「应用程序」，然后打开 App。
 
 首次打开被系统拦下时（ad-hoc 签名），在「系统设置 → 隐私与安全性 → 安全性」中点「仍要打开」并确认。
 
@@ -49,11 +49,11 @@
 
 ### 2. 准备平板触控模块
 
-下载 [`mipad-dp-touch-module-v2.0.0.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.0.0-beta/mipad-dp-touch-module-v2.0.0.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
+下载 [`mipad-dp-touch-module-v2.2.5.zip`](https://github.com/InYvn/mipad-dp-touch/releases/download/v2.2.5/mipad-dp-touch-module-v2.2.5.zip)，保存到平板，在 平板的模块管理器 → 模块 → 从存储安装中选择 ZIP → 确认启用 → 使用热重启模块完成热重启 → 重新连接 USB-C 或进入 DP-in。模块提供触摸屏与笔接口，并优化双指缩放。
 
 安装前提：KernelSU 管理器、root、Enforcing、arm64、Android 15（API 35）或以上，以及匹配的小米平板 9 Pro Max（yingtian / M367FC / O3 / xring_o3_asic）硬件与 HAL/init 固件契约。
 
-已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.0.0。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.0.0 可覆盖重装。
+已安装 v1.0，请先在管理器卸载旧模块并热重启，再安装 2.2.5。若安装器仍提示旧模块或不同运行时状态，请停止安装；该状态不能直接覆盖。同 ID 且运行时字节一致的 2.2.5 可覆盖重装。
 
 ### 3. 完成 macOS 原生触控设置
 
@@ -86,11 +86,11 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 滚动方向使用分段控件切换，速度通过滑条选择并显示具体倍率，也可恢复默认速度。高级选项可调整「停住再滑」与「停住不动」的判定时长。
 
-## 五页原生设置界面
+## 六页原生设置界面
 
 点击菜单栏图标 →「设置…」，或按 **⌘,** 打开设置窗口。侧栏使用系统玻璃材质，可通过 **⌘1–5** 切页。
 
-![设备概览](docs/assets/settings-overview.png?v=2.0.0-beta)
+![设备概览](docs/assets/settings-overview.png?v=2.2.5)
 
 **界面预览**
 
@@ -99,19 +99,19 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 ### 触控与位置
 
-![触控与位置](docs/assets/settings-touch.png?v=2.0.0-beta)
+![触控与位置](docs/assets/settings-touch.png?v=2.2.5)
 
 ### 笔手势映射
 
-![笔手势映射](docs/assets/settings-gestures.png?v=2.0.0-beta)
+![笔手势映射](docs/assets/settings-gestures.png?v=2.2.5)
 
 ### 显示设置
 
-![显示设置](docs/assets/settings-display.png?v=2.0.0-beta)
+![显示设置](docs/assets/settings-display.png?v=2.2.5)
 
 ### 运行与诊断
 
-![运行与诊断](docs/assets/settings-runtime.png?v=2.0.0-beta)
+![运行与诊断](docs/assets/settings-runtime.png?v=2.2.5)
 
 </details>
 

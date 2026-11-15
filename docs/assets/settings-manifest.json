@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0-beta",
-  "renderer": "Installed AppKit app: DPTOUCH_SELFTEST_WINDOW=shot:<path>",
+  "version": "2.2.5",
+  "renderer": "Source run: DPTOUCH_SELFTEST_WINDOW=shot:<path> (AppKit offscreen render)",
   "binary_sha256": "6fd30ec0f0b27b210d5f9900fec460fd05b7de14f3aa86d7471dbf2042136313",
   "environment": {
     "DPTOUCH_SHOT_DONE": "1",
@@ -20,8 +20,8 @@
         1960,
         1456
       ],
-      "bytes": 270638,
-      "sha256": "b72d788528458dd20045aed2dd5aae2595fc5cfbf6f543491575cb1e9e94d6b2",
+      "bytes": 370615,
+      "sha256": "5d843637e2591bf435326e6352d5e98e76f556aef215bc18fcb1819e0b11ef4d",
       "selftest_rc": 0
     },
     {
@@ -31,8 +31,8 @@
         1960,
         1456
       ],
-      "bytes": 298971,
-      "sha256": "9bf25b7973eb9a15e17c0a3a90a8c930ebda9700934c40f530c130873e5f08f3",
+      "bytes": 376865,
+      "sha256": "fc449d7d2a945a4fd41a56e31baf8ae0e6524e655da231722f359f8c3dfde02a",
       "selftest_rc": 0
     },
     {
@@ -42,8 +42,8 @@
         1960,
         1456
       ],
-      "bytes": 301554,
-      "sha256": "86db4b132844068a786a6fcee0a2b70f8641a64ff6daf7fc5b740330d9ca3d6b",
+      "bytes": 380741,
+      "sha256": "e8fdd3f844994ad53530d5c3b9306419ebf455f538fdd9e6fb524b302f095e08",
       "selftest_rc": 0
     },
     {
@@ -53,8 +53,19 @@
         1960,
         1456
       ],
-      "bytes": 260443,
-      "sha256": "c2515dacc407c24266ef33df362e7331bf06fb098d90d1aba75ef7f39d81bd59",
+      "bytes": 335073,
+      "sha256": "accc94cf5602a9365bc6ace39e5b36bd01e65349e1862837619e023931146e5d",
+      "selftest_rc": 0
+    },
+    {
+      "page": "plugins",
+      "file": "settings-plugins.png",
+      "dimensions": [
+        1960,
+        1456
+      ],
+      "bytes": 473328,
+      "sha256": "8b7347cc0fb750bc47070f255403e0b388c7da55046453ba525bf5cffd0835d6",
       "selftest_rc": 0
     },
     {
@@ -64,8 +75,8 @@
         1960,
         1456
       ],
-      "bytes": 287924,
-      "sha256": "b371df7729c36424fc5b29250b6d72c822ac12c8b0b588912a0e22a04224a64d",
+      "bytes": 373138,
+      "sha256": "74492522c0c8203a8f44d215d598a2fc8d97447e3bcd1f24d9fdaa26629d36ae",
       "selftest_rc": 0
     }
   ]
