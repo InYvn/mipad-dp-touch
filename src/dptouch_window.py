@@ -1921,16 +1921,16 @@ class SettingsWindow(_Pane):
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
                 self.c["mk_%s_upd" % pid] = _button(
-                    "更新…", self._r(tx + 92, by, 84, 26), self, "onMarketUpdatePid:")
+                    "更新", self._r(tx + 92, by, 84, 26), self, "onMarketUpdatePid:")
                 self.c["mk_%s_upd" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_upd" % pid])
                 self.c["mk_%s_del" % pid] = _button(
-                    "卸载…", self._r(tx + 184, by, 84, 26), self, "onMarketUninstallPid:")
+                    "卸载", self._r(tx + 184, by, 84, 26), self, "onMarketUninstallPid:")
                 self.c["mk_%s_del" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_del" % pid])
             else:
                 self.c["mk_%s_main" % pid] = _button(
-                    "安装…", self._r(tx, by, 96, 26), self, "onMarketInstallPid:")
+                    "安装", self._r(tx, by, 96, 26), self, "onMarketInstallPid:")
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
 
@@ -1977,7 +1977,7 @@ class SettingsWindow(_Pane):
             elif tbusy:
                 title = "下载中…"
             else:
-                title = "下载…"
+                title = "下载"
             self.c["mk_%s_dl" % tid] = _button(title, self._r(tx, by, 110, 26),
                                               self, "onToolDownload:")
             self.c["mk_%s_dl" % tid].setRepresentedObject_(tid)
