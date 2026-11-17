@@ -1877,7 +1877,7 @@ class SettingsWindow(_Pane):
 
         y = self._eyebrow(v, x, y, "PLUGINS & TOOLS / 05")
         y = self._page_head(v, x, w, y, "插件与工具",
-                            "插件按需安装；工具只提供官方下载入口，不随 App 分发。",
+                            "插件按需安装：从 Release 下载并校验 SHA256；检查更新只读发版信息，不会自动装。",
                             "检查更新", "onMarketCheck:")
 
         for meta in PLUG.registry():
@@ -1885,7 +1885,7 @@ class SettingsWindow(_Pane):
             rec = PLUG.installed(pid)
             ctl = ctls.get(pid)
             shown = ctl is not None and bool(getattr(ctl, "is_visible", False))
-            card_h = 104.0
+            card_h = 100.0
             self._card(v, y, card_h, x, w)
 
             icon = self._plugin_icon(pid, 96.0, 64.0)
@@ -1951,7 +1951,7 @@ class SettingsWindow(_Pane):
             tid = tmeta["id"]
             tbusy = getattr(self.app, "_tool_busy", "") == tid
             done, total = getattr(self.app, "_tool_progress", (0, 0))
-            card_h = 104.0
+            card_h = 100.0
             self._card(v, y, card_h, x, w)
 
             icon = self._tool_icon(tid, 64.0) or self._symbol_icon(tmeta.get("symbol") or "display")
@@ -1990,15 +1990,7 @@ class SettingsWindow(_Pane):
             v.addSubview_(self.c["mk_%s_site" % tid])
             y += card_h + 10
 
-        y += 8
-        v.addSubview_(_label("插件机制", self._r(x, y, w, 18), size=13, bold=True))
-        y += 24
-        v.addSubview_(_label("· 安装包从 GitHub Release 现场下载，校验通过才落到本机；卸载会删除插件目录。",
-                             self._r(x, y, w, 16), size=11, dim=True))
-        y += 20
-        v.addSubview_(_label("· 检查更新只读发版信息，不会自动安装；需要你确认后才会下载。",
-                             self._r(x, y, w, 16), size=11, dim=True))
-        return y + 30
+        return y + 10
 
     @objc.python_method
     def _page_runtime(self, v, x, w, y):
