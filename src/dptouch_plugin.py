@@ -63,6 +63,17 @@ PLUGINS = (
         "min_host": "2.1.0",
         "symbol": "rectangle.topthird.inset.filled",
     },
+    {
+        "id": "aiworkshop",
+        "name": "AI 许愿工坊",
+        "brand": "AI Workshop",
+        "blurb": "统一模型服务：Kilo 免费开箱即用；自定义 API 走 OpenAI 兼容或 LiteLLM。",
+        "repo": "InYvn/AIWorkshop",
+        "asset_re": r"^aiworkshop-plugin-(.+)\.zip$",
+        "entry": "aiworkshop_plugin",
+        "min_host": "2.2.5",
+        "symbol": "sparkles",
+    },
 )
 
 DEFAULT_ID = "touchkeys"
@@ -393,7 +404,7 @@ def selftest_offline():
         else:
             bad.append("%s %s" % (name, extra))
 
-    ck("注册表含两个插件", plugin_ids() == ["touchkeys", "touchbar"], plugin_ids())
+    ck("注册表含三个插件", plugin_ids() == ["touchkeys", "touchbar", "aiworkshop"], plugin_ids())
     ck("按 id 取元数据", get("touchbar")["repo"] == "InYvn/TouchBar")
     try:
         get("nope")
