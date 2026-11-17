@@ -913,8 +913,8 @@ class DPApp(NSObject):
                     assert all("bind_" + g in self.win.c for g, *_ in UI.BIND_ROWS)
                     assert "scroll_preview" in self.win.c
                 assert self.win.c["ver"].stringValue() == "v" + APP_VERSION
-                assert len([k for k in self.win.c if k.startswith("nav_")]) == len(UI.PAGES)
-                for _i, (_key, _, _title) in enumerate(UI.PAGES, 1):
+                assert len([k for k in self.win.c if k.startswith("nav_")]) == len(UI.pages())
+                for _i, (_key, _, _title) in enumerate(UI.pages(), 1):
                     _nav = self.win.c["nav_" + _key]
                     assert _nav.keyEquivalent() == str(_i)
                     assert _nav.keyEquivalentModifierMask() == 1 << 20
@@ -2628,8 +2628,36 @@ class DPApp(NSObject):
         self._plug_sync()
         threading.Thread(target=self._plug_worker_check, daemon=True).start()
 
+    @objc.python_method
+    def plugin_controller(self, pid):
+        """给窗口的插件页取控制器（按需加载）。"""
+        return self._plug_ensure(pid)
+
     def actPluginToggle_(self, pid):
         if not pid or self._plug_busy:
+            return
+        # 声明了 page 的插件：不弹独立窗口，直接切到侧栏那一页
+        try:
+            page = PLUG.page_meta(pid)
+        except Exception:
+            page = None
+        if page:
+            key = "plugin:%s" % pid
+            if self.win.page == key:
+                self.win.page = "overview"
+            else:
+                try:
+                    self._plug_ensure(pid)
+                except Exception as e:
+                    log("插件加载失败(%s): %r" % (pid, e))
+                    self._warn("插件加载失败", "%s\n\n可以在「插件与工具」里卸载后重装。" % e)
+                    return
+                self.win.page = key
+            self.win._relayout(animate=False)
+            try:
+                self.win.market_changed(full=False)
+            except Exception:
+                pass
             return
         try:
             ctl = self._plug_ensure(pid)

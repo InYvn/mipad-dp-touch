@@ -762,6 +762,33 @@ HOLD_TITLES = ["%.2gs %s" % (ms / 1000.0, lab)
 RC_TITLES = ["关" if not ms else "%.1f 秒" % (ms / 1000.0) for ms in _RC_HOLD]
 
 # 主窗口「笔的输入」那张表: 四类手势, 每一类一个下拉 (可绑的动作来自 hid_bridge 那张表,
+class _PageBox(NSView):
+    """插件页容器：flipped，插件按左上角坐标往里画。"""
+
+    def isFlipped(self):
+        return True
+
+
+def pages():
+    """内置页 + 已安装插件声明页（插在「运行与诊断」前，按 order 排）。"""
+    base = list(PAGES)
+    try:
+        import dptouch_plugin as PLUG
+        extra = [("plugin:%s" % pid, m.get("icon") or "puzzlepiece.extension",
+                  m.get("title") or pid)
+                 for pid, m in PLUG.page_plugins()]
+    except Exception:
+        extra = []
+    if not extra:
+        return base
+    out = []
+    for p in base:
+        if p[0] == "runtime":
+            out.extend(extra)
+        out.append(p)
+    return out
+
+
 # 唯一出处 —— 界面里出现的选项一定有实现)。
 BIND_ROWS = tuple((g, title, HB.gesture_actions(g), d)
                   for g, title, _o, d in HB.BIND_GESTURES)
@@ -1376,7 +1403,7 @@ class SettingsWindow(_Pane):
         self.c["strip"] = _label("设备在线 · 配置已就绪", self._r(M + 17, y + 12, 420, 16),
                                  size=11, color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["strip"])
-        v.addSubview_(_label("使用说明 · ⌘1–6 切换页面",
+        v.addSubview_(_label("使用说明 · ⌘1–%d 切换页面" % len(pages()),
                              self._r(W - M - 260, y + 12, 260, 16), size=11, dim=True, right=True))
         used = y + STRIP_H
 
@@ -1420,9 +1447,11 @@ class SettingsWindow(_Pane):
         v.addSubview_(_lb)
         y += 54 + 15
         y += 4
-        for nav_index, (key, icon, title) in enumerate(PAGES, 1):
+        _navs = pages()
+        _nav_h = 32.0 if len(_navs) > 6 else NAV_H
+        for nav_index, (key, icon, title) in enumerate(_navs, 1):
             sel = (key == self.page)
-            btn = _NavButton.alloc().initWithFrame_(self._r(11, y, SIDEBAR_W - 22, NAV_H))
+            btn = _NavButton.alloc().initWithFrame_(self._r(11, y, SIDEBAR_W - 22, _nav_h))
             btn.key = key
             btn.setBordered_(False)
             btn.setTitle_("")            # ★不清掉的话 NSButton 会画默认的 "Button" 叠在图标上
@@ -1434,15 +1463,15 @@ class SettingsWindow(_Pane):
             ic = _icon(icon, NAV_ICON, 0.0,
                        brand_color() if sel else _color("secondaryLabelColor"))
             if ic is not None:
-                ic.setFrame_(NSMakeRect(13, (NAV_H - NAV_ICON) / 2.0, NAV_ICON, NAV_ICON))
+                ic.setFrame_(NSMakeRect(13, (_nav_h - NAV_ICON) / 2.0, NAV_ICON, NAV_ICON))
                 btn.addSubview_(ic)
-            lb = _label(title, NSMakeRect(41, (NAV_H - 18) / 2.0, 120, 18), size=13, bold=sel)
+            lb = _label(title, NSMakeRect(41, (_nav_h - 18) / 2.0, 120, 18), size=13, bold=sel)
             if sel:
                 lb.setTextColor_(_color("labelColor"))
             btn.addSubview_(lb)
             v.addSubview_(btn)
             self.c["nav_%s" % key] = btn
-            y += NAV_H + 2
+            y += _nav_h + (1 if len(_navs) > 6 else 2)
 
         # ---- 设备区 (贴底): 名称 + 三行实时小项 ----
         mini = 3 * 18.0
@@ -1501,6 +1530,8 @@ class SettingsWindow(_Pane):
             y = self._page_display(v, px, pw, y)
         elif self.page == "plugins":
             y = self._page_plugins(v, px, pw, y)
+        elif self.page.startswith("plugin:"):
+            y = self._page_plugin(self.page.split(":", 1)[1], v, px, pw, y)
         else:
             y = self._page_runtime(v, px, pw, y)
 
@@ -1869,6 +1900,26 @@ class SettingsWindow(_Pane):
         return _icon(meta.get("symbol") or "puzzlepiece.extension", h * 0.62)
 
     @objc.python_method
+    def _page_plugin(self, pid, v, x, w, y):
+        """把插件声明的页嵌进内容区；坐标由宿主换算，插件只按本地坐标画。"""
+        avail = max(120.0, self._H - y - STRIP_H - 18.0)
+        box = _PageBox.alloc().initWithFrame_(self._r(x, y, w, avail))
+        box.setIdentifier_("plugin-page")
+        v.addSubview_(box)
+        try:
+            ctl = self.app.plugin_controller(pid)
+            ctl.build_page(box, w, avail)
+        except Exception as e:
+            try:
+                self.app.log("插件页构建失败(%s): %r" % (pid, e))
+            except Exception:
+                pass
+            box.addSubview_(_label("插件页加载失败：%r" % (e,),
+                                   NSMakeRect(0, 0, w, 40), size=12,
+                                   color=_color("systemRedColor")))
+        return y + avail
+
+    @objc.python_method
     def _page_plugins(self, v, x, w, y):
         """插件与工具：插件按注册表列出，外部工具只提供官方下载/官网。"""
         import dptouch_plugin as PLUG
@@ -1884,7 +1935,12 @@ class SettingsWindow(_Pane):
             pid = meta["id"]
             rec = PLUG.installed(pid)
             ctl = ctls.get(pid)
-            shown = ctl is not None and bool(getattr(ctl, "is_visible", False))
+            try:
+                _pm = PLUG.page_meta(pid)
+            except Exception:
+                _pm = None
+            shown = (self.page == "plugin:%s" % pid) if _pm else (
+                ctl is not None and bool(getattr(ctl, "is_visible", False)))
             card_h = 100.0
             self._card(v, y, card_h, x, w)
 
@@ -2237,7 +2293,12 @@ class SettingsWindow(_Pane):
             if b is None:
                 continue
             ctl = ctls.get(pid)
-            shown = ctl is not None and bool(getattr(ctl, "is_visible", False))
+            try:
+                _pm = PLUG.page_meta(pid)
+            except Exception:
+                _pm = None
+            shown = (self.page == "plugin:%s" % pid) if _pm else (
+                ctl is not None and bool(getattr(ctl, "is_visible", False)))
             b.setTitle_("收起" if shown else "显示")
 
     def onNav_(self, sender):

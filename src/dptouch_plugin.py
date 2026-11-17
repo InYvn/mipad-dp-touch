@@ -391,6 +391,46 @@ def load(pid=DEFAULT_ID, base=None):
     return mod
 
 
+def page_meta(pid):
+    """已安装插件在 plugin.json 里声明的侧栏页；没有返回 None。
+
+    约定（可选）::
+
+        "page": {"id": "aiworkshop", "title": "AI 许愿工坊",
+                 "icon": "sparkles", "order": 90}
+
+    宿主只认 id/title/icon/order，不懂插件内部实现。
+    """
+    rec = installed(pid)
+    if not rec:
+        return None
+    path = os.path.join(plugin_root(pid), rec["version"], "plugin.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        return None
+    page = meta.get("page")
+    if not isinstance(page, dict):
+        return None
+    if not page.get("id") or not page.get("title"):
+        return None
+    out = dict(page)
+    out.setdefault("icon", "puzzlepiece.extension")
+    out.setdefault("order", 90)
+    return out
+
+
+def page_plugins():
+    """[(pid, page_meta)]，按 order 排序；只包含已安装且声明了 page 的插件。"""
+    out = []
+    for pid in plugin_ids():
+        m = page_meta(pid)
+        if m:
+            out.append((pid, m))
+    return sorted(out, key=lambda x: int(x[1].get("order") or 90))
+
+
 # ---------------------------------------------------------------- 离线自检
 
 def selftest_offline():
