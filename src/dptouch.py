@@ -2581,7 +2581,10 @@ class DPApp(NSObject):
                 ctl.close()
             except Exception:
                 pass
+        _cached = pid in self._plug_ctls
         mod = PLUG.load(pid)
+        if force and _cached:
+            log("插件 %s 的代码已在进程内，更新将在重启 App 后生效" % pid)
         ctl = mod.create(on_hide=self._plug_on_hide, log=log)
         self._plug_ctls[pid] = ctl
         if pid == "touchkeys":

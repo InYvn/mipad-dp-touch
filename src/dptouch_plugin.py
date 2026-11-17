@@ -368,18 +368,23 @@ def uninstall(pid=DEFAULT_ID, base=None):
     return not os.path.exists(root)
 
 
-def load(pid=DEFAULT_ID, base=None):
-    """import 已安装的插件包，返回 module。"""
+def load(pid=DEFAULT_ID, base=None, force=False):
+    """import 已安装的插件包，返回 module。
+
+    ★同一进程内**只 import 一次**：插件里的 PyObjC 类（NSView/NSObject 子类）
+    不能重复定义，否则 objc 会报「X is overriding existing Objective-C class」。
+    更新后的代码要重启 App 才生效；`force` 只用于语义兼容，不再重新执行模块。
+    """
     rec = installed(pid, base)
     if rec is None:
         raise PluginError("插件尚未安装")
     entry = get(pid)["entry"]
+    cached = sys.modules.get(entry)
+    if cached is not None:
+        return cached
     pkg_dir = os.path.join(plugin_root(pid, base), rec["version"])
     if pkg_dir not in sys.path:
         sys.path.insert(0, pkg_dir)
-    for mod in list(sys.modules):
-        if mod == entry or mod.startswith(entry + "."):
-            del sys.modules[mod]
     spec = importlib.util.spec_from_file_location(
         entry, os.path.join(pkg_dir, entry, "__init__.py"),
         submodule_search_locations=[os.path.join(pkg_dir, entry)])
