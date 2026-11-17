@@ -2706,6 +2706,9 @@ class DPApp(NSObject):
         ok = PLUG.uninstall(pid)
         if pid == "touchkeys":
             self._plug_mod = self._plug_ctl = None
+        # 卸载后它的侧栏页没了：别把用户留在空页上
+        if self.win.page == "plugin:%s" % pid:
+            self.win.page = "overview"
         log("插件卸载(%s): %s" % (pid, "成功" if ok else "失败"))
         if not ok:
             self._warn("卸载失败", "没能删除插件目录，可能被占用：\n%s" % PLUG.plugin_root(pid))
@@ -2924,7 +2927,17 @@ class DPApp(NSObject):
         log("插件安装完成: %s %s" % (rec.get("version"), rec.get("dir")))
         try:
             ctl = self._plug_ensure(pid, force=True)
-            ctl.show()
+            # 声明了侧栏页的插件：装完切到那一页，不弹独立窗口
+            _page = None
+            try:
+                _page = PLUG.page_meta(pid)
+            except Exception:
+                _page = None
+            if _page:
+                self.win.page = "plugin:%s" % pid
+                self.win._relayout(animate=False)
+            else:
+                ctl.show()
             if pid == "touchkeys":
                 self._plug_warn_perm()
         except Exception as e:
