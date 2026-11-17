@@ -410,7 +410,7 @@ W, H = 980.0, 700.0                         # 主窗口内容尺寸(固定; 不�
 SIDEBAR_W = 220.0                           # 侧边栏宽
 TOPBAR_H = 0.0                              # 顶部工具行已取消（名称/连接状态/图标都并进侧栏）
 STRIP_H = 38.0                              # 底部状态条
-NAV_H = 39.0                                # 侧栏导航项高度
+NAV_H = 34.0                                # 侧栏导航项高度（7 页要压一点，不然压到底部设备区）
 NAV_ICON = 17.0                             # 导航图标边长
 CONTENT_MAX = 810.0                         # 内容区最大宽 (设计稿: max-width 810, 居中)
 BRAND = (0.929, 0.416, 0.341)               # #ed6a57 —— logo 的橙红
@@ -774,6 +774,7 @@ PAGES = (
     ("gestures", "hand.point.up", "手势映射"),
     ("display", "display", "显示设置"),
     ("plugins", "puzzlepiece.extension", "插件与工具"),
+    ("ai", "sparkles", "AI 许愿工坊"),
     ("runtime", "gearshape", "运行与诊断"),
 )
 
@@ -1376,7 +1377,7 @@ class SettingsWindow(_Pane):
         self.c["strip"] = _label("设备在线 · 配置已就绪", self._r(M + 17, y + 12, 420, 16),
                                  size=11, color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["strip"])
-        v.addSubview_(_label("使用说明 · ⌘1–6 切换页面",
+        v.addSubview_(_label("使用说明 · ⌘1–7 切换页面",
                              self._r(W - M - 260, y + 12, 260, 16), size=11, dim=True, right=True))
         used = y + STRIP_H
 
@@ -1442,7 +1443,7 @@ class SettingsWindow(_Pane):
             btn.addSubview_(lb)
             v.addSubview_(btn)
             self.c["nav_%s" % key] = btn
-            y += NAV_H + 2
+            y += NAV_H + 1
 
         # ---- 设备区 (贴底): 名称 + 三行实时小项 ----
         mini = 3 * 18.0
@@ -1501,6 +1502,8 @@ class SettingsWindow(_Pane):
             y = self._page_display(v, px, pw, y)
         elif self.page == "plugins":
             y = self._page_plugins(v, px, pw, y)
+        elif self.page == "ai":
+            y = self._page_ai(v, px, pw, y)
         else:
             y = self._page_runtime(v, px, pw, y)
 
@@ -2248,8 +2251,81 @@ class SettingsWindow(_Pane):
             shown = ctl is not None and bool(getattr(ctl, "is_visible", False))
             b.setTitle_("收起" if shown else "显示")
 
+    # ---------------- AI 许愿工坊 ----------------
+
+    @objc.python_method
+    def _page_ai(self, v, x, w, y):
+        import dptouch_ai_ui as AIUI
+        return AIUI.build(self, v, x, w, y)
+
+    @objc.python_method
+    def refresh_ai(self, force=False):
+        """只更新 AI 页的控件，不重建视图（重建会丢输入焦点）。"""
+        if self.page != "ai":
+            return
+        try:
+            import dptouch_ai_ui as AIUI
+            AIUI.refresh(self, force=force)
+        except Exception as e:
+            try:
+                self.app.log("AI 页刷新失败: %r" % (e,))
+            except Exception:
+                pass
+
+    def onAISend_(self, sender):
+        ai = getattr(self.app, "ai", None)
+        tv = self.c.get("ai_input")
+        if ai is None or tv is None:
+            return
+        text = str(tv.string() or "")
+        if ai.ask(text):
+            tv.setString_("")
+        self.refresh_ai(force=True)
+
+    def onAIStop_(self, sender):
+        ai = getattr(self.app, "ai", None)
+        if ai is not None:
+            ai.stop()
+            self.refresh_ai(force=True)
+
+    def onAIExec_(self, sender):
+        ai = getattr(self.app, "ai", None)
+        if ai is None:
+            return
+        ai.execute()
+        self.refresh_ai(force=True)
+
+    def onAICancel_(self, sender):
+        ai = getattr(self.app, "ai", None)
+        if ai is not None:
+            ai.discard()
+            self.refresh_ai(force=True)
+
+    def onAIUndo_(self, sender):
+        ai = getattr(self.app, "ai", None)
+        if ai is not None:
+            ai.undo()
+            self.refresh_ai(force=True)
+
+    def onAIClear_(self, sender):
+        ai = getattr(self.app, "ai", None)
+        if ai is not None:
+            ai.clear_chat()
+            self.refresh_ai(force=True)
+
+    def onAISettings_(self, sender):
+        import dptouch_ai_ui as AIUI
+        try:
+            self._ai_panel = AIUI.AISettingsPanel.alloc().init()
+            self._ai_panel.show(self)
+        except Exception as e:
+            try:
+                self.app.log("打开 AI 设置失败: %r" % (e,))
+            except Exception:
+                pass
+
     def onNav_(self, sender):
-        """侧栏切页 (⌘1–6 同效)。整窗重建 —— 和权限态切换走同一条路。"""
+        """侧栏切页 (⌘1–7 同效)。整窗重建 —— 和权限态切换走同一条路。"""
         key = getattr(sender, "key", "")
         if key and key != self.page:
             self.page = key

@@ -392,6 +392,11 @@ class DPApp(NSObject):
         # 只有 app 启用 + 原生触控 + 校正开关三者同时为真才会管理 override。
         self.edid = EDID.EDIDController(state_dir=CFG_DIR, log=log,
                                         helper=EDID.find_helper())
+        # AI 许愿工坊（P1：只改设置）。密钥在钥匙串，cfg["ai"] 只存 provider/model 等非敏感项。
+        import ai_settings as AIS
+        import dptouch_ai as AI
+        self.ai_bridge = AIS.AISettingsBridge(self, log=log)
+        self.ai = AI.AIController(self, self.ai_bridge, log=log)
         self._build_status_item()
         self._build_menu()
         self._viz = None              # 触控可视化覆盖层 (懒建)
@@ -842,7 +847,7 @@ class DPApp(NSObject):
                     _bad.append("%s=%s" % (_k, _t))
             _p("  " + ("；".join(sorted(_bad)) if _bad else "一处都没有"))
             assert [p[0] for p in UI.PAGES] == ["overview", "touch", "gestures", "display",
-                                                "plugins", "runtime"]
+                                                "plugins", "ai", "runtime"]
             for _reduced in (False, True):
                 with _ui_patch.object(UI, "_reduce_transparency", return_value=_reduced):
                     self.win.refresh(force=True)
@@ -1916,6 +1921,14 @@ class DPApp(NSObject):
             if msg != getattr(self, "_tick_err", ""):
                 self._tick_err = msg
                 log("刷新异常: %s" % msg)
+        # AI 页：控制器只改状态，这里把变化推到界面（不重建视图）
+        try:
+            _ai = getattr(self, "ai", None)
+            if _ai is not None and _ai.revision != getattr(self, "_ai_rev", -1):
+                self._ai_rev = _ai.revision
+                self.win.refresh_ai()
+        except Exception as e:
+            log("AI 页刷新异常: %r" % (e,))
 
     @objc.python_method
     def _sync_target_menu(self, force=False):

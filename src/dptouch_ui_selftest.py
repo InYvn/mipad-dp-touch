@@ -98,7 +98,10 @@ def verify_native_controls(app, report):
                 fire(ctrl)
                 assert app.cfg[HB.bind_key(gesture)] == action
                 assert ctrl.indexOfSelectedItem() == index
-        assert not UI.check_layout(win.win.contentView(), UI.W, UI.H)
+        _issues = UI.check_layout(win.win.contentView(), UI.W, UI.H)
+        if _issues:
+            open('/tmp/layout_issues.txt','w').write(repr(_issues))
+        assert not _issues
         report('原生控件 AppKit: 方向分段/全部增益/精确默认/全部分组动作保存 通过')
         win.page = 'display'
         win._relayout(animate=False)
@@ -157,6 +160,13 @@ def verify_native_controls(app, report):
             assert not win.c['mode_change'].isEnabled()
             assert not win.c['mode_apply'].isEnabled()
         report('分辨率面板 AppKit: 实际原生列表/选择零切档/待应用保持/失败/成功回读/禁用/Return Escape/布局 通过 · 切档边界 fixture 拦截')
+
+        win.page = 'ai'
+        win._relayout(animate=False)
+        assert 'ai_conv' in win.c and 'ai_input' in win.c and 'ai_send' in win.c
+        win.refresh_ai(force=True)
+        assert not UI.check_layout(win.win.contentView(), UI.W, UI.H)
+        report('AI 许愿工坊 AppKit: 页布局/对话视图/输入/按钮 通过')
     finally:
         app._disp_tgt, app._disp_opts = saved_tgt, saved_opts
         app.cfg = saved_cfg
