@@ -161,23 +161,78 @@ def host():
     return _HOST
 
 
+def _local_meta(pid):
+    """从已安装目录读本地插件（AI 生成的客制化插件）的清单。"""
+    rec = installed(pid)
+    if not rec:
+        return None
+    path = os.path.join(plugin_root(pid), rec["version"], "plugin.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = json.load(f)
+    except Exception:
+        return None
+    if int(m.get("api", 0)) != 1:
+        return None
+    return {
+        "id": pid,
+        "name": m.get("name") or pid,
+        "brand": m.get("brand") or "本地插件",
+        "blurb": m.get("blurb") or m.get("description") or "",
+        "version": m.get("version"),
+        "entry": m.get("entry") or (pid + "_plugin"),
+        "min_host": m.get("min_host") or "2.0.0",
+        "symbol": m.get("symbol") or "puzzlepiece.extension",
+        "repo": None,
+        "source": "local",
+    }
+
+
+def local_plugins():
+    """已安装但没有写进 PLUGINS 的插件 id 列表。"""
+    base = plugins_dir()
+    known = {p["id"] for p in PLUGINS}
+    out = []
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return out
+    for pid in names:
+        if pid in known or pid.startswith("."):
+            continue
+        if _local_meta(pid):
+            out.append(pid)
+    return out
+
+
 def registry():
-    return [dict(p) for p in PLUGINS]
+    out = [dict(p) for p in PLUGINS]
+    for pid in local_plugins():
+        m = _local_meta(pid)
+        if m:
+            out.append(m)
+    return out
 
 
 def get(pid):
     for p in PLUGINS:
         if p["id"] == pid:
             return dict(p)
+    m = _local_meta(pid)
+    if m:
+        return m
     raise PluginError("未知插件 id：%r" % (pid,))
 
 
 def plugin_ids():
-    return [p["id"] for p in PLUGINS]
+    return [p["id"] for p in registry()]
 
 
 def releases_page(pid=DEFAULT_ID):
-    return "https://github.com/%s/releases" % get(pid)["repo"]
+    repo = get(pid).get("repo")
+    if not repo:
+        raise PluginError("本地插件没有发行页")
+    return "https://github.com/%s/releases" % repo
 
 
 # ---------------------------------------------------------------- 纯函数
@@ -304,7 +359,7 @@ def validate_manifest(meta, host_version, pid=DEFAULT_ID):
         raise PluginError("插件 id 不符：%r（期望 %r）" % (meta.get("id"), pid))
     if int(meta.get("api", 0)) != 1:
         raise PluginError("插件 API 版本 %r 不受支持" % (meta.get("api"),))
-    mh = meta.get("min_host") or get(pid).get("min_host") or "0.0.0"
+    mh = meta.get("min_host") or (get(pid) or {}).get("min_host") or "0.0.0"
     if parse_version(host_version) < parse_version(mh):
         raise PluginError("需要 App ≥ %s，当前 %s" % (mh, host_version))
     if not meta.get("version"):
@@ -325,6 +380,9 @@ def safe_extract(zip_path, dest):
 # ---------------------------------------------------------------- 安装状态
 
 def plugins_dir():
+    override = os.environ.get("DPTOUCH_PLUGINS_DIR")
+    if override:
+        return os.path.expanduser(override)
     return os.path.expanduser("~/Library/Application Support/MipadDPTouch/plugins")
 
 

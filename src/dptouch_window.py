@@ -1952,6 +1952,7 @@ class SettingsWindow(_Pane):
             tx = x + 20 + 96 + 16
             tw = x + w - 20 - tx
 
+            local = meta.get("source") == "local"
             v.addSubview_(_label("%s · %s" % (meta["name"], meta["brand"]),
                                  self._r(tx, y + 14, tw - 150, 20), size=15, bold=True))
 
@@ -1967,8 +1968,12 @@ class SettingsWindow(_Pane):
                                  size=12, color=col, right=True))
 
             v.addSubview_(_label(meta["blurb"], self._r(tx, y + 38, tw, 16), size=11, dim=True))
-            v.addSubview_(_label("来源 %s · 安装前校验发版正文里的 SHA256" % meta["repo"],
-                                 self._r(tx, y + 57, tw, 14), size=10, dim=True))
+            if local:
+                v.addSubview_(_label("本地插件 · 由 AI 许愿工坊生成，代码在本机",
+                                     self._r(tx, y + 57, tw, 14), size=10, dim=True))
+            else:
+                v.addSubview_(_label("来源 %s · 安装前校验发版正文里的 SHA256" % meta["repo"],
+                                     self._r(tx, y + 57, tw, 14), size=10, dim=True))
 
             by = y + 72
             if rec:
@@ -1976,10 +1981,11 @@ class SettingsWindow(_Pane):
                     "收起" if shown else "显示", self._r(tx, by, 84, 26), self, "onMarketTogglePid:")
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
-                self.c["mk_%s_upd" % pid] = _button(
-                    "更新", self._r(tx + 92, by, 84, 26), self, "onMarketUpdatePid:")
-                self.c["mk_%s_upd" % pid].setRepresentedObject_(pid)
-                v.addSubview_(self.c["mk_%s_upd" % pid])
+                if not local:
+                    self.c["mk_%s_upd" % pid] = _button(
+                        "更新", self._r(tx + 92, by, 84, 26), self, "onMarketUpdatePid:")
+                    self.c["mk_%s_upd" % pid].setRepresentedObject_(pid)
+                    v.addSubview_(self.c["mk_%s_upd" % pid])
                 self.c["mk_%s_del" % pid] = _button(
                     "卸载", self._r(tx + 184, by, 84, 26), self, "onMarketUninstallPid:")
                 self.c["mk_%s_del" % pid].setRepresentedObject_(pid)
@@ -1990,10 +1996,11 @@ class SettingsWindow(_Pane):
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
 
-            self.c["mk_%s_open" % pid] = _button(
-                "发行页 ↗", self._r(x + w - 20 - 92, by, 92, 26), self, "onMarketOpenPid:")
-            self.c["mk_%s_open" % pid].setRepresentedObject_(pid)
-            v.addSubview_(self.c["mk_%s_open" % pid])
+            if not local:
+                self.c["mk_%s_open" % pid] = _button(
+                    "发行页 ↗", self._r(x + w - 20 - 92, by, 92, 26), self, "onMarketOpenPid:")
+                self.c["mk_%s_open" % pid].setRepresentedObject_(pid)
+                v.addSubview_(self.c["mk_%s_open" % pid])
 
             y += card_h + 10
 

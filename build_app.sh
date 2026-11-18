@@ -139,6 +139,7 @@ echo "==> PyInstaller 打包"
   --hidden-import dptouch_edid \
   --hidden-import dptouch_mode \
   --hidden-import dptouch_plugin \
+  --hidden-import dptouch_sdk \
   --hidden-import dptouch_touchviz \
   --hidden-import plugin_icons \
   --hidden-import tool_icons \
