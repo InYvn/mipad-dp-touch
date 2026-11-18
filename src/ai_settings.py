@@ -277,6 +277,10 @@ class AISettingsBridge(object):
 
     def _rollback(self, before, res):
         """按旧值逆序回滚；能回多少回多少，回不掉的逐条报告。"""
+        titles = {m["key"]: m["title"] for m in self.manifest()}
+
+        def _t(k):
+            return titles.get(k, k)
         specs = _specs()
         inv = []
         # 用 before 生成反向调用（不依赖 applied —— 失败时它可能是空的）
@@ -287,12 +291,12 @@ class AISettingsBridge(object):
                 self._call(self._inverse(key, old))
                 got = self.app.cfg.get(key)
                 if _same(got, old):
-                    res.rolled_back.append(key)
+                    res.rolled_back.append(_t(key))
                 else:
                     res.rollback_failed.append("%s（期望回滚到 %r，实际 %r）"
-                                               % (key, old, got))
+                                               % (_t(key), old, got))
             except Exception as e:
-                res.rollback_failed.append("%s（回滚异常：%r）" % (key, e))
+                res.rollback_failed.append("%s（回滚异常：%r）" % (_t(key), e))
 
     def _inverse(self, key, old):
         if key.startswith("bind_"):
@@ -489,6 +493,7 @@ def selftest_offline():
                        {"op": "set_gain", "value": 1.5}])
         ck("部分失败整体失败", not r5.ok and r5.errors)
         ck("成功的项被回滚", app.cfg["natural"] == "system", app.cfg["natural"])
+        ck("回滚项用标题", "滚动速度" in r5.rolled_back, r5.rolled_back)
 
         # 回滚不掉的项必须被点名（模拟：恢复 system 时 setter 静默吞掉）
         orig_nat = app.set_natural
@@ -500,7 +505,7 @@ def selftest_offline():
         app.cfg["natural"] = "off"
         r6 = br.apply([{"op": "set_natural", "value": "on"},
                        {"op": "set_gain", "value": 1.5}])
-        ck("回滚失败被报告", not r6.ok and any("natural" in x for x in r6.rollback_failed),
+        ck("回滚失败被报告", not r6.ok and any("滚动方向" in x for x in r6.rollback_failed),
            "%r / %r" % (r6.rollback_failed, r6.errors))
 
     return {"ok": not bad, "passed": ok, "fail": bad}
