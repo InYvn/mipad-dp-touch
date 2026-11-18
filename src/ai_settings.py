@@ -56,6 +56,7 @@ class Result(object):
         self.rolled_back = []      # [str]
         self.rollback_failed = []  # [str]
         self.txn = ""
+        self.undo_of = ""          # 撤销时指向被撤销的 apply 事务
 
     def as_dict(self):
         return {"ok": self.ok, "txn": self.txn,
@@ -340,24 +341,61 @@ class AISettingsBridge(object):
             return []
         return out[-limit:]
 
-    def undo_last(self):
-        """撤销最近一次未被撤销的 apply。"""
+    # ------------------------------------------------------------ 撤销
+    def undoable(self):
+        """最近一笔「成功且没有被成功撤销过」的 apply。
+
+        只有 result == "ok" 的 undo 记录才算数：一次失败的撤销不改变
+        任何配置（apply 内部已回滚），下次必须重试同一笔，而不是跳到更早的。
+        """
         recs = self.history(limit=200)
-        undone = {r.get("undo_of") for r in recs if r.get("kind") == "undo"}
+        undone = {r.get("undo_of") for r in recs
+                  if r.get("kind") == "undo" and r.get("result") == "ok"}
         for rec in reversed(recs):
             if rec.get("kind") != "apply" or rec.get("result") != "ok":
                 continue
             if rec.get("txn") in undone:
                 continue
-            ops = [self._inverse(k, v) for k, v in (rec.get("before") or {}).items()]
-            if not ops:
-                return None
-            res = self.apply(ops, journal=False)
-            self._journal({"kind": "undo", "undo_of": rec.get("txn"),
-                           "ts": int(time.time()), "result": "ok" if res.ok else "fail",
-                           "txn": res.txn})
-            return res
+            return rec
         return None
+
+    def _undo_error(self, msg):
+        res = Result()
+        res.errors.append(msg)
+        return res
+
+    def undo(self, txn=None):
+        """撤销指定事务；txn 为空时撤销最近一笔可撤销的 apply。"""
+        recs = self.history(limit=200)
+        if txn:
+            rec = next((r for r in recs
+                        if r.get("kind") == "apply" and r.get("txn") == txn), None)
+            if rec is None:
+                return self._undo_error("找不到这笔修改（%s）" % txn)
+            if rec.get("result") != "ok":
+                return self._undo_error("这笔修改当时没有成功，无需撤销")
+            if any(r.get("kind") == "undo" and r.get("undo_of") == txn
+                   and r.get("result") == "ok" for r in recs):
+                return self._undo_error("这笔修改已经撤销过")
+        else:
+            rec = self.undoable()
+            if rec is None:
+                return None
+            txn = rec.get("txn")
+
+        ops = [self._inverse(k, v) for k, v in (rec.get("before") or {}).items()]
+        if not ops:
+            return None
+        res = self.apply(ops, journal=False)
+        res.undo_of = txn
+        self._journal({"kind": "undo", "undo_of": txn,
+                       "ts": int(time.time()), "result": "ok" if res.ok else "fail",
+                       "txn": res.txn})
+        return res
+
+    def undo_last(self):
+        """兼容旧调用：等价于 undo(None)。"""
+        return self.undo(None)
 
     def clear_history(self):
         try:
@@ -507,6 +545,32 @@ def selftest_offline():
                        {"op": "set_gain", "value": 1.5}])
         ck("回滚失败被报告", not r6.ok and any("滚动方向" in x for x in r6.rollback_failed),
            "%r / %r" % (r6.rollback_failed, r6.errors))
+
+        # ---- 撤销边界：失败撤销不能把原事务记为已撤销
+        real_gain = _FakeApp.set_gain.__get__(app)
+        app.set_gain = real_gain
+        app.cfg["gain"] = 1.0
+        r7 = br.apply([{"op": "set_gain", "value": 1.5}])
+        txn7 = r7.txn
+        ck("撤销前置", r7.ok and app.cfg["gain"] == 1.5)
+
+        app.set_gain = lambda g: None           # 让这次撤销失败
+        u1 = br.undo(txn7)
+        ck("撤销失败有原因", u1 is not None and not u1.ok and u1.errors, str(u1.errors if u1 else None))
+        ck("失败撤销不改配置", app.cfg["gain"] == 1.5)
+
+        app.set_gain = real_gain
+        ck("失败撤销不算已完成", (br.undoable() or {}).get("txn") == txn7)
+        u2 = br.undo_last()
+        ck("重试仍撤同一笔", u2 is not None and u2.ok and u2.undo_of == txn7,
+           "%r" % (getattr(u2, "undo_of", None),))
+        ck("重试后值恢复", app.cfg["gain"] == 1.0)
+
+        u3 = br.undo(txn7)
+        ck("已撤销不能再撤", u3 is not None and not u3.ok and "已经撤销" in " ".join(u3.errors),
+           str(u3.errors))
+        u4 = br.undo("deadbeef")
+        ck("未知事务报错", u4 is not None and not u4.ok)
 
     return {"ok": not bad, "passed": ok, "fail": bad}
 
