@@ -148,6 +148,19 @@ class PluginError(Exception):
 
 # ---------------------------------------------------------------- 注册表
 
+_HOST = None
+
+
+def set_host(obj):
+    """宿主在启动时注入自己，供插件调用受控能力（不认识具体插件）。"""
+    global _HOST
+    _HOST = obj
+
+
+def host():
+    return _HOST
+
+
 def registry():
     return [dict(p) for p in PLUGINS]
 

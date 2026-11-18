@@ -392,6 +392,10 @@ class DPApp(NSObject):
         # 只有 app 启用 + 原生触控 + 校正开关三者同时为真才会管理 override。
         self.edid = EDID.EDIDController(state_dir=CFG_DIR, log=log,
                                         helper=EDID.find_helper())
+        # 插件可调用的受控设置接口（插件不直接碰 cfg / 私有对象）
+        import ai_settings as AIS
+        self.settings_api = AIS.AISettingsBridge(self, log=log)
+        PLUG.set_host(self)
         self._build_status_item()
         self._build_menu()
         self._viz = None              # 触控可视化覆盖层 (懒建)
