@@ -25,6 +25,9 @@ import uuid
 import ai_protocol as P
 
 
+MAX_OPS = 8          # 一次最多改这么多项，防止模型塞一堆操作
+
+
 class Change(object):
     __slots__ = ("key", "title", "old", "new", "warn", "implicit")
 
@@ -174,9 +177,25 @@ class AISettingsBridge(object):
         ]
         return "\n".join(lines)
 
+    # ------------------------------------------------------------ 校验
+    def _validated(self, ops):
+        """入口强校验：不信调用方（插件 / 模型）传进来的结构。
+
+        只做白名单 + 类型 + 枚举校验，返回规范化后的新列表；
+        任何不合法的输入直接抛 ProtocolError，绝不进入执行阶段。
+        """
+        if not isinstance(ops, (list, tuple)):
+            raise P.ProtocolError("operations 必须是数组")
+        if not ops:
+            raise P.ProtocolError("operations 不能为空")
+        if len(ops) > MAX_OPS:
+            raise P.ProtocolError("一次最多 %d 项操作" % MAX_OPS)
+        return [P.validate_op(op) for op in ops]
+
     # ------------------------------------------------------------ 预览
     def preview(self, ops):
         """返回 [Change]；不修改任何状态。"""
+        ops = self._validated(ops)
         cfg = self.app.cfg
         specs = _specs()
         out = []
@@ -204,6 +223,7 @@ class AISettingsBridge(object):
 
     # ------------------------------------------------------------ 执行
     def apply(self, ops, journal=True):
+        ops = self._validated(ops)
         res = Result()
         res.txn = uuid.uuid4().hex[:12]
         changes = self.preview(ops)
@@ -425,10 +445,26 @@ def selftest_offline():
         ck("验证记录", len(r.applied) == 1)
         ck("历史落盘", len(br.history()) == 1)
 
-        # 静默失败必须被抓出来：直接塞一个非法值
-        r2 = br.apply([{"op": "set_gain", "value": 3.0}])
-        ck("非法档位失败", not r2.ok and r2.errors)
-        ck("失败后回滚", app.cfg["gain"] == 1.0)
+        # 入口强校验：非法值 / 未知字段 / 未知操作，preview 阶段就拒绝
+        for bad_ops in ([{"op": "set_gain", "value": 3.0}],
+                        [{"op": "set_bind", "gesture": "tap", "action": "nope"}],
+                        [{"op": "set_gain", "value": 1.5, "extra": 1}],
+                        [{"op": "rm_rf"}],
+                        [{"op": "set_edid_correct", "value": "yes"}],
+                        []):
+            try:
+                br.preview(bad_ops)
+                bad.append("非法操作未被拒绝：%r" % (bad_ops,))
+            except P.ProtocolError:
+                ok += 1
+        ck("拒绝后状态未变", app.cfg["gain"] == 1.0)
+
+        try:
+            br.apply([{"op": "set_gain", "value": 3.0}])
+            bad.append("apply 未拒绝非法 gain")
+        except P.ProtocolError:
+            ok += 1
+        ck("apply 拒绝后未落盘", len(br.history()) == 1)
 
         # hold 绑定的隐含副作用
         app.cfg["rc_hold_ms"] = 0
@@ -463,7 +499,7 @@ def selftest_offline():
         app.set_natural = broken_nat
         app.cfg["natural"] = "off"
         r6 = br.apply([{"op": "set_natural", "value": "on"},
-                       {"op": "set_gain", "value": 1.75}])
+                       {"op": "set_gain", "value": 1.5}])
         ck("回滚失败被报告", not r6.ok and any("natural" in x for x in r6.rollback_failed),
            "%r / %r" % (r6.rollback_failed, r6.errors))
 
