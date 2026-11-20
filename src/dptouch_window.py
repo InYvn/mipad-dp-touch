@@ -893,6 +893,15 @@ def _line():
     return NSColor.colorWithCalibratedWhite_alpha_(1.0 if _is_dark() else 0.0, 0.07)
 
 
+def _line2():
+    return NSColor.colorWithCalibratedWhite_alpha_(1.0 if _is_dark() else 0.0, 0.14)
+
+
+def _danger():
+    # 比品牌橙红更深，避免和主操作混淆
+    return NSColor.colorWithCalibratedRed_green_blue_alpha_(0.78, 0.16, 0.23, 1.0)
+
+
 def _color(name, fallback=None):
     try:
         return getattr(NSColor, name)()
@@ -958,9 +967,9 @@ def _button(text, rect, target, action, switch=False, state=0, small=False,
         b.layer().setCornerRadius_(rect.size.height / 2.0)
         b.layer().setBackgroundColor_((brand_color() if primary else _card_bg()).CGColor())
         b.layer().setBorderWidth_(0.0 if primary else 1.0)
-        b.layer().setBorderColor_(_line().CGColor())
+        b.layer().setBorderColor_(_line2().CGColor())
         fg = (NSColor.whiteColor() if primary else
-              (_color("systemRedColor") if danger else _color("labelColor")))
+              (_danger() if danger else _color("labelColor")))
         b.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
             text, {NSFontAttributeName: NSFont.systemFontOfSize_(11.0 if small else 13.0),
                    NSForegroundColorAttributeName: fg}))
