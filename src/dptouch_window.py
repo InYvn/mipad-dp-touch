@@ -249,6 +249,11 @@ def action_control(rect, gesture):
     options = HB.gesture_actions(gesture)
     control = _ActionMenu.alloc().initWithFrame_pullsDown_(rect, False)
     control.setBordered_(False)
+    control.setWantsLayer_(True)
+    control.layer().setBackgroundColor_(_well_bg().CGColor())
+    control.layer().setCornerRadius_(9.0)
+    control.layer().setBorderWidth_(1.0)
+    control.layer().setBorderColor_(_line2().CGColor())
     menu = NSMenu.alloc().initWithTitle_("映射行为")
     menu.setAutoenablesItems_(False)
     symbols = {"none": "nosign", "left": "cursorarrow.click", "right": "contextualmenu.and.cursorarrow",
@@ -889,6 +894,11 @@ def _card_bg():
     return NSColor.colorWithCalibratedWhite_alpha_(0.137 if _is_dark() else 1.0, 1.0)
 
 
+def _well_bg():
+    """控件底：Oink 的 --ok-well。"""
+    return NSColor.colorWithCalibratedWhite_alpha_(0.095 if _is_dark() else 0.926, 1.0)
+
+
 def _line():
     return NSColor.colorWithCalibratedWhite_alpha_(1.0 if _is_dark() else 0.0, 0.07)
 
@@ -935,6 +945,13 @@ def input_mode_text(st, enabled):
               "手指由应用模拟 · 笔映射保留" if st.get("selected_mode") == "legacy" else
               "未接入手指接口 · 保留笔映射" if st.get("selected_mode") == "pen_only" else "等待接口检测")
     return "%s · %s" % (state, title), "%s · %s" % (provenance, detail)
+
+
+def _hline_view(rect):
+    n = NSView.alloc().initWithFrame_(rect)
+    n.setWantsLayer_(True)
+    n.layer().setBackgroundColor_(_line().CGColor())
+    return n
 
 
 def _label(text, rect, size=13.0, bold=False, dim=False, right=False, color=None):
@@ -1259,6 +1276,49 @@ class _Pane(NSObject):
         b.setIdentifier_("bg")
         v.addSubview_(b)
         return b
+
+    @objc.python_method
+    def _group(self, v, x, y, w, rows, title=None, note=None, pad=20.0):
+        """Oink 风格设置组：圆角卡片 + 行分隔线 + 右侧控件。
+
+        rows 每项：{"title", "desc", "cw", "control": callable(rect)->view,
+                    "full": callable(v, row_top, inner_w), "h": 覆盖行高}
+        """
+        if title:
+            v.addSubview_(_label(title, self._r(x, y, w, 18), size=12, bold=True,
+                                 color=_color("secondaryLabelColor")))
+            y += 24
+        heights = [float(r.get("h") or (56.0 if r.get("desc") else 52.0)) for r in rows]
+        card = self._card(v, y, sum(heights), x=x, w=w)
+        ry = y
+        for i, r in enumerate(rows):
+            rh = heights[i]
+            cw = float(r.get("cw") or 0)
+            inner = w - 2 * pad - (cw + 20 if cw else 0)
+            if r.get("title"):
+                v.addSubview_(_label(r["title"], self._r(x + pad,
+                                                         ry + (12 if r.get("desc") else 17),
+                                                         max(80.0, inner), 18),
+                                     size=13.5, bold=False))
+            if r.get("desc"):
+                v.addSubview_(_label(r["desc"], self._r(x + pad, ry + 31,
+                                                         max(80.0, inner), 16),
+                                     size=11.5, dim=True))
+            if r.get("control") and cw:
+                try:
+                    ctrl = r["control"](self._r(x + w - pad - cw, ry + (rh - 26) / 2.0, cw, 26))
+                except Exception:
+                    ctrl = None
+                if ctrl is not None:
+                    v.addSubview_(ctrl)
+            if r.get("full"):
+                r["full"](v, ry, w - 2 * pad)
+            if i:
+                v.addSubview_(_hline_view(self._r(x + pad, ry, w - 2 * pad, 1)))
+            ry += rh
+        if note:
+            v.addSubview_(_label(note, self._r(x, ry + 8, w, 16), size=11, dim=True))
+        return y + sum(heights) + (26 if note else 14)
 
     @objc.python_method
     def _perms_done(self):
@@ -1757,130 +1817,142 @@ class SettingsWindow(_Pane):
         y = self._eyebrow(v, x, y, "GESTURE SETTINGS / 02")
         y = self._page_head(v, x, w, y, "手势映射", "为轻点、滑动和长按设置对应的鼠标操作。",
                             "恢复默认", "onResetBinds:")
-        # Keep references for live scope updates without rebuilding controls or
-        # touching mappings. Native fingers never consume this shared table.
         self.c["mapping_title"] = self.c["page_title"]
         self.c["mapping_scope"] = self.c["page_subtitle"]
-        v.addSubview_(_label("● 当前配置 · 小米平板 9 Pro Max      自动保存",
-                             self._r(x, y, w, 16), size=11, color=_color("systemGreenColor")))
-        y += 16 + 12
-        v.addSubview_(_label("触控动作", self._r(x, y, 200, 16), size=11, bold=True,
-                             color=_color("secondaryLabelColor")))
-        v.addSubview_(_label("映射行为", self._r(x + w - 200, y, 200, 16), size=11, bold=True,
-                             color=_color("secondaryLabelColor"), right=True))
-        y += 16 + 8
-        v.addSubview_(_line_view(self._r(x, y, w, 1)))
-        y += 1
-        ROWG = 48.0                       # 定高窗口放不下 56 的行距, 收到 48
+        v.addSubview_(_label("● 当前配置 · 小米平板 9 Pro Max · 自动保存",
+                             self._r(x, y, w, 16), size=11,
+                             color=_color("systemGreenColor")))
+        y += 26
+
+        descs = {"tap": "笔尖轻点一下", "swipe": "笔尖快速扫过",
+                 "hold_swipe": "停住后拖动", "hold": "停住不动出菜单"}
+        rows = []
         for i, (g, title, _o, _d) in enumerate(BIND_ROWS):
-            ry = y + i * ROWG
-            ic = _icon({"tap": "hand.tap", "swipe": "hand.draw", "hold_swipe": "hand.point.up.left",
-                        "hold": "cursorarrow.click"}.get(g, "hand.point.up"), 20.0)
-            if ic is not None:
-                ic.setFrame_(self._r(x, ry + 13, 20, 20))
-                v.addSubview_(ic)
-            v.addSubview_(_label(title, self._r(x + 32, ry + 15, 200, 18), size=13, bold=True))
-            pop = action_control(self._r(x + w - 252, ry + 10, 252, 26), g)
-            pop.setTarget_(self)
-            pop.setAction_("onBind:")
-            pop.setTag_(i)
-            v.addSubview_(pop)
-            self.c["bind_%s" % g] = pop
-            v.addSubview_(_line_view(self._r(x, ry + ROWG - 1, w, 1)))
-        y += 4 * ROWG
-        # 滚动方向 / 速度 (并一行)
-        v.addSubview_(_label("滚动", self._r(x, y + 8, 90, 18), size=13, bold=True))
-        self._preview(v, "scroll_preview", self._r(x + 100, y + 3, 180, 40))
-        self.c["nat"] = direction_control(self._r(x + w - 300, y + 10, 300, 26))
-        self.c["nat"].setTarget_(self)
-        self.c["nat"].setAction_("onNat:")
-        v.addSubview_(self.c["nat"])
-        v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
-        y += ROWG
-        v.addSubview_(_label("滚动增益", self._r(x, y + 12, 130, 18), size=13, bold=True))
-        self.c["gain_value"] = _label("", self._r(x + 138, y + 12, 160, 18), size=12, dim=True)
+            def make(rect, g=g, i=i):
+                pop = action_control(rect, g)
+                pop.setTarget_(self)
+                pop.setAction_("onBind:")
+                pop.setTag_(i)
+                self.c["bind_%s" % g] = pop
+                return pop
+            rows.append({"title": title, "desc": descs.get(g, ""), "cw": 230,
+                         "control": make})
+
+        def enhanced(rect):
+            sw = _Switch.alloc().initWithFrame_(rect)
+            sw.setBordered_(False)
+            sw.setTitle_("")
+            sw.setTarget_(self)
+            sw.setAction_("onEnhanced:")
+            self.c["enhanced"] = sw
+            return sw
+
+        rows.append({"title": "增强模式 · 接收触摸接口",
+                     "desc": "接口接入开关，不修改系统手指手势",
+                     "cw": 36, "control": enhanced})
+        y = self._group(v, x, y, w, rows, title="触控动作")
+
+        def nat(rect):
+            ctl = direction_control(rect)
+            ctl.setTarget_(self)
+            ctl.setAction_("onNat:")
+            self.c["nat"] = ctl
+            return ctl
+
+        def gain_box(rect):
+            box = NSView.alloc().initWithFrame_(rect)
+            g = gain_control(NSMakeRect(0, 0, rect.size.width - 70, 30))
+            g.setTarget_(self)
+            g.setAction_("onGain:")
+            box.addSubview_(g)
+            b = _button("默认", NSMakeRect(rect.size.width - 62, 2, 62, 24),
+                        self, "onGainDefault:", small=True)
+            box.addSubview_(b)
+            self.c["gain"] = g
+            self.c["gain_default"] = b
+            return box
+
+        rows2 = [
+            {"title": "滚动方向", "desc": "自然滚动 / 反转", "cw": 240, "control": nat},
+            {"title": "滚动增益", "desc": "", "cw": 250, "control": gain_box},
+            {"h": 46, "full": lambda vv, ry, iw: self._preview(
+                vv, "scroll_preview", self._r(x + 20, ry + 6, iw, 34))},
+        ]
+        y = self._group(v, x, y, w, rows2, title="滚动")
+        self.c["gain_value"] = _label("", self._r(x + 20, y - 8, 240, 16), size=11, dim=True)
         v.addSubview_(self.c["gain_value"])
-        self.c["gain_default"] = _button("恢复默认", self._r(x + w - 90, y + 9, 90, 26), self, "onGainDefault:")
-        v.addSubview_(self.c["gain_default"])
-        self.c["gain"] = gain_control(self._r(x + w - 300, y + 7, 190, 30))
-        self.c["gain"].setTarget_(self)
-        self.c["gain"].setAction_("onGain:")
-        v.addSubview_(self.c["gain"])
-        v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
-        y += ROWG
-        # 增强模式: 整行 (开关在右)
-        v.addSubview_(_label("增强模式 · 接收触摸接口", self._r(x, y + 8, 300, 18), size=13,
-                             bold=True))
-        v.addSubview_(_label("接口接入开关，不修改系统手指手势",
-                             self._r(x, y + 27, 460, 15), size=11, dim=True))
-        self.c["enhanced"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 13, 36, 22))
-        self.c["enhanced"].setBordered_(False)
-        self.c["enhanced"].setTitle_("")
-        self.c["enhanced"].setTarget_(self)
-        self.c["enhanced"].setAction_("onEnhanced:")
-        v.addSubview_(self.c["enhanced"])
-        v.addSubview_(_line_view(self._r(x, y + ROWG - 1, w, 1)))
-        y += ROWG + 16
-        return y
+        return y + 16
 
     @objc.python_method
     def _page_touch(self, v, x, w, y):
         y = self._eyebrow(v, x, y, "TOUCH & POSITION / 01")
         y = self._page_head(v, x, w, y, "触控与位置",
                             "按系统与接口选择触控方式，显示设备位置修正状态。")
-        self.c["touch_actual"] = _label("等待检测", self._r(x, y, w, 19), size=14, bold=True)
+
+        # ---- 触控方式（整组一条宽控件）
+        card_h = 152.0
+        self._card(v, y, card_h, x=x, w=w)
+        self.c["touch_actual"] = _label("等待检测", self._r(x + 20, y + 14, w - 40, 19),
+                                        size=13.5, bold=True)
         v.addSubview_(self.c["touch_actual"])
-        y += 27
-        self.c["touch_mode"] = _TouchModeSegments.alloc().initWithFrame_(self._r(x, y, w, 30))
+        self.c["touch_mode"] = _TouchModeSegments.alloc().initWithFrame_(
+            self._r(x + 20, y + 40, w - 40, 30))
         seg = self.c["touch_mode"]
         seg.setSegmentCount_(3)
-        seg.setTrackingMode_(0)  # NSSegmentSwitchTrackingSelectOne
-        seg.setSegmentStyle_(5)  # NSSegmentStyleCapsule: native selected-state contrast
-        for i, (title, icon) in enumerate((("自动 · 推荐", "sparkles"), ("原生触控", "hand.tap"), ("兼容模拟", "cursorarrow"))):
+        seg.setTrackingMode_(0)
+        seg.setSegmentStyle_(5)
+        for i, (title, icon) in enumerate((("自动 · 推荐", "sparkles"),
+                                           ("原生触控", "hand.tap"),
+                                           ("兼容模拟", "cursorarrow"))):
             seg.setLabel_forSegment_(title, i)
-            seg.setWidth_forSegment_(w / 3.0, i)
+            seg.setWidth_forSegment_((w - 40) / 3.0, i)
             image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(icon, title)
-            if image: seg.setImage_forSegment_(image, i)
+            if image:
+                seg.setImage_forSegment_(image, i)
         seg.setTarget_(self)
         seg.setAction_("onNativeTouch:")
         seg.setAccessibilityLabel_("触控方式")
-        seg.setToolTip_("自动按系统与接口选路；原生无事件不会自动回退。兼容模式仍需确认关闭系统触控手势。")
+        seg.setToolTip_("自动按系统与接口选路；原生无事件不会自动回退。"
+                        "兼容模式仍需确认关闭系统触控手势。")
         v.addSubview_(seg)
         for i, text in enumerate(("按系统与接口选择", "手指交给 macOS", "桥接为鼠标操作")):
-            v.addSubview_(_label(text, self._r(x + i * w / 3, y + 36, w / 3 - 8, 16), size=11, dim=True))
-        self.c["touch_reason"] = _label("", self._r(x, y + 61, w, 16), size=11, dim=True)
+            v.addSubview_(_label(text, self._r(x + 20 + i * (w - 40) / 3, y + 74,
+                                               (w - 40) / 3 - 8, 16), size=11, dim=True))
+        self.c["touch_reason"] = _label("", self._r(x + 20, y + 94, w - 40, 16),
+                                        size=11, dim=True)
         v.addSubview_(self.c["touch_reason"])
-        self._preview(v, "route_preview", self._r(x, y + 84, w, 36))
-        y += 128
-        v.addSubview_(_line_view(self._r(x, y, w, 1)))
-        y += 14
-        # 位置校正: 只对小米平板屏改 EDID 物理几何 (282×188 mm), 有真状态行
-        v.addSubview_(_label("设备位置修正 · 自动", self._r(x, y + 16, 300, 18), size=13,
-                             bold=True))
-        v.addSubview_(_label("已验证设备自动应用；退出后恢复",
-                             self._r(x, y + 36, 460, 15), size=11, dim=True))
-        self.c["edid_correct"] = _Switch.alloc().initWithFrame_(self._r(x + w - 36, y + 20, 36, 22))
-        self.c["edid_correct"].setBordered_(False)
-        self.c["edid_correct"].setTitle_("")
-        self.c["edid_correct"].setTarget_(self)
-        self.c["edid_correct"].setAction_("onCorr:")
-        v.addSubview_(self.c["edid_correct"])
-        v.addSubview_(_line_view(self._r(x, y + 60, w, 1)))
-        y += 60
-        # 状态行: applied / disabled / unsupported / ambiguous / failed + 跳转入口
-        self.c["edid_status"] = _label("", self._r(x, y + 12, w, 16), size=11, dim=True)
+        self._preview(v, "route_preview", self._r(x + 20, y + 114, w - 40, 30))
+        y += card_h + 14
+
+        # ---- 位置修正
+        def corr(rect):
+            sw = _Switch.alloc().initWithFrame_(rect)
+            sw.setBordered_(False)
+            sw.setTitle_("")
+            sw.setTarget_(self)
+            sw.setAction_("onCorr:")
+            self.c["edid_correct"] = sw
+            return sw
+
+        rows = [{"title": "设备位置修正 · 自动",
+                 "desc": "已验证设备自动应用；退出后恢复",
+                 "cw": 36, "control": corr}]
+        y = self._group(v, x, y, w, rows, title="位置")
+
+        self.c["edid_status"] = _label("", self._r(x + 20, y, w - 40, 16), size=11, dim=True)
         v.addSubview_(self.c["edid_status"])
-        self.c["edid_status2"] = _label("", self._r(x, y + 32, w, 16), size=11, dim=True)
+        self.c["edid_status2"] = _label("", self._r(x + 20, y + 20, w - 40, 16), size=11, dim=True)
         v.addSubview_(self.c["edid_status2"])
         self.c["disp_settings_btn"] = _button("系统触控设置…",
-                                               self._r(x + w - 158, y + 76, 158, 26),
+                                               self._r(x + w - 178, y + 44, 158, 26),
                                                self, "onOpenDispSettings:")
         v.addSubview_(self.c["disp_settings_btn"])
-        y += 60
-        illustration = _GeometryIllustration.alloc().initWithFrame_(self._r(x, y, 186, 58))
+        y += 80
+        illustration = _GeometryIllustration.alloc().initWithFrame_(self._r(x + 20, y, 186, 58))
         v.addSubview_(illustration)
-        v.addSubview_(_label("偏移 → 对齐 · 原理示意，非实测", self._r(x + 202, y + 19, w - 380, 17), size=11, dim=True))
-        return y + 66
+        v.addSubview_(_label("偏移 → 对齐 · 原理示意，非实测",
+                             self._r(x + 222, y + 19, w - 400, 17), size=11, dim=True))
+        return y + 70
 
     @objc.python_method
     def _page_display(self, v, x, w, y):
