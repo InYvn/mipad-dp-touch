@@ -306,7 +306,7 @@ class _FirstMouseButton(NSButton):
 from AppKit import NSBezierPath, NSView
 
 # 分组底: 深色模式下比窗口底稍亮的一层圆角块, 用来替"一堆粗体小标题"做分组。
-CARD_R = 10.0
+CARD_R = 18.0
 
 
 class _CardView(NSView):
@@ -326,7 +326,7 @@ class _CardView(NSView):
     def drawRect_(self, rect):
         b = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
             self.bounds(), CARD_R, CARD_R)
-        c = _color(self.tint or "controlBackgroundColor")
+        c = _color(self.tint) if self.tint else _card_bg()
         a = self.tint_alpha
         if self.tint and self._hover:
             a = min(1.0, a + 0.06)
@@ -334,6 +334,10 @@ class _CardView(NSView):
             c = c.colorWithAlphaComponent_(a)
         c.set()
         b.fill()
+        if not self.tint:
+            _line().set()
+            b.setLineWidth_(1.0)
+            b.stroke()
 
 
 class _GeometryIllustration(NSView):
@@ -477,12 +481,13 @@ class _NavButton(NSButton):
         self.setNeedsDisplay_(True)
 
     def drawRect_(self, rect):
+        r = 11.0
         if self.state():
-            _color("unemphasizedSelectedContentBackgroundColor").set()
-            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 8.0, 8.0).fill()
+            brand_color(0.13 if _is_dark() else 0.10).set()
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), r, r).fill()
         elif self._hover:
-            _color("labelColor").colorWithAlphaComponent_(0.07).set()
-            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 8.0, 8.0).fill()
+            _color("labelColor").colorWithAlphaComponent_(0.05).set()
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), r, r).fill()
         objc.super(_NavButton, self).drawRect_(rect)
 
 
@@ -496,7 +501,7 @@ class _Switch(NSButton):
         b = self.bounds()
         on = bool(self.state())
         r = b.size.height / 2.0
-        (_color("controlAccentColor") if on else _color("quaternaryLabelColor")).set()
+        (brand_color() if on else _color("quaternaryLabelColor")).set()
         NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(b, r, r).fill()
         d = b.size.height - 4.0
         x = (b.size.width - d - 2.0) if on else 2.0
@@ -868,6 +873,26 @@ def perm_glyph(state):
 
 # ---------------------------------------------------------------- 控件小工具
 
+def _is_dark():
+    try:
+        return "Dark" in str(NSApp.effectiveAppearance().name())
+    except Exception:
+        return False
+
+
+def _page_bg():
+    """Oink 风格底色：浅色 #F9F9FB / 深色 #1B1A18。"""
+    return NSColor.colorWithCalibratedWhite_alpha_(0.105 if _is_dark() else 0.976, 1.0)
+
+
+def _card_bg():
+    return NSColor.colorWithCalibratedWhite_alpha_(0.137 if _is_dark() else 1.0, 1.0)
+
+
+def _line():
+    return NSColor.colorWithCalibratedWhite_alpha_(1.0 if _is_dark() else 0.0, 0.07)
+
+
 def _color(name, fallback=None):
     try:
         return getattr(NSColor, name)()
@@ -920,14 +945,25 @@ def _label(text, rect, size=13.0, bold=False, dim=False, right=False, color=None
     return f
 
 
-def _button(text, rect, target, action, switch=False, state=0, small=False):
+def _button(text, rect, target, action, switch=False, state=0, small=False,
+            primary=False, danger=False):
     b = _FirstMouseButton.alloc().initWithFrame_(rect)
     b.setTitle_(text)
     if switch:
         b.setButtonType_(_BTN_SWITCH)
         b.setState_(1 if state else 0)
     else:
-        b.setBezelStyle_(1)                 # NSBezelStyleRounded
+        b.setBordered_(False)
+        b.setWantsLayer_(True)
+        b.layer().setCornerRadius_(rect.size.height / 2.0)
+        b.layer().setBackgroundColor_((brand_color() if primary else _card_bg()).CGColor())
+        b.layer().setBorderWidth_(0.0 if primary else 1.0)
+        b.layer().setBorderColor_(_line().CGColor())
+        fg = (NSColor.whiteColor() if primary else
+              (_color("systemRedColor") if danger else _color("labelColor")))
+        b.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+            text, {NSFontAttributeName: NSFont.systemFontOfSize_(11.0 if small else 13.0),
+                   NSForegroundColorAttributeName: fg}))
     b.setFont_(NSFont.systemFontOfSize_(11.0 if small else 13.0))
     b.setTarget_(target)
     b.setAction_(action)
@@ -1389,8 +1425,12 @@ class SettingsWindow(_Pane):
         self._sidebar(v, y, body_h)
         v.addSubview_(_fill_view(self._r(SIDEBAR_W, y, 1, body_h), "separatorColor",
                                  ident="line"))
-        v.addSubview_(_fill_view(self._r(SIDEBAR_W + 1, y, W - SIDEBAR_W - 1, self._H),
-                                 "controlBackgroundColor", ident="line"))
+        page_bg = NSView.alloc().initWithFrame_(self._r(SIDEBAR_W + 1, y,
+                                                        W - SIDEBAR_W - 1, self._H))
+        page_bg.setIdentifier_("line")
+        page_bg.setWantsLayer_(True)
+        page_bg.layer().setBackgroundColor_(_page_bg().CGColor())
+        v.addSubview_(page_bg)
         self._page(v, y, body_h)
         y += body_h
 
@@ -1544,7 +1584,13 @@ class SettingsWindow(_Pane):
     @objc.python_method
     def _page_head(self, v, x, w, y, title, subtitle, btn_title=None, btn_act=None):
         self.c["page_title"] = _label(title, self._r(x, y, w - 200, 36), size=28, bold=True)
-        self.c["page_subtitle"] = _label(subtitle, self._r(x, y + 40, w - 140, 18), size=12,
+        try:
+            rf = NSFont.fontWithName_size_("SFProRounded-Bold", 28.0)
+            if rf is not None:
+                self.c["page_title"].setFont_(rf)
+        except Exception:
+            pass
+        self.c["page_subtitle"] = _label(subtitle, self._r(x, y + 40, w - 140, 18), size=13,
                                           color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["page_title"])
         v.addSubview_(self.c["page_subtitle"])
@@ -1978,7 +2024,8 @@ class SettingsWindow(_Pane):
             by = y + 72
             if rec:
                 self.c["mk_%s_main" % pid] = _button(
-                    "收起" if shown else "显示", self._r(tx, by, 84, 26), self, "onMarketTogglePid:")
+                    "收起" if shown else "显示", self._r(tx, by, 84, 26), self, "onMarketTogglePid:",
+                    primary=not shown, small=True)
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
                 if not local:
@@ -1987,12 +2034,14 @@ class SettingsWindow(_Pane):
                     self.c["mk_%s_upd" % pid].setRepresentedObject_(pid)
                     v.addSubview_(self.c["mk_%s_upd" % pid])
                 self.c["mk_%s_del" % pid] = _button(
-                    "卸载", self._r(tx + 184, by, 84, 26), self, "onMarketUninstallPid:")
+                    "卸载", self._r(tx + 184, by, 84, 26), self, "onMarketUninstallPid:",
+                    danger=True)
                 self.c["mk_%s_del" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_del" % pid])
             else:
                 self.c["mk_%s_main" % pid] = _button(
-                    "安装", self._r(tx, by, 96, 26), self, "onMarketInstallPid:")
+                    "安装", self._r(tx, by, 96, 26), self, "onMarketInstallPid:",
+                    primary=True, small=True)
                 self.c["mk_%s_main" % pid].setRepresentedObject_(pid)
                 v.addSubview_(self.c["mk_%s_main" % pid])
 
