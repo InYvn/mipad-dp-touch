@@ -6,11 +6,12 @@
   </h1>
   <p>小米平板 9 Pro Max，变身 Mac 原生触控屏。</p>
   <p>通过 USB-C DP-in 连接，接入 macOS 27.3 系统原生触控。轻点、拖拽、滚动、右键与多指手势，直接在屏幕上完成。搭配小米焦点触控笔 Pro，笔尖上的点击、滚动与拖拽也一并就位。</p>
-  <p><a href="https://inyvn.github.io/mipad-dp-touch/">官网与操作教程</a> · <a href="https://github.com/InYvn/mipad-dp-touch/releases">下载安装包</a> · <a href="CHANGELOG.md">更新日志</a></p>
+  <p><a href="https://inyvn.github.io/mipad-dp-touch/">官网与操作教程</a> · <a href="https://github.com/InYvn/mipad-dp-touch/releases">下载安装包</a> · <a href="CHANGELOG.md">更新日志</a> · <a href="https://qm.qq.com/q/oGB1vlEU0K">QQ 交流群</a></p>
 
 ![平台](https://img.shields.io/badge/platform-macOS%2027-blue)
 ![版本](https://img.shields.io/badge/version-2.2.5-ff6900)
 [![许可](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![QQ 群](https://img.shields.io/badge/QQ%E7%BE%A4-1136539169-12B7F5?logo=tencentqq&logoColor=white)](https://qm.qq.com/q/oGB1vlEU0K)
 
 </div>
 
@@ -159,6 +160,14 @@ cd mipad-dp-touch
 - [平板侧说明](tablet/README.md)：模块安装、热重启与卸载说明。
 - [CHANGELOG.md](CHANGELOG.md)：版本更新记录。
 - [官网](https://inyvn.github.io/mipad-dp-touch/)：操作教程。
+
+## 交流
+
+问题反馈、使用交流欢迎加 QQ 群：**1136539169**
+
+<a href="https://qm.qq.com/q/oGB1vlEU0K"><img src="docs/qq-group.png" width="200" alt="QQ 群 1136539169"></a>
+
+[点击加入 QQ 群](https://qm.qq.com/q/oGB1vlEU0K)
 
 ## 许可
 
