@@ -1545,17 +1545,17 @@ class SettingsWindow(_Pane):
         y = y0 + 20
         lg = logo_view(logo_path())
         if lg is not None:
-            lg.setFrame_(self._r(19, y, 44, 44))
+            lg.setFrame_(self._r(19, y, 54, 54))
             v.addSubview_(lg)
         # 品牌: 应用名在 logo 右侧（连接状态不再重复显示 —— 底部状态条已有）
-        _lb = _label(self.name, self._r(19 + 44 + 12, y + 12, SIDEBAR_W - 75 - 14, 22),
+        _lb = _label(self.name, self._r(19 + 54 + 12, y + 16, SIDEBAR_W - 85 - 14, 22),
                      size=14, bold=True)
         from AppKit import NSLineBreakByTruncatingTail
         _lb.setUsesSingleLineMode_(True)                     # ★标题不分两行
         _lb.setLineBreakMode_(NSLineBreakByTruncatingTail)   # 放不下就省略号, 绝不换行
         v.addSubview_(_lb)
-        y += 44 + 15
-        y += 8
+        y += 54 + 15
+        y += 4
         _navs = pages()
         _nav_h = 32.0 if len(_navs) > 6 else NAV_H
         for nav_index, (key, icon, title) in enumerate(_navs, 1):
@@ -1582,39 +1582,41 @@ class SettingsWindow(_Pane):
             self.c["nav_%s" % key] = btn
             y += _nav_h + (1 if len(_navs) > 6 else 2)
 
-        # ---- 设备区 (贴底): 紧凑状态卡 ----
-        mini = 2 * 20.0
-        tile_h = 34.0
-        area = 16 + 8 + tile_h + 8 + 18 + 4 + 16 + 12 + 1 + 14 + mini + 12
-        dy = y0 + h - 34 - area
+        # ---- 设备区 (贴底): 名称 + 三行实时小项 ----
+        mini = 3 * 18.0
+        art_h = 126.0                      # 设备图: 够放下旋转后的平板外接矩形 (自检会断言)
+        area = 16 + 6 + art_h + 6 + 18 + 4 + 16 + 12 + 1 + 13 + mini + 12
+        dy = y0 + h - 30 - area
         v.addSubview_(_label("当前设备", self._r(21, dy, 86, 14), size=11, bold=True,
                              color=_color("secondaryLabelColor")))
         self.c["live_tag"] = _label("● 已连接", self._r(SIDEBAR_W - 21 - 80, dy, 80, 14),
                                     size=11, color=_color("systemGreenColor"), right=True)
         v.addSubview_(self.c["live_tag"])
-        dy += 16 + 8
-        tile = self._card(v, dy, tile_h, x=13, w=SIDEBAR_W - 26)
-        ic = _icon("ipad", 18.0, 0.0, brand_color())
-        if ic is not None:
-            ic.setFrame_(self._r(13 + 12, dy + (tile_h - 18) / 2.0, 18, 18))
-            v.addSubview_(ic)
-        self.c["dev_name"] = _label("未连接平板", self._r(13 + 40, dy + 8, SIDEBAR_W - 26 - 52, 18),
-                                    size=12.5, bold=True)
+        dy += 16 + 6
+        self.c["dev_art"] = _DeviceArt.alloc().initWithFrame_(
+            self._r(0, dy, SIDEBAR_W, art_h))
+        self.c["dev_art"].setIdentifier_("line")      # 装饰件: 审计跳过
+        v.addSubview_(self.c["dev_art"])
+        dy += art_h + 6
+        self.c["dev_name"] = _label("未连接平板", self._r(21, dy, SIDEBAR_W - 42, 18), size=13,
+                                    bold=True)
         v.addSubview_(self.c["dev_name"])
-        dy += tile_h + 8
+        dy += 18 + 4
         self.c["dev_meta"] = _label("", self._r(21, dy, SIDEBAR_W - 42, 16), size=11, dim=True)
         v.addSubview_(self.c["dev_meta"])
-        dy += 16 + 10
-        v.addSubview_(_hline_view(self._r(21, dy, SIDEBAR_W - 42, 1)))
-        dy += 14
-        for i, (lab, key) in enumerate((("显示连接", "mini_disp"), ("触控接口", "mini_touch"))):
-            v.addSubview_(_label(lab, self._r(21, dy + i * 20, 52, 16), size=11, dim=True))
-            self.c[key] = _label("", self._r(SIDEBAR_W - 21 - 120, dy + i * 20, 120, 16),
+        dy += 16 + 8
+        v.addSubview_(_line_view(self._r(21, dy, SIDEBAR_W - 42, 1)))
+        dy += 13
+        for i, (lab, key) in enumerate((("显示连接", "mini_disp"), ("触控接口", "mini_touch"),
+                                        ("输入事件", "mini_events"))):
+            v.addSubview_(_label(lab, self._r(21, dy + i * 18, 52, 16), size=11, dim=True))
+            self.c[key] = _label("", self._r(SIDEBAR_W - 21 - 120, dy + i * 18, 120, 16),
                                  size=11, right=True)
             v.addSubview_(self.c[key])
 
         # ---- 侧栏底条 ----
         by = y0 + h - 30
+        v.addSubview_(_line_view(self._r(0, by, SIDEBAR_W, 1)))
         self.c["ver"] = _label("", self._r(21, by + 9, 88, 16), size=11, dim=True)
         v.addSubview_(self.c["ver"])
         v.addSubview_(_label("MIT License", self._r(SIDEBAR_W - 21 - 86, by + 9, 86, 16),
@@ -1689,7 +1691,7 @@ class SettingsWindow(_Pane):
             self.c["tb_%s" % icon.replace(".", "_")] = btn
         done = self._perms_done()
         # hero: 大标题 + 检测结果 + 一句说明
-        self.c["ov_hero"] = _label("设备概览", self._r(x, y, w - 40, 40), size=26, bold=True)
+        self.c["ov_hero"] = _label("设备概览", self._r(x, y, w - 40, 40), size=30, bold=True)
         v.addSubview_(self.c["ov_hero"])
         y += 44
         self.c["perm_ok"] = _label("✓" if done else "!", self._r(x, y + 1, 18, 18), size=13,
@@ -1710,42 +1712,41 @@ class SettingsWindow(_Pane):
         if not done:
             self._perm_block(v, x, y, w)
             y += PERM_H_FULL + 18
-        # 当前手势配置（卡片）
-        self._card(v, y, 120.0, x=x, w=w)
-        self.c["sum_scope"] = _label("当前笔手势配置", self._r(x + 18, y + 10, 400, 16),
-                                     size=11.5, bold=True,
+        # 当前手势配置
+        self.c["sum_scope"] = _label("当前笔手势配置", self._r(x, y, 400, 16), size=12, bold=True,
                                      color=_color("secondaryLabelColor"))
         v.addSubview_(self.c["sum_scope"])
-        y += 16 + 12
+        y += 16 + 6
         binds = HB.binds_from_cfg(self.app.cfg)
         for i, (g, title, _o, _d) in enumerate(BIND_ROWS):
             col = i % 2
             row = i // 2
             bx = x + col * (w / 2.0)
-            by = y + row * 32
+            by = y + row * 38
             v.addSubview_(_label(title, self._r(bx, by, 120, 18), size=14, dim=True))
             self.c["sum_%s" % g] = _label(HB.action_title(g, binds.get(g)),
                                           self._r(bx + 130, by, 200, 18), size=14, bold=True)
             v.addSubview_(self.c["sum_%s" % g])
-        y += 3 * 32 + 2
-        y += 6
-        # 显示器 / 手指触控（卡片）
-        self._card(v, y, 72.0, x=x, w=w)
-        v.addSubview_(_label("显示器", self._r(x + 18, y + 10, 200, 16), size=11.5, bold=True,
+        y += 3 * 38 + 4
+        v.addSubview_(_line_view(self._r(x, y, w, 1)))
+        y += 12
+        # 显示器 / 手指触控 两栏
+        v.addSubview_(_label("显示器", self._r(x, y, 200, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
-        v.addSubview_(_label("手指触控", self._r(x + w / 2.0, y + 10, 200, 16), size=11.5,
-                             bold=True, color=_color("secondaryLabelColor")))
-        self.c["ov_disp"] = _label("", self._r(x + 18, y + 28, w / 2.0 - 40, 18), size=13, bold=True)
+        v.addSubview_(_label("手指触控", self._r(x + w / 2.0, y, 200, 16), size=12, bold=True,
+                             color=_color("secondaryLabelColor")))
+        y += 16 + 6
+        self.c["ov_disp"] = _label("", self._r(x, y, w / 2.0 - 30, 18), size=13, bold=True)
         v.addSubview_(self.c["ov_disp"])
-        self.c["enhanced_hint"] = _label("", self._r(x + w / 2.0, y + 28, w / 2.0 - 40, 18),
+        self.c["enhanced_hint"] = _label("", self._r(x + w / 2.0, y, w / 2.0 - 30, 18),
                                          size=13, bold=True)
         v.addSubview_(self.c["enhanced_hint"])
-        self.c["ov_disp_sub"] = _label("", self._r(x + 18, y + 46, w / 2.0 - 40, 16), size=11, dim=True)
+        y += 16 + 4
+        self.c["ov_disp_sub"] = _label("", self._r(x, y, w / 2.0 - 30, 16), size=11, dim=True)
         v.addSubview_(self.c["ov_disp_sub"])
-        self.c["ov_touch_sub"] = _label("", self._r(x + w / 2.0, y + 46, w / 2.0 - 40, 16),
-                                        size=11, dim=True)
+        self.c["ov_touch_sub"] = _label("", self._r(x + w / 2.0, y, w / 2.0 - 30, 16), size=11, dim=True)
         v.addSubview_(self.c["ov_touch_sub"])
-        y += 72 + 8
+        y += 16 + 10
         v.addSubview_(_label("连接行为", self._r(x, y, 200, 16), size=12, bold=True,
                              color=_color("secondaryLabelColor")))
         y += 16 + 8
@@ -2876,8 +2877,7 @@ class SettingsWindow(_Pane):
         if "mini_disp" in self.c:
             self.c["mini_disp"].setStringValue_("正常" if _d else "—")
             self.c["mini_touch"].setStringValue_("可用" if get("touch_iface") else "未检测到")
-            if "mini_events" in self.c:
-                self.c["mini_events"].setStringValue_("%d" % get("events", 0))
+            self.c["mini_events"].setStringValue_("%d" % get("events", 0))
         if "strip" in self.c:
             self.c["strip"].setStringValue_(
                 ("设备在线 · %s" % _d[0]) if _d else "等待平板接入")
