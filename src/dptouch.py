@@ -2757,9 +2757,15 @@ class DPApp(NSObject):
         if not tid or self._tool_busy:
             return
         meta = PLUG.tool(tid)
-        dest = os.path.expanduser("~/Downloads/%s.dmg" % meta["name"])
-        body = ("会从官方地址下载安装包：\n%s\n\n保存到：%s\n\n"
-                "下载完成后会校验签名并打开安装包，需要你手动拖进「应用程序」。" % (meta["url"], dest))
+        kind = meta.get("kind", "dmg")
+        ext = ".apk" if kind == "apk" else ".dmg"
+        dest = os.path.expanduser("~/Downloads/%s%s" % (meta["name"], ext))
+        if kind == "apk":
+            body = ("会从官方地址下载 Android APK：\n%s\n\n保存到：%s\n\n"
+                    "下载完成后请传到平板安装；App 不会在 Mac 上执行它。" % (meta["url"], dest))
+        else:
+            body = ("会从官方地址下载安装包：\n%s\n\n保存到：%s\n\n"
+                    "下载完成后会校验签名并打开安装包，需要你手动拖进「应用程序」。" % (meta["url"], dest))
         if self._ask("下载%s？" % meta["name"], body, ["下载", "取消"]) != 0:
             return
         self._tool_busy = tid
@@ -2778,11 +2784,32 @@ class DPApp(NSObject):
             def prog(done, total):
                 self._tool_progress = (done, total)
             PLUG.download_file(meta["url"], dest, progress=prog)
-            ok, why = self._verify_dmg(dest)
+            if meta.get("kind") == "apk":
+                ok, why = self._verify_apk(dest, meta.get("sha256"))
+            else:
+                ok, why = self._verify_dmg(dest)
             out = {"ok": ok, "why": why, "path": dest}
         except Exception as e:
             out = {"ok": False, "why": "%s: %s" % (e.__class__.__name__, e), "path": dest}
         self._tool_in = (tid, out)
+
+    @objc.python_method
+    def _verify_apk(self, path, expected_sha256=None):
+        """APK：检查扩展名/ZIP magic/大小，并按注册表校验 SHA256。"""
+        import hashlib
+        if not path.endswith(".apk") or not os.path.exists(path) or os.path.getsize(path) < (1 << 20):
+            return False, "文件不是有效的 APK"
+        with open(path, "rb") as f:
+            if f.read(4) != b"PK\x03\x04":
+                return False, "APK 不是有效的 ZIP 文件"
+        if expected_sha256:
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            if h.hexdigest().lower() != str(expected_sha256).lower():
+                return False, "APK SHA256 不匹配"
+        return True, ""
 
     @objc.python_method
     def _verify_dmg(self, path):
@@ -2831,6 +2858,15 @@ class DPApp(NSObject):
         if not out.get("ok"):
             self._warn("下载%s失败" % meta["name"],
                        "%s\n\n可以打开官网手动下载：%s" % (out.get("why") or "原因不明", meta["page"]))
+        elif meta.get("kind") == "apk":
+            self._ask("下载完成",
+                      "APK 已保存到：\n%s\n\n请传到平板安装；App 不会在 Mac 上执行它。"
+                      % out["path"], ["在 Finder 中显示", "关闭"])
+            try:
+                import subprocess
+                subprocess.run(["open", "-R", out["path"]], check=False)
+            except Exception:
+                pass
         else:
             self._ask("下载完成",
                       "安装包已保存到：\n%s\n\n即将打开安装包，请把「%s」拖进「应用程序」。"
