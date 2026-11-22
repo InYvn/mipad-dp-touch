@@ -2177,7 +2177,14 @@ class SettingsWindow(_Pane):
             self.c["mk_%s_dl" % tid].setEnabled_(not tbusy)
             v.addSubview_(self.c["mk_%s_dl" % tid])
 
-            self.c["mk_%s_site" % tid] = _button("官网 ↗", self._r(x + w - 20 - 92, by, 92, 26),
+            release_url = tmeta.get("release")
+            if release_url:
+                self.c["mk_%s_rel" % tid] = _button("发行页 ↗", self._r(tx + 116, by, 84, 26),
+                                                    self, "onToolRelease:")
+                self.c["mk_%s_rel" % tid].setRepresentedObject_(tid)
+                v.addSubview_(self.c["mk_%s_rel" % tid])
+
+            self.c["mk_%s_site" % tid] = _button("原项目 ↗", self._r(x + w - 20 - 92, by, 92, 26),
                                                 self, "onToolOpen:")
             self.c["mk_%s_site" % tid].setRepresentedObject_(tid)
             v.addSubview_(self.c["mk_%s_site" % tid])
@@ -2363,6 +2370,9 @@ class SettingsWindow(_Pane):
 
     def onToolOpen_(self, sender):
         self.app.actToolOpen_(sender.representedObject())
+
+    def onToolRelease_(self, sender):
+        self.app.actToolRelease_(sender.representedObject())
 
     def onMarketOpenPid_(self, sender):
         import dptouch_plugin as PLUG

@@ -2886,6 +2886,13 @@ class DPApp(NSObject):
         meta = PLUG.tool(tid)
         NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(meta["page"]))
 
+    def actToolRelease_(self, tid):
+        from Foundation import NSURL
+        meta = PLUG.tool(tid)
+        url = meta.get("release")
+        if url:
+            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
+
     def actPluginCheck_(self, sender):
         """手动检查插件更新（市场页 / 菜单都走这里）。"""
         if self._plug_busy:
