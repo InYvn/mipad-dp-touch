@@ -15,7 +15,7 @@ APP_NAME="Mipad DP Touch"
 # bundle id 保持稳定 (改名字不改 id): TCC 的输入监控/辅助功能授权是按 id 匹配的,
 # 换了 id 用户就得重新授权一遍。
 BUNDLE_ID="io.github.inyvn.xiaomi-dptouch"
-VER="2.2.5"
+VER="2.2.6"
 ICON="AppIcon.icns"
 
 if [ ! -x "$VENV/bin/python" ]; then
@@ -57,7 +57,7 @@ echo "    构建解释器: Python $PYV"
 
 echo "==> 语法检查"
 "$VENV/bin/python" -m py_compile src/dptouch.py src/dptouch_engine.py src/dptouch_display.py \
-  src/dptouch_mode.py src/dptouch_edid.py src/dptouch_calibration.py src/dptouch_window.py src/dptouch_touchviz.py src/hid_bridge.py src/dptouch_autostart.py src/dptouch_update.py src/dptouch_plugin.py src/tool_icons.py src/dptouch_markdown.py
+  src/dptouch_mode.py src/dptouch_edid.py src/dptouch_preview.py src/dptouch_calibration.py src/dptouch_window.py src/dptouch_touchviz.py src/hid_bridge.py src/dptouch_autostart.py src/dptouch_update.py src/dptouch_plugin.py src/tool_icons.py src/dptouch_markdown.py
 
 # 原生 EDID 助手: 必须编译成功且自检通过, 否则直接失败 —— 不能静默吞掉。
 # 助手派生自 github.com/arlint/vedid (MIT, tools/native/LICENSE), 职责:
@@ -69,7 +69,7 @@ mkdir -p "$NATIVE_OUT"
 if ! clang -fobjc-arc -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 -Wall -O2 \
     -framework Foundation -framework AppKit -framework CoreGraphics -framework IOKit \
     -F/System/Library/PrivateFrameworks -framework CoreDisplay \
-    tools/native/vedid.m -o "$NATIVE_OUT/vedid" 2>&1 | tail -5; then
+    tools/native/vedid-patched.m -o "$NATIVE_OUT/vedid" 2>&1 | tail -5; then
   echo "!! vedid 编译失败 (见上方 clang 输出)" >&2
   exit 1
 fi
@@ -137,6 +137,7 @@ echo "==> PyInstaller 打包"
   --hidden-import dptouch_autostart \
   --hidden-import dptouch_update \
   --hidden-import dptouch_edid \
+  --hidden-import dptouch_preview \
   --hidden-import dptouch_mode \
   --hidden-import dptouch_plugin \
   --hidden-import dptouch_sdk \

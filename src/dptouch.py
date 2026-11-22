@@ -42,6 +42,7 @@ from Foundation import (NSObject, NSTimer, NSRunLoop, NSDate, NSMakeRect,
 
 import dptouch_autostart as AS
 import dptouch_display as DP
+import dptouch_preview as PREVIEW
 import dptouch_calibration as CAL
 import dptouch_edid as EDID
 import dptouch_engine as E
@@ -54,7 +55,7 @@ import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "2.2.5"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "2.2.6"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
@@ -109,6 +110,8 @@ DEFAULTS = {
     # 位置校正 (EDID 物理尺寸 override, 只对小米平板屏): 修正系统看到的物理尺寸,
     #   消除原生触控落点偏移。由 src/dptouch_edid.py 的控制器 + 原生助手管理。
     "edid_correct": True,  # strict verified factory profile only; persisted manual False wins
+    # 预览显示: DP-in 预览时默认把 MI DISPLAY 切 1704x1136@120 并设为主显示器。
+    "preview_display_auto": True,
     # 首启引导: 权限不齐时自动打开设置窗口 —— 只做一次(开机自启每次登录都弹会烦)
     "onboarded": False,
     # 检查更新: 启动后静默查一次 + 之后每天一次。只有这一处会联网。
@@ -1975,6 +1978,10 @@ class DPApp(NSObject):
         # 位置校正控制器: 按三个开关的现状推进状态机 (应用/恢复/拓扑重应用/退避)。
         # 内部全部短路, 不会在每秒 tick 上反复 apply。
         try:
+            try:
+                self._tick_preview_display()
+            except Exception as _pe:
+                log("预览显示策略异常: %r" % (_pe,))
             self.edid.set_desired(self.enabled,
                                   self.native_touch_active(),
                                   bool(self.cfg.get("edid_correct")))
@@ -1982,6 +1989,24 @@ class DPApp(NSObject):
         except Exception as e:
             log("EDID 控制器异常: %r" % (e,))
         self._poll_calibration()
+
+    @objc.python_method
+    def _tick_preview_display(self):
+        """预览显示: 只在原生触控活跃(DP-in 预览)时确保 1704x1136 + 主屏, 幂等。"""
+        if not self.enabled or not bool(self.cfg.get("preview_display_auto", True)):
+            return
+        if not self.native_touch_active():
+            return
+        now = time.time()
+        if now < getattr(self, "_preview_next_check", 0.0):
+            return
+        self._preview_next_check = now + 5.0
+        res = PREVIEW.ensure_preview_display(
+            allow_unverified=bool(self.cfg.get("display_allow_unknown")))
+        if res.get("changed"):
+            log(res.get("msg", "预览显示已调整"))
+        elif not res.get("ok"):
+            log("预览显示: " + res.get("msg", "未调整"))
 
     @objc.python_method
     def _sync_display(self, force=False):
