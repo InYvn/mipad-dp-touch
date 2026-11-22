@@ -91,6 +91,16 @@ TOOLS = (
         "symbol": "display",
         "min_host": "2.0.0",
     },
+    {
+        "id": "dpinwindow",
+        "name": "DP-in 窗口显示",
+        "tag": "Android",
+        "blurb": "平板侧 DP-in 小窗预览工具：在 Android 上以小窗/全屏查看 DP 画面，支持音频与硬件链路重协商；需在平板安装并用 Vector 启用 com.milink.service 作用域。",
+        "url": "https://codeberg.org/jianchen/DpinWindow/releases/download/v0.4.26/DpinWindow-0.4.26.apk",
+        "page": "https://codeberg.org/jianchen/DpinWindow",
+        "symbol": "rectangle.on.rectangle",
+        "min_host": "2.2.6",
+    },
 )
 
 
