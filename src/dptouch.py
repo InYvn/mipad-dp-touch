@@ -2859,14 +2859,15 @@ class DPApp(NSObject):
             self._warn("下载%s失败" % meta["name"],
                        "%s\n\n可以打开官网手动下载：%s" % (out.get("why") or "原因不明", meta["page"]))
         elif meta.get("kind") == "apk":
-            self._ask("下载完成",
-                      "APK 已保存到：\n%s\n\n请传到平板安装；App 不会在 Mac 上执行它。"
-                      % out["path"], ["在 Finder 中显示", "关闭"])
-            try:
-                import subprocess
-                subprocess.run(["open", "-R", out["path"]], check=False)
-            except Exception:
-                pass
+            i = self._ask("下载完成",
+                          "APK 已保存到：\n%s\n\n请传到平板安装；App 不会在 Mac 上执行它。"
+                          % out["path"], ["在 Finder 中显示", "关闭"])
+            if i == 0:
+                try:
+                    import subprocess
+                    subprocess.run(["open", "-R", out["path"]], check=False)
+                except Exception:
+                    pass
         else:
             self._ask("下载完成",
                       "安装包已保存到：\n%s\n\n即将打开安装包，请把「%s」拖进「应用程序」。"
