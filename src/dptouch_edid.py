@@ -426,6 +426,7 @@ class EDIDController(object):
         self._native = False
         self._correct = False
         self._proc = None               # 当前 guard 子进程
+        self._adopted = False           # 当前 override 是启动前已存在的 (无 guard 句柄)
         self._state = "disabled"
         self._detail = ""
         self._target = None
@@ -567,6 +568,14 @@ class EDIDController(object):
             return self._set_state("unsupported",
                                    "原生助手不可用 (vedid 未打包/无法执行)")
         now = self._clock()
+        if self._proc is None and self._adopted:
+            # 启动前就已生效的 override: 没有 guard 句柄可等, 但拓扑不变时
+            # 不要每秒重跑解析/校验 (否则日志和文件 IO 都是无谓的)。
+            if self._topology_changed():
+                self._adopted = False
+                self.log("EDID 校正: 拓扑变化, 重新评估已存在的 override")
+            else:
+                return self.status()
         if self._proc is not None:
             rc = self._proc.poll()
             if rc is not None:
@@ -631,7 +640,66 @@ class EDIDController(object):
 
     # ---------------- 应用 ----------------
 
+    def _adopt_already_applied(self, tgt, factory):
+        """如果当前 EDID 已是本模块的几何校正档，则直接标记 applied。
+
+        只接受“某份已知工厂 EDID + patch_geometry(...) 精确等于当前 EDID”的
+        情况；不猜测、不覆盖其他 override。
+        """
+        try:
+            if len(factory) != 384:
+                return None
+            size = self._safe_size(tgt["id"])
+            if not size or any(abs(v - want_mm) > self.tol_mm
+                               for v, want_mm in zip(size, self.geom)):
+                return None
+            want = bytes(factory)
+            match = None
+            for name in sorted(os.listdir(self.state_dir)):
+                if not (name.startswith("edid_factory-") and name.endswith(".edid")):
+                    continue
+                path = os.path.join(self.state_dir, name)
+                try:
+                    with open(path, "rb") as f:
+                        stock = f.read()
+                    if len(stock) != 384:
+                        continue
+                    profile = bytearray(stock)
+                    profile[12:18] = bytes(6)
+                    profile[127] = 0
+                    if hashlib.sha256(profile).hexdigest() != FACTORY_PROFILE_SHA256:
+                        continue
+                    patched = patch_geometry(stock, self.geom[0], self.geom[1])
+                    if patched == want:
+                        match = (path, stock)
+                        break
+                except Exception:
+                    continue
+            if match is None:
+                return None
+            self._target = tgt
+            self._backup_file = match[0]
+            self._readback_before = size
+            self._readback_after = size
+            self._sig = (self._displays_sig(), tgt["id"],
+                         tuple(round(v, 1) for v in size))
+            self._applied_at = self._clock()
+            self._debounce_until = self._clock() + self.debounce
+            self._proc = None
+            self._adopted = True
+            self._apply_report = {"cmd": "guard", "rc": 0, "stage": "applied",
+                                  "adopted_existing": True,
+                                  "edid_sha256": hashlib.sha256(want).hexdigest()}
+            self._restore_report = None
+            self._last_error = ""
+            return self._set_state(
+                "applied", "检测到已应用 %d×%d mm, 系统读回 %.1f×%.1f mm (无需重复写入)"
+                % (self.geom[0], self.geom[1], size[0], size[1]))
+        except Exception:
+            return None
+
     def _start_guard(self):
+        self._adopted = False
         self._set_state("checking", "解析目标并读回工厂 EDID")
         tgt, why = self._same_target_now()
         if tgt is None:
@@ -644,6 +712,14 @@ class EDIDController(object):
             self._backoff_until = self._clock() + self.backoff
             self._last_error = repr(e)
             return self._set_state("failed", "读不到工厂 EDID: %s" % e)
+
+        # 兼容“当前 EDID 已经是本模块校正后的几何档”的情况：
+        # 例如 App 重启/重连后 macOS 仍保留 RAM-only override，此时当前 EDID
+        # 不再等于工厂版，guard 的 factory 校验会拒绝覆盖。只要当前 EDID 能由
+        # 某个已保存的工厂备份 + 本模块的 282×188 几何变换精确得到，就视为已应用。
+        adopted = self._adopt_already_applied(tgt, factory)
+        if adopted is not None:
+            return adopted
 
         # Per-device full identity AND full factory hash, never one global backup.
         # A changed EDID for an already-known physical identity is not a new unit.
