@@ -145,6 +145,16 @@ macOS 27.3 原生模式下，手指输入由系统处理。「手势映射」页
 
 校验与兼容：发版正文没有该资产的 SHA256 就拒绝安装；`plugin.json` 里的 `id` / `api` / `min_host` 不匹配也拒绝。插件加载失败时菜单会给出错误，不会静默。
 
+## 可选工具：DP-in 窗口显示（DpinWindow）
+
+「插件与工具」页的「工具」区会列出 [DpinWindow](https://codeberg.org/jianchen/DpinWindow)——它不是 Mac 插件，而是平板侧 Android 应用，用于在平板上以小窗/全屏预览 DP-in 画面，并保留平板其他操作。
+
+1. 点「下载」获取 **Mipad 适配 Release**（v0.4.26-mipad.1，非官方 debug 构建），传到平板安装；
+2. 在平板的 Vector / LSPosed 中启用 DpinWindow，作用域勾选 `com.milink.service`；
+3. 打开 App 后连接 DP-in，点「开始预览」；双击画面可进入官方「屏幕扩展 pro」。
+
+原项目地址：<https://codeberg.org/jianchen/DpinWindow>（上游 Release：<https://codeberg.org/jianchen/DpinWindow/releases/latest>）。本适配构建的 Release 与改动说明：<https://github.com/zzzzyppp/DpinWindow/releases/tag/v0.4.26-mipad.1>。该适配由本项目维护者提供，非上游官方发布，也不代表上游背书；原始项目由 @jianchen 开发，遵循 Apache-2.0。App 只提供下载/项目/发行页入口，不镜像、不打包、不静默安装。
+
 ## 从源码构建
 
 ```bash

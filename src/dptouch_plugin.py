@@ -91,6 +91,19 @@ TOOLS = (
         "symbol": "display",
         "min_host": "2.0.0",
     },
+    {
+        "id": "dpinwindow",
+        "name": "DP-in 窗口显示",
+        "tag": "Android",
+        "blurb": "平板侧 DP-in 小窗预览（Mipad 适配非官方构建，基于 jianchen/DpinWindow 0.4.26）；需在平板安装并用 Vector 启用 com.milink.service 作用域。",
+        "url": "https://github.com/zzzzyppp/DpinWindow/releases/download/v0.4.26-mipad.1/DpinWindow-0.4.26-mipad-debug.apk",
+        "page": "https://codeberg.org/jianchen/DpinWindow",
+        "release": "https://github.com/zzzzyppp/DpinWindow/releases/tag/v0.4.26-mipad.1",
+        "kind": "apk",
+        "sha256": "162c69d395e7f7c7f6716b70fd4fe74ef7a813b01f43e628e95654d6555bb5d8",
+        "symbol": "rectangle.on.rectangle",
+        "min_host": "2.2.6",
+    },
 )
 
 

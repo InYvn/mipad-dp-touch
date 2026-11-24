@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2.2.6 — 2026-11-22
+
+* 新增「预览显示」策略：原生触控/DP-in 预览活跃时，自动将 MI DISPLAY 切到 1704×1136 HiDPI@120 并设为主显示器（`preview_display_auto`）。
+* EDID 助手内置 patched `vedid`：修复 macOS 26/27 外接 DP 屏的 AV service 查找，并容忍应用虚拟 EDID 后的显示排列重排；检测到失败时自动重试。
+* 「插件与工具」新增外部工具「DP-in 窗口显示（DpinWindow）」：平板侧 DP-in 小窗预览，提供 Mipad 适配 Release（非官方 debug 构建）、原项目 Codeberg 地址与发行页入口。
+* 外部工具支持 Android APK：下载到 `~/Downloads`，校验注册表 SHA256 后提示传到平板安装；不在 Mac 上打开/安装。
+* 插件与工具页继续只做官方下载/跳转，不镜像、不打包、不静默安装。
+
+
 ## 2.2.5 — 2026-11-14
 
 * EDID 校正：修复 macOS 26/27 外接 DP 屏找不到 AV service 的问题（按 DCP 单元名匹配，不再要求位于显示控制器子树）；同时容忍应用虚拟 EDID 后的显示器排列重排，恢复原 origin 后再判定成功。感谢 @zzzzyppp 的贡献（#4）。

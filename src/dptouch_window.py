@@ -878,9 +878,23 @@ def perm_glyph(state):
 
 # ---------------------------------------------------------------- 控件小工具
 
+_FORCE_DARK = None
+
+
 def _is_dark():
+    if _FORCE_DARK is not None:
+        return bool(_FORCE_DARK)
     try:
-        return "Dark" in str(NSApp.effectiveAppearance().name())
+        if "Dark" in str(NSApp.effectiveAppearance().name()):
+            return True
+    except Exception:
+        pass
+    # 启动早期 NSApp.effectiveAppearance() 可能是 Aqua（窗口尚未成为 key），
+    # 但系统已是深色；用系统全局设置兜底，避免深色窗口先画出浅色页面。
+    try:
+        from Foundation import NSUserDefaults
+        style = NSUserDefaults.standardUserDefaults().stringForKey_("AppleInterfaceStyle")
+        return str(style) == "Dark"
     except Exception:
         return False
 
@@ -1473,6 +1487,7 @@ class SettingsWindow(_Pane):
         #   真实状态可能和刚喂进来的不一致 (无头自检喂假状态时必现) —— 于是"权限完成态变了"
         #   再次成立, 又翻回上一版, 来回重排 (实测: 权限就绪那一版永远排不出来)。
         self.refresh(self._last_st or None, force=True)
+        self._theme_built = _is_dark()
 
     @objc.python_method
     def _layout(self):
@@ -2177,7 +2192,14 @@ class SettingsWindow(_Pane):
             self.c["mk_%s_dl" % tid].setEnabled_(not tbusy)
             v.addSubview_(self.c["mk_%s_dl" % tid])
 
-            self.c["mk_%s_site" % tid] = _button("官网 ↗", self._r(x + w - 20 - 92, by, 92, 26),
+            release_url = tmeta.get("release")
+            if release_url:
+                self.c["mk_%s_rel" % tid] = _button("发行页 ↗", self._r(tx + 116, by, 84, 26),
+                                                    self, "onToolRelease:")
+                self.c["mk_%s_rel" % tid].setRepresentedObject_(tid)
+                v.addSubview_(self.c["mk_%s_rel" % tid])
+
+            self.c["mk_%s_site" % tid] = _button("原项目 ↗", self._r(x + w - 20 - 92, by, 92, 26),
                                                 self, "onToolOpen:")
             self.c["mk_%s_site" % tid].setRepresentedObject_(tid)
             v.addSubview_(self.c["mk_%s_site" % tid])
@@ -2364,6 +2386,9 @@ class SettingsWindow(_Pane):
     def onToolOpen_(self, sender):
         self.app.actToolOpen_(sender.representedObject())
 
+    def onToolRelease_(self, sender):
+        self.app.actToolRelease_(sender.representedObject())
+
     def onMarketOpenPid_(self, sender):
         import dptouch_plugin as PLUG
         from Foundation import NSURL
@@ -2448,11 +2473,23 @@ class SettingsWindow(_Pane):
     def onTheme_(self, sender):
         """浅色 / 深色外观切换 (设计稿右上角那颗月亮)。"""
         from AppKit import NSApp, NSAppearance
+        global _FORCE_DARK
         try:
             dark = "Dark" in str(NSApp.effectiveAppearance().name())
-            NSApp.setAppearance_(NSAppearance.appearanceNamed_(
-                "NSAppearanceNameAqua" if dark else "NSAppearanceNameDarkAqua"))
-            self.toast("已切换为%s外观" % ("浅色" if dark else "深色"))
+            target_dark = not dark
+            # 立即显式记录目标外观：NSApp.effectiveAppearance() 不是同步更新的，
+            # 若直接 _relayout，_is_dark() 可能还读到旧值 -> 深色窗口里画出浅色页。
+            _FORCE_DARK = target_dark
+            app_appearance = NSAppearance.appearanceNamed_(
+                "NSAppearanceNameDarkAqua" if target_dark else "NSAppearanceNameAqua")
+            NSApp.setAppearance_(app_appearance)
+            try:
+                self.win.setAppearance_(app_appearance)
+            except Exception:
+                pass
+            # 外观切换后必须整窗重建：颜色是在建视图时按 _is_dark() 固化的。
+            self._relayout(animate=False)
+            self.toast("已切换为%s外观" % ("深色" if target_dark else "浅色"))
         except Exception as e:
             self.app.log("切换外观失败: %r" % (e,))
 
@@ -2525,6 +2562,10 @@ class SettingsWindow(_Pane):
             from AppKit import NSApp as _A
             self.app.log("设置窗口: 已请求激活 (App 激活=%s 窗口 key=%s)"
                          % (bool(_A.isActive()), bool(self.win.isKeyWindow())))
+            # 启动时 NSApp.effectiveAppearance() 可能还是浅色，窗口出现后才
+            # 变成系统深色；颜色已在 _build 时固化，必须补一次整窗重建。
+            if _is_dark() != getattr(self, "_theme_built", None):
+                self._relayout(animate=False)
         except Exception as e:
             self.app.log("打开设置窗口失败: %r" % (e,))
             return False

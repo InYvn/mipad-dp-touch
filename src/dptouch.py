@@ -42,6 +42,7 @@ from Foundation import (NSObject, NSTimer, NSRunLoop, NSDate, NSMakeRect,
 
 import dptouch_autostart as AS
 import dptouch_display as DP
+import dptouch_preview as PREVIEW
 import dptouch_calibration as CAL
 import dptouch_edid as EDID
 import dptouch_engine as E
@@ -54,7 +55,7 @@ import dptouch_window as UI
 import hid_bridge as HB
 
 APP_NAME = "Mipad DP Touch"
-APP_VERSION = "2.2.5"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
+APP_VERSION = "2.2.6"          # 发版时改这里 + build_app.sh 的 VER (两处要一致)
 CFG_DIR = os.path.expanduser("~/Library/Application Support/MipadDPTouch")
 CFG_PATH = os.path.join(CFG_DIR, "config.json")
 LOG_PATH = os.path.expanduser("~/Library/Logs/MipadDPTouch.log")
@@ -109,6 +110,8 @@ DEFAULTS = {
     # 位置校正 (EDID 物理尺寸 override, 只对小米平板屏): 修正系统看到的物理尺寸,
     #   消除原生触控落点偏移。由 src/dptouch_edid.py 的控制器 + 原生助手管理。
     "edid_correct": True,  # strict verified factory profile only; persisted manual False wins
+    # 预览显示: DP-in 预览时默认把 MI DISPLAY 切 1704x1136@120 并设为主显示器。
+    "preview_display_auto": True,
     # 首启引导: 权限不齐时自动打开设置窗口 —— 只做一次(开机自启每次登录都弹会烦)
     "onboarded": False,
     # 检查更新: 启动后静默查一次 + 之后每天一次。只有这一处会联网。
@@ -1981,7 +1984,48 @@ class DPApp(NSObject):
             self.edid.tick()
         except Exception as e:
             log("EDID 控制器异常: %r" % (e,))
+        # 预览显示只在每次 DP 接入后调一次；等 EDID 控制器先落定，
+        # 避免显示拓扑与 EDID apply 互相触发形成 5 秒级抖动。
+        try:
+            self._tick_preview_display()
+        except Exception as _pe:
+            log("预览显示策略异常: %r" % (_pe,))
         self._poll_calibration()
+
+    @objc.python_method
+    def _tick_preview_display(self):
+        """预览显示: 每次 DP 接入后只确保一次 1704x1136 + 主屏。
+
+        不能每秒/每 5 秒反复重配：切换分辨率、移动 origin 和 EDID 拓扑
+        重应用叠加会让触摸坐标基准抖动，表现为“触控不可用”。
+        因此这里用 _preview_attach_done 做一次性闸门；只有检测到原生触控
+        从活跃变为不活跃（拔掉/退出 DP-in）时才复位，下一次接入重新执行。
+        """
+        if not self.enabled or not bool(self.cfg.get("preview_display_auto", True)):
+            self._preview_attach_done = False
+            self._preview_next_check = 0.0
+            return
+        if not self.native_touch_active():
+            # DP-in 已退出/设备已拔出: 复位，等下一次接入
+            self._preview_attach_done = False
+            self._preview_next_check = 0.0
+            return
+        if getattr(self, "_preview_attach_done", False):
+            return
+        now = time.time()
+        if now < getattr(self, "_preview_next_check", 0.0):
+            return
+        res = PREVIEW.ensure_preview_display(
+            allow_unverified=bool(self.cfg.get("display_allow_unknown")))
+        if res.get("ok"):
+            self._preview_attach_done = True
+            self._preview_next_check = 0.0
+            if res.get("changed"):
+                log(res.get("msg", "预览显示已调整") + "（本次接入仅一次）")
+        else:
+            # 目标屏还没枚举/模式未就绪: 稍后重试，但不会成功后再轮询
+            self._preview_next_check = now + 5.0
+            log("预览显示: " + res.get("msg", "未调整"))
 
     @objc.python_method
     def _sync_display(self, force=False):
@@ -2732,9 +2776,15 @@ class DPApp(NSObject):
         if not tid or self._tool_busy:
             return
         meta = PLUG.tool(tid)
-        dest = os.path.expanduser("~/Downloads/%s.dmg" % meta["name"])
-        body = ("会从官方地址下载安装包：\n%s\n\n保存到：%s\n\n"
-                "下载完成后会校验签名并打开安装包，需要你手动拖进「应用程序」。" % (meta["url"], dest))
+        kind = meta.get("kind", "dmg")
+        ext = ".apk" if kind == "apk" else ".dmg"
+        dest = os.path.expanduser("~/Downloads/%s%s" % (meta["name"], ext))
+        if kind == "apk":
+            body = ("会从官方地址下载 Android APK：\n%s\n\n保存到：%s\n\n"
+                    "下载完成后请传到平板安装；App 不会在 Mac 上执行它。" % (meta["url"], dest))
+        else:
+            body = ("会从官方地址下载安装包：\n%s\n\n保存到：%s\n\n"
+                    "下载完成后会校验签名并打开安装包，需要你手动拖进「应用程序」。" % (meta["url"], dest))
         if self._ask("下载%s？" % meta["name"], body, ["下载", "取消"]) != 0:
             return
         self._tool_busy = tid
@@ -2753,11 +2803,32 @@ class DPApp(NSObject):
             def prog(done, total):
                 self._tool_progress = (done, total)
             PLUG.download_file(meta["url"], dest, progress=prog)
-            ok, why = self._verify_dmg(dest)
+            if meta.get("kind") == "apk":
+                ok, why = self._verify_apk(dest, meta.get("sha256"))
+            else:
+                ok, why = self._verify_dmg(dest)
             out = {"ok": ok, "why": why, "path": dest}
         except Exception as e:
             out = {"ok": False, "why": "%s: %s" % (e.__class__.__name__, e), "path": dest}
         self._tool_in = (tid, out)
+
+    @objc.python_method
+    def _verify_apk(self, path, expected_sha256=None):
+        """APK：检查扩展名/ZIP magic/大小，并按注册表校验 SHA256。"""
+        import hashlib
+        if not path.endswith(".apk") or not os.path.exists(path) or os.path.getsize(path) < (1 << 20):
+            return False, "文件不是有效的 APK"
+        with open(path, "rb") as f:
+            if f.read(4) != b"PK\x03\x04":
+                return False, "APK 不是有效的 ZIP 文件"
+        if expected_sha256:
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            if h.hexdigest().lower() != str(expected_sha256).lower():
+                return False, "APK SHA256 不匹配"
+        return True, ""
 
     @objc.python_method
     def _verify_dmg(self, path):
@@ -2806,6 +2877,16 @@ class DPApp(NSObject):
         if not out.get("ok"):
             self._warn("下载%s失败" % meta["name"],
                        "%s\n\n可以打开官网手动下载：%s" % (out.get("why") or "原因不明", meta["page"]))
+        elif meta.get("kind") == "apk":
+            i = self._ask("下载完成",
+                          "APK 已保存到：\n%s\n\n请传到平板安装；App 不会在 Mac 上执行它。"
+                          % out["path"], ["在 Finder 中显示", "关闭"])
+            if i == 0:
+                try:
+                    import subprocess
+                    subprocess.run(["open", "-R", out["path"]], check=False)
+                except Exception:
+                    pass
         else:
             self._ask("下载完成",
                       "安装包已保存到：\n%s\n\n即将打开安装包，请把「%s」拖进「应用程序」。"
@@ -2823,6 +2904,13 @@ class DPApp(NSObject):
         from Foundation import NSURL
         meta = PLUG.tool(tid)
         NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(meta["page"]))
+
+    def actToolRelease_(self, tid):
+        from Foundation import NSURL
+        meta = PLUG.tool(tid)
+        url = meta.get("release")
+        if url:
+            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
 
     def actPluginCheck_(self, sender):
         """手动检查插件更新（市场页 / 菜单都走这里）。"""
