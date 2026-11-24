@@ -1978,34 +1978,53 @@ class DPApp(NSObject):
         # 位置校正控制器: 按三个开关的现状推进状态机 (应用/恢复/拓扑重应用/退避)。
         # 内部全部短路, 不会在每秒 tick 上反复 apply。
         try:
-            try:
-                self._tick_preview_display()
-            except Exception as _pe:
-                log("预览显示策略异常: %r" % (_pe,))
             self.edid.set_desired(self.enabled,
                                   self.native_touch_active(),
                                   bool(self.cfg.get("edid_correct")))
             self.edid.tick()
         except Exception as e:
             log("EDID 控制器异常: %r" % (e,))
+        # 预览显示只在每次 DP 接入后调一次；等 EDID 控制器先落定，
+        # 避免显示拓扑与 EDID apply 互相触发形成 5 秒级抖动。
+        try:
+            self._tick_preview_display()
+        except Exception as _pe:
+            log("预览显示策略异常: %r" % (_pe,))
         self._poll_calibration()
 
     @objc.python_method
     def _tick_preview_display(self):
-        """预览显示: 只在原生触控活跃(DP-in 预览)时确保 1704x1136 + 主屏, 幂等。"""
+        """预览显示: 每次 DP 接入后只确保一次 1704x1136 + 主屏。
+
+        不能每秒/每 5 秒反复重配：切换分辨率、移动 origin 和 EDID 拓扑
+        重应用叠加会让触摸坐标基准抖动，表现为“触控不可用”。
+        因此这里用 _preview_attach_done 做一次性闸门；只有检测到原生触控
+        从活跃变为不活跃（拔掉/退出 DP-in）时才复位，下一次接入重新执行。
+        """
         if not self.enabled or not bool(self.cfg.get("preview_display_auto", True)):
+            self._preview_attach_done = False
+            self._preview_next_check = 0.0
             return
         if not self.native_touch_active():
+            # DP-in 已退出/设备已拔出: 复位，等下一次接入
+            self._preview_attach_done = False
+            self._preview_next_check = 0.0
+            return
+        if getattr(self, "_preview_attach_done", False):
             return
         now = time.time()
         if now < getattr(self, "_preview_next_check", 0.0):
             return
-        self._preview_next_check = now + 5.0
         res = PREVIEW.ensure_preview_display(
             allow_unverified=bool(self.cfg.get("display_allow_unknown")))
-        if res.get("changed"):
-            log(res.get("msg", "预览显示已调整"))
-        elif not res.get("ok"):
+        if res.get("ok"):
+            self._preview_attach_done = True
+            self._preview_next_check = 0.0
+            if res.get("changed"):
+                log(res.get("msg", "预览显示已调整") + "（本次接入仅一次）")
+        else:
+            # 目标屏还没枚举/模式未就绪: 稍后重试，但不会成功后再轮询
+            self._preview_next_check = now + 5.0
             log("预览显示: " + res.get("msg", "未调整"))
 
     @objc.python_method
